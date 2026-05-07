@@ -77,6 +77,8 @@ tests/cli_fetch.rs, tests/fetcher_integration.rs
 
 ## M2 — Caching & Storage
 
+**Status:** plan executed; PR open against `main`.
+
 **Scope.** SQLite cache for fetched pages; TTL logic that respects HTTP semantics; conditional GETs (`ETag`, `Last-Modified`); `force_refresh` flag on the fetcher; `rover cache list/get/purge/stats` subcommands.
 
 **Prerequisites.** M1.
