@@ -1,7 +1,7 @@
 //! HTTP client construction.
 
-use std::time::Duration;
 use reqwest::redirect::Policy;
+use std::time::Duration;
 
 /// Build a `reqwest::Client` configured for Rover's fetch defaults.
 ///

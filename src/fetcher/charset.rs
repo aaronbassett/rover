@@ -36,21 +36,30 @@ pub struct Detected {
 pub fn detect_encoding(content_type: Option<&str>, bytes: &[u8]) -> Detected {
     // 1. BOM
     if let Some((enc, _bom_len)) = Encoding::for_bom(bytes) {
-        return Detected { encoding: enc, source: DetectionSource::Bom };
+        return Detected {
+            encoding: enc,
+            source: DetectionSource::Bom,
+        };
     }
 
     // 2. HTTP Content-Type charset
     if let Some(ct) = content_type {
         if let Some(label) = parse_charset_param(ct) {
             if let Some(enc) = Encoding::for_label(label.as_bytes()) {
-                return Detected { encoding: enc, source: DetectionSource::HttpHeader };
+                return Detected {
+                    encoding: enc,
+                    source: DetectionSource::HttpHeader,
+                };
             }
         }
     }
 
     // 3. <meta> sniff in first 1024 bytes
     if let Some(enc) = sniff_meta_charset(bytes) {
-        return Detected { encoding: enc, source: DetectionSource::MetaTag };
+        return Detected {
+            encoding: enc,
+            source: DetectionSource::MetaTag,
+        };
     }
 
     // 4. chardetng
@@ -58,11 +67,17 @@ pub fn detect_encoding(content_type: Option<&str>, bytes: &[u8]) -> Detected {
     det.feed(bytes, true);
     let enc = det.guess(None, Utf8Detection::Allow);
     if enc != UTF_8 || looks_like_utf8(bytes) {
-        return Detected { encoding: enc, source: DetectionSource::Chardetng };
+        return Detected {
+            encoding: enc,
+            source: DetectionSource::Chardetng,
+        };
     }
 
     // 5. Fallback
-    Detected { encoding: UTF_8, source: DetectionSource::Fallback }
+    Detected {
+        encoding: UTF_8,
+        source: DetectionSource::Fallback,
+    }
 }
 
 /// Decode `bytes` to UTF-8 using the result of [`detect_encoding`].
@@ -91,7 +106,9 @@ trait StripPrefixIgnoreCase {
 
 impl StripPrefixIgnoreCase for str {
     fn strip_prefix_ignore_case<'a>(&'a self, prefix: &str) -> Option<&'a str> {
-        if self.len() < prefix.len() { return None; }
+        if self.len() < prefix.len() {
+            return None;
+        }
         let head = &self[..prefix.len()];
         if head.eq_ignore_ascii_case(prefix) {
             Some(&self[prefix.len()..])
@@ -114,18 +131,22 @@ fn strip_quotes(s: &str) -> &str {
 /// first 1024 bytes, ASCII-decoded.
 fn sniff_meta_charset(bytes: &[u8]) -> Option<&'static Encoding> {
     static META_CHARSET: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?xi)
+        Regex::new(
+            r#"(?xi)
             <meta \s [^>]*?
             (?:
                 charset \s* = \s* ["']? ([A-Za-z0-9_:.\-]+)
               | http-equiv \s* = \s* ["']? content-type ["']? \s [^>]*?
                 content \s* = \s* ["']? [^"'>]*? charset \s* = \s* ([A-Za-z0-9_:.\-]+)
             )
-        "#).unwrap()
+        "#,
+        )
+        .unwrap()
     });
 
     let head_len = bytes.len().min(1024);
-    let head: String = bytes[..head_len].iter()
+    let head: String = bytes[..head_len]
+        .iter()
         .map(|&b| if b.is_ascii() { b as char } else { ' ' })
         .collect();
     let caps = META_CHARSET.captures(&head)?;
@@ -193,7 +214,10 @@ mod tests {
     fn falls_back_to_chardetng_for_plain_utf8() {
         let bytes = "héllo wörld".as_bytes();
         let det = detect_encoding(None, bytes);
-        assert!(matches!(det.source, DetectionSource::Chardetng | DetectionSource::Fallback));
+        assert!(matches!(
+            det.source,
+            DetectionSource::Chardetng | DetectionSource::Fallback
+        ));
         assert_eq!(det.encoding, UTF_8);
     }
 
@@ -222,7 +246,10 @@ mod tests {
     #[test]
     fn decode_handles_latin1() {
         // 0xE9 is é in ISO-8859-1.
-        let (out, _det) = decode_to_utf8(Some("text/html; charset=ISO-8859-1"), &[b'h', 0xE9, b'l', b'l', b'o']);
+        let (out, _det) = decode_to_utf8(
+            Some("text/html; charset=ISO-8859-1"),
+            &[b'h', 0xE9, b'l', b'l', b'o'],
+        );
         assert_eq!(out, "héllo");
     }
 }

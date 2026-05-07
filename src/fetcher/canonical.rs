@@ -17,11 +17,7 @@ use url::Url;
 ///
 /// `final_url` is the URL after all redirects. `html` is the decoded body.
 /// `link_header` is the raw `Link:` header value, if any.
-pub fn extract_canonical_url(
-    html: &str,
-    final_url: &Url,
-    link_header: Option<&str>,
-) -> Url {
+pub fn extract_canonical_url(html: &str, final_url: &Url, link_header: Option<&str>) -> Url {
     if let Some(url) = canonical_from_html(html, final_url) {
         return url;
     }
@@ -34,9 +30,8 @@ pub fn extract_canonical_url(
 }
 
 fn canonical_from_html(html: &str, base: &Url) -> Option<Url> {
-    static SEL: LazyLock<Selector> = LazyLock::new(|| {
-        Selector::parse(r#"link[rel~="canonical"][href]"#).unwrap()
-    });
+    static SEL: LazyLock<Selector> =
+        LazyLock::new(|| Selector::parse(r#"link[rel~="canonical"][href]"#).unwrap());
     let doc = Html::parse_document(html);
     let el = doc.select(&SEL).next()?;
     let href = el.value().attr("href")?;
@@ -59,7 +54,10 @@ fn canonical_from_link_header(header: &str, base: &Url) -> Option<Url> {
             let p = raw_param.trim();
             if let Some(rest) = strip_prefix_ci(p, "rel=") {
                 let rest = rest.trim_matches('"');
-                if rest.split_whitespace().any(|tok| tok.eq_ignore_ascii_case("canonical")) {
+                if rest
+                    .split_whitespace()
+                    .any(|tok| tok.eq_ignore_ascii_case("canonical"))
+                {
                     return base.join(target).ok();
                 }
             }
@@ -91,12 +89,16 @@ fn split_link_values(header: &str) -> Vec<&str> {
         }
         i += 1;
     }
-    if start < header.len() { out.push(&header[start..]); }
+    if start < header.len() {
+        out.push(&header[start..]);
+    }
     out
 }
 
 fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    if s.len() < prefix.len() { return None; }
+    if s.len() < prefix.len() {
+        return None;
+    }
     if s[..prefix.len()].eq_ignore_ascii_case(prefix) {
         Some(&s[prefix.len()..])
     } else {
@@ -108,7 +110,9 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
 
-    fn url(s: &str) -> Url { Url::parse(s).unwrap() }
+    fn url(s: &str) -> Url {
+        Url::parse(s).unwrap()
+    }
 
     #[test]
     fn returns_final_url_when_no_signal() {
@@ -119,7 +123,8 @@ mod tests {
 
     #[test]
     fn extracts_from_html_link_canonical() {
-        let html = r#"<html><head><link rel="canonical" href="https://example.com/page"></head></html>"#;
+        let html =
+            r#"<html><head><link rel="canonical" href="https://example.com/page"></head></html>"#;
         let got = extract_canonical_url(html, &url("https://example.com/page?utm=x"), None);
         assert_eq!(got, url("https://example.com/page"));
     }
@@ -157,7 +162,9 @@ mod tests {
         let got = extract_canonical_url(
             "<html></html>",
             &url("https://example.com/x"),
-            Some(r#"<https://example.com/p>; rel="prev", <https://example.com/c>; rel="canonical""#),
+            Some(
+                r#"<https://example.com/p>; rel="prev", <https://example.com/c>; rel="canonical""#,
+            ),
         );
         assert_eq!(got, url("https://example.com/c"));
     }

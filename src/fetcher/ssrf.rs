@@ -33,7 +33,11 @@ pub enum SsrfError {
     NoHost,
 
     #[error("address {address} is not allowed under SSRF level {level:?} ({reason})")]
-    Address { address: IpAddr, level: SsrfLevel, reason: &'static str },
+    Address {
+        address: IpAddr,
+        level: SsrfLevel,
+        reason: &'static str,
+    },
 }
 
 /// Validate the URL itself (scheme, presence of host).
@@ -42,7 +46,11 @@ pub enum SsrfError {
 pub fn validate_url(url: &Url, level: SsrfLevel) -> Result<(), SsrfError> {
     match url.scheme() {
         "http" | "https" => {}
-        other => return Err(SsrfError::Scheme { scheme: other.to_string() }),
+        other => {
+            return Err(SsrfError::Scheme {
+                scheme: other.to_string(),
+            });
+        }
     }
     if url.host_str().is_none() {
         return Err(SsrfError::NoHost);
@@ -61,14 +69,22 @@ pub fn validate_addresses(addrs: &[IpAddr], level: SsrfLevel) -> Result<(), Ssrf
         match level {
             SsrfLevel::Strict => {
                 if let Some(reason) = strict_reject {
-                    return Err(SsrfError::Address { address: addr, level, reason });
+                    return Err(SsrfError::Address {
+                        address: addr,
+                        level,
+                        reason,
+                    });
                 }
             }
             #[cfg(any(test, feature = "test-loopback"))]
             SsrfLevel::TestLoopback => {
                 if let Some(reason) = strict_reject {
                     if !addr.is_loopback() {
-                        return Err(SsrfError::Address { address: addr, level, reason });
+                        return Err(SsrfError::Address {
+                            address: addr,
+                            level,
+                            reason,
+                        });
                     }
                 }
             }
@@ -80,12 +96,24 @@ pub fn validate_addresses(addrs: &[IpAddr], level: SsrfLevel) -> Result<(), Ssrf
 fn strict_reject_reason(addr: IpAddr) -> Option<&'static str> {
     match addr {
         IpAddr::V4(v4) => {
-            if v4.is_loopback()         { return Some("loopback IPv4"); }
-            if v4.is_private()          { return Some("private IPv4 (RFC1918)"); }
-            if v4.is_link_local()       { return Some("link-local IPv4"); }
-            if v4.is_multicast()        { return Some("multicast IPv4"); }
-            if v4.is_broadcast()        { return Some("broadcast IPv4"); }
-            if v4.is_unspecified()      { return Some("unspecified IPv4 (0.0.0.0)"); }
+            if v4.is_loopback() {
+                return Some("loopback IPv4");
+            }
+            if v4.is_private() {
+                return Some("private IPv4 (RFC1918)");
+            }
+            if v4.is_link_local() {
+                return Some("link-local IPv4");
+            }
+            if v4.is_multicast() {
+                return Some("multicast IPv4");
+            }
+            if v4.is_broadcast() {
+                return Some("broadcast IPv4");
+            }
+            if v4.is_unspecified() {
+                return Some("unspecified IPv4 (0.0.0.0)");
+            }
             // 100.64.0.0/10 — CGN. Not in std as a method, check by hand.
             let octets = v4.octets();
             if octets[0] == 100 && (octets[1] & 0xC0) == 0x40 {
@@ -94,14 +122,24 @@ fn strict_reject_reason(addr: IpAddr) -> Option<&'static str> {
             None
         }
         IpAddr::V6(v6) => {
-            if v6.is_loopback()         { return Some("loopback IPv6"); }
-            if v6.is_multicast()        { return Some("multicast IPv6"); }
-            if v6.is_unspecified()      { return Some("unspecified IPv6 (::)"); }
+            if v6.is_loopback() {
+                return Some("loopback IPv6");
+            }
+            if v6.is_multicast() {
+                return Some("multicast IPv6");
+            }
+            if v6.is_unspecified() {
+                return Some("unspecified IPv6 (::)");
+            }
             // Unique local fc00::/7
             let segs = v6.segments();
-            if (segs[0] & 0xfe00) == 0xfc00 { return Some("unique-local IPv6 (fc00::/7)"); }
+            if (segs[0] & 0xfe00) == 0xfc00 {
+                return Some("unique-local IPv6 (fc00::/7)");
+            }
             // Link-local fe80::/10
-            if (segs[0] & 0xffc0) == 0xfe80 { return Some("link-local IPv6 (fe80::/10)"); }
+            if (segs[0] & 0xffc0) == 0xfe80 {
+                return Some("link-local IPv6 (fe80::/10)");
+            }
             // IPv4-mapped/embedded — reject too; check by mapping back
             if let Some(v4) = v6.to_ipv4_mapped() {
                 if let Some(reason) = strict_reject_reason(IpAddr::V4(v4)) {
@@ -120,19 +158,39 @@ mod tests {
 
     #[test]
     fn http_https_allowed_strict() {
-        assert!(validate_url(&Url::parse("http://example.com/").unwrap(), SsrfLevel::Strict).is_ok());
-        assert!(validate_url(&Url::parse("https://example.com/").unwrap(), SsrfLevel::Strict).is_ok());
+        assert!(
+            validate_url(
+                &Url::parse("http://example.com/").unwrap(),
+                SsrfLevel::Strict
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_url(
+                &Url::parse("https://example.com/").unwrap(),
+                SsrfLevel::Strict
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn file_scheme_rejected_strict() {
-        let err = validate_url(&Url::parse("file:///etc/passwd").unwrap(), SsrfLevel::Strict).unwrap_err();
+        let err = validate_url(
+            &Url::parse("file:///etc/passwd").unwrap(),
+            SsrfLevel::Strict,
+        )
+        .unwrap_err();
         assert!(matches!(err, SsrfError::Scheme { .. }));
     }
 
     #[test]
     fn ftp_scheme_rejected_strict() {
-        let err = validate_url(&Url::parse("ftp://example.com/").unwrap(), SsrfLevel::Strict).unwrap_err();
+        let err = validate_url(
+            &Url::parse("ftp://example.com/").unwrap(),
+            SsrfLevel::Strict,
+        )
+        .unwrap_err();
         assert!(matches!(err, SsrfError::Scheme { .. }));
     }
 
@@ -149,7 +207,10 @@ mod tests {
             IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1)),
             IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
         ] {
-            assert!(validate_addresses(&[addr], SsrfLevel::Strict).is_err(), "{addr}");
+            assert!(
+                validate_addresses(&[addr], SsrfLevel::Strict).is_err(),
+                "{addr}"
+            );
         }
     }
 

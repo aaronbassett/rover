@@ -12,13 +12,16 @@ use tracing_subscriber::prelude::*;
 /// Calling this more than once in the same process is a no-op (subsequent
 /// calls return without re-initializing).
 pub fn init(default_filter: &str) {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default_filter));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
 
     let layer = fmt::layer().with_writer(std::io::stderr).with_target(true);
 
     // try_init: if already initialized (e.g. in tests), this is a no-op.
-    let _ = tracing_subscriber::registry().with(filter).with(layer).try_init();
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(layer)
+        .try_init();
 }
 
 #[cfg(test)]

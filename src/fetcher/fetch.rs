@@ -6,10 +6,10 @@ use tracing::debug;
 use url::Url;
 
 use super::{
-    canonical::extract_canonical_url,
-    charset::{decode_to_utf8, Detected},
-    ssrf::{self, SsrfLevel},
     FetcherError,
+    canonical::extract_canonical_url,
+    charset::{Detected, decode_to_utf8},
+    ssrf::{self, SsrfLevel},
 };
 
 /// A successfully fetched page.
@@ -50,7 +50,9 @@ pub async fn fetch_url(
     level: SsrfLevel,
 ) -> Result<FetchedPage, FetcherError> {
     ssrf::validate_url(url, level)?;
-    let host = url.host_str().ok_or(FetcherError::Ssrf(ssrf::SsrfError::NoHost))?;
+    let host = url
+        .host_str()
+        .ok_or(FetcherError::Ssrf(ssrf::SsrfError::NoHost))?;
     let port = url.port_or_known_default().unwrap_or(0);
 
     // Resolve and validate. Note: this is best-effort — see design §2.4 about
@@ -116,6 +118,9 @@ async fn resolve_host(host: &str, port: u16) -> Result<Vec<IpAddr>, FetcherError
     let target = format!("{host}:{port}");
     let iter = lookup_host(target.as_str())
         .await
-        .map_err(|e| FetcherError::Dns { host: host.to_string(), source: e })?;
+        .map_err(|e| FetcherError::Dns {
+            host: host.to_string(),
+            source: e,
+        })?;
     Ok(iter.map(|sa| sa.ip()).collect())
 }

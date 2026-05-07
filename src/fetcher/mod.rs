@@ -22,7 +22,10 @@ pub enum FetcherError {
     Url(#[from] url::ParseError),
 
     #[error("dns lookup failed for {host}: {source}")]
-    Dns { host: String, source: std::io::Error },
+    Dns {
+        host: String,
+        source: std::io::Error,
+    },
 
     #[error("response decoding failed")]
     Decode,

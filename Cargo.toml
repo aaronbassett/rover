@@ -45,3 +45,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "
 [features]
 default = []
 test-loopback = []
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }

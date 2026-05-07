@@ -1,8 +1,8 @@
 //! `rover fetch <url>` command.
 
-use std::path::Path;
 use anyhow::Context;
 use jiff::Timestamp;
+use std::path::Path;
 use url::Url;
 
 use crate::config;
@@ -26,7 +26,9 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let level = ssrf_level_for_args(&args);
 
     let client = build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout());
-    let page = fetch_url(&client, &url, level).await.context("fetching URL")?;
+    let page = fetch_url(&client, &url, level)
+        .await
+        .context("fetching URL")?;
 
     if !(200..300).contains(&page.status) {
         anyhow::bail!("HTTP {} from {}", page.status, page.final_url);

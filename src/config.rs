@@ -3,18 +3,24 @@
 //! M1 covers a tiny subset of the full schema documented in PRD §12.
 //! Subsequent milestones extend this struct.
 
+use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
-use serde::Deserialize;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("failed to read config at {path}: {source}")]
-    Read { path: String, source: std::io::Error },
+    Read {
+        path: String,
+        source: std::io::Error,
+    },
 
     #[error("failed to parse config at {path}: {source}")]
-    Parse { path: String, source: toml::de::Error },
+    Parse {
+        path: String,
+        source: toml::de::Error,
+    },
 
     #[error("invalid config at {path}: {message}")]
     Invalid { path: String, message: String },
@@ -54,7 +60,10 @@ impl FetchConfig {
 }
 
 fn default_user_agent() -> String {
-    format!("Rover/{} (+https://github.com/aaronbassett/rover)", env!("CARGO_PKG_VERSION"))
+    format!(
+        "Rover/{} (+https://github.com/aaronbassett/rover)",
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 fn default_timeout_secs() -> u64 {
@@ -64,13 +73,22 @@ fn default_timeout_secs() -> u64 {
 /// Load config. If `path` is provided, the file must exist and parse cleanly.
 /// If `path` is None, return defaults.
 pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
-    let Some(path) = path else { return Ok(Config::default()); };
+    let Some(path) = path else {
+        return Ok(Config::default());
+    };
 
-    let bytes = std::fs::read_to_string(path)
-        .map_err(|source| ConfigError::Read { path: path.display().to_string(), source })?;
-    let cfg: Config = toml::from_str(&bytes)
-        .map_err(|source| ConfigError::Parse { path: path.display().to_string(), source })?;
-    validate(&cfg).map_err(|message| ConfigError::Invalid { path: path.display().to_string(), message })?;
+    let bytes = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let cfg: Config = toml::from_str(&bytes).map_err(|source| ConfigError::Parse {
+        path: path.display().to_string(),
+        source,
+    })?;
+    validate(&cfg).map_err(|message| ConfigError::Invalid {
+        path: path.display().to_string(),
+        message,
+    })?;
     Ok(cfg)
 }
 
@@ -102,11 +120,15 @@ mod tests {
     #[test]
     fn load_from_file_overrides_defaults() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        writeln!(file, r#"
+        writeln!(
+            file,
+            r#"
 [fetch]
 user_agent = "test-ua"
 timeout_secs = 5
-"#).unwrap();
+"#
+        )
+        .unwrap();
 
         let cfg = load(Some(file.path())).unwrap();
         assert_eq!(cfg.fetch.user_agent, "test-ua");
@@ -130,10 +152,14 @@ timeout_secs = 5
     #[test]
     fn load_unknown_field_errors() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        writeln!(file, r#"
+        writeln!(
+            file,
+            r#"
 [fetch]
 unknown_field = "x"
-"#).unwrap();
+"#
+        )
+        .unwrap();
         let result = load(Some(file.path()));
         assert!(matches!(result, Err(ConfigError::Parse { .. })));
     }
@@ -141,10 +167,14 @@ unknown_field = "x"
     #[test]
     fn load_rejects_zero_timeout() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        writeln!(file, r#"
+        writeln!(
+            file,
+            r#"
 [fetch]
 timeout_secs = 0
-"#).unwrap();
+"#
+        )
+        .unwrap();
         let result = load(Some(file.path()));
         assert!(matches!(result, Err(ConfigError::Invalid { .. })));
     }

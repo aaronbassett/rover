@@ -62,11 +62,11 @@ fn write_field(buf: &mut String, key: &str, value: &str) {
     for c in value.chars() {
         match c {
             '\\' => buf.push_str(r"\\"),
-            '"'  => buf.push_str(r#"\""#),
+            '"' => buf.push_str(r#"\""#),
             '\n' => buf.push_str(r"\n"),
             '\r' => buf.push_str(r"\r"),
             '\t' => buf.push_str(r"\t"),
-            _    => buf.push(c),
+            _ => buf.push(c),
         }
     }
     buf.push('"');
@@ -78,7 +78,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
     h.update(bytes);
     let out = h.finalize();
     let mut s = String::with_capacity(out.len() * 2);
-    for b in out { s.push_str(&format!("{b:02x}")); }
+    for b in out {
+        s.push_str(&format!("{b:02x}"));
+    }
     s
 }
 
@@ -93,8 +95,12 @@ mod tests {
     use super::*;
     use jiff::Timestamp;
 
-    fn ts() -> Timestamp { "2026-05-07T12:34:56Z".parse().unwrap() }
-    fn u(s: &str) -> Url { Url::parse(s).unwrap() }
+    fn ts() -> Timestamp {
+        "2026-05-07T12:34:56Z".parse().unwrap()
+    }
+    fn u(s: &str) -> Url {
+        Url::parse(s).unwrap()
+    }
 
     #[test]
     fn emits_required_fields() {
@@ -161,8 +167,20 @@ mod tests {
     fn content_hash_is_deterministic() {
         let url = u("https://example.com/p");
         let body = "stable body";
-        let a = render(&PageMeta { url: &url, canonical_url: &url, title: None, fetched_at: ts(), body });
-        let b = render(&PageMeta { url: &url, canonical_url: &url, title: None, fetched_at: ts(), body });
+        let a = render(&PageMeta {
+            url: &url,
+            canonical_url: &url,
+            title: None,
+            fetched_at: ts(),
+            body,
+        });
+        let b = render(&PageMeta {
+            url: &url,
+            canonical_url: &url,
+            title: None,
+            fetched_at: ts(),
+            body,
+        });
         assert_eq!(a, b);
     }
 
@@ -177,7 +195,13 @@ mod tests {
     #[test]
     fn body_terminates_with_newline() {
         let url = u("https://example.com/p");
-        let out = render(&PageMeta { url: &url, canonical_url: &url, title: None, fetched_at: ts(), body: "no trailing newline" });
+        let out = render(&PageMeta {
+            url: &url,
+            canonical_url: &url,
+            title: None,
+            fetched_at: ts(),
+            body: "no trailing newline",
+        });
         assert!(out.ends_with('\n'));
     }
 }

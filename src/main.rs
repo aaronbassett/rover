@@ -23,10 +23,20 @@ enum Command {
     Fetch(FetchArgs),
 
     /// Long-running batch status (M6).
-    Batch { id: String, #[arg(long)] monitor: bool },
+    Batch {
+        id: String,
+        #[arg(long)]
+        monitor: bool,
+    },
 
     /// Generic task status (M6).
-    Task { id: String, #[arg(long)] monitor: bool, #[arg(long)] cancel: bool },
+    Task {
+        id: String,
+        #[arg(long)]
+        monitor: bool,
+        #[arg(long)]
+        cancel: bool,
+    },
 
     /// Cache operations (M2).
     #[command(subcommand)]
@@ -53,10 +63,18 @@ struct FetchArgs {
 }
 
 #[derive(Debug, Subcommand)]
-enum CacheCmd { List, Get { url: String }, Purge { pattern: String }, Stats }
+enum CacheCmd {
+    List,
+    Get { url: String },
+    Purge { pattern: String },
+    Stats,
+}
 
 #[derive(Debug, Subcommand)]
-enum ConfigCmd { Show, Set { key: String, value: String } }
+enum ConfigCmd {
+    Show,
+    Set { key: String, value: String },
+}
 
 fn main() -> ExitCode {
     rover::telemetry::init("info,rover=debug");
@@ -70,7 +88,9 @@ fn main() -> ExitCode {
 
 async fn dispatch(cli: Cli) -> ExitCode {
     let result = match cli.command {
-        Command::Fetch(args) => rover::cli::fetch::run(args.into_runtime_args(), cli.config.as_deref()).await,
+        Command::Fetch(args) => {
+            rover::cli::fetch::run(args.into_runtime_args(), cli.config.as_deref()).await
+        }
         Command::Mcp
         | Command::Batch { .. }
         | Command::Task { .. }
