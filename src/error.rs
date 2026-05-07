@@ -11,6 +11,9 @@ pub enum Error {
     #[error("config error: {0}")]
     Config(#[from] crate::config::ConfigError),
 
+    #[error("fetcher error: {0}")]
+    Fetcher(#[from] crate::fetcher::FetcherError),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
