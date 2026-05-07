@@ -80,7 +80,7 @@ path = "src/main.rs"
 anyhow = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-tls", "stream", "charset"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "charset"] }
 url = "2"
 encoding_rs = "0.8"
 chardetng = "1"
@@ -770,7 +770,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 cargo test --lib fetcher::ssrf
 ```
 
-Expected: 11 tests pass.
+Expected: 12 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -807,7 +807,7 @@ Create `src/fetcher/charset.rs`:
 //! `readabilityrs` accepts `&str`, so we always re-encode the final output to
 //! UTF-8 here.
 
-use chardetng::EncodingDetector;
+use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::{Encoding, UTF_8};
 use regex::Regex;
 use std::sync::LazyLock;
@@ -850,9 +850,9 @@ pub fn detect_encoding(content_type: Option<&str>, bytes: &[u8]) -> Detected {
     }
 
     // 4. chardetng
-    let mut det = EncodingDetector::new();
+    let mut det = EncodingDetector::new(Iso2022JpDetection::Deny);
     det.feed(bytes, true);
-    let enc = det.guess(None, true);
+    let enc = det.guess(None, Utf8Detection::Allow);
     if enc != UTF_8 || looks_like_utf8(bytes) {
         return Detected { encoding: enc, source: DetectionSource::Chardetng };
     }
