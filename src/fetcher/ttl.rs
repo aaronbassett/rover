@@ -66,11 +66,11 @@ pub fn compute_ttl(
         m
     } else if no_store_overridden {
         0
-    } else if let Some(exp) = expires_header
-        .and_then(parse_expires_header)
-        .map(|t| (t - now).max(0))
-    {
-        exp as u64
+    } else if let Some(t) = expires_header.and_then(parse_expires_header) {
+        if t <= now {
+            return TtlDecision::DoNotCache;
+        }
+        (t - now) as u64
     } else {
         cfg.default_ttl.as_secs()
     };
@@ -211,5 +211,19 @@ mod tests {
     fn floors_at_min_ttl() {
         let d = compute_ttl(0, "x", "max-age=10", None, &cfg());
         assert_eq!(d, TtlDecision::Cache { expires_at: 300 });
+    }
+
+    #[test]
+    fn past_expires_skips_cache() {
+        // Jan 1 2000 was a Saturday; jiff's RFC 2822 parser strictly
+        // validates the weekday, so we must use the correct one.
+        let d = compute_ttl(
+            1_700_000_000,
+            "x",
+            "",
+            Some("Sat, 1 Jan 2000 00:00:00 GMT"),
+            &cfg(),
+        );
+        assert_eq!(d, TtlDecision::DoNotCache);
     }
 }
