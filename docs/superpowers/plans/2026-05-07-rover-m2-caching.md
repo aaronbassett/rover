@@ -98,12 +98,12 @@ This task lays the storage module skeleton, the first migration file, and the St
 In the `[dependencies]` section, add:
 
 ```toml
-rusqlite = { version = "0.39", features = ["bundled"] }
-tokio-rusqlite = "0.7"
+rusqlite = "0.37"
+tokio-rusqlite = { version = "0.7", features = ["bundled"] }
 humantime-serde = "1"
 ```
 
-The `bundled` feature on `rusqlite` ships SQLite as part of the build; no system SQLite needed.
+We pin `rusqlite = "0.37"` instead of `0.39` because `tokio-rusqlite 0.7` (the latest published version) depends on `rusqlite ^0.37`, and `libsqlite3-sys` enforces a single native `sqlite3` link per build graph, so `rusqlite 0.39` cannot coexist with the version `tokio-rusqlite` brings in. The `bundled` feature is enabled on `tokio-rusqlite` rather than directly on `rusqlite`: enabling `bundled` there activates `rusqlite/bundled` transitively for every consumer of `rusqlite` in the graph, so the SQLite C library is still bundled and no system SQLite is required.
 
 - [ ] **Step 2: Create `src/storage/migrations/001_initial.sql`**
 
