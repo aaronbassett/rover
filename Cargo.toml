@@ -26,6 +26,7 @@ encoding_rs = "0.8"
 chardetng = "1"
 scraper = "0.26"
 clap = { version = "4", features = ["derive"] }
+dirs = "5"
 toml = "1"
 sha2 = "0.11"
 jiff = { version = "0.2", features = ["serde"] }

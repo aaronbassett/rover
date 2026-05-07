@@ -55,6 +55,10 @@ struct FetchArgs {
     /// URL to fetch.
     url: String,
 
+    /// Bypass the cache for this fetch and always go out to the network.
+    #[arg(long)]
+    force_refresh: bool,
+
     /// **Test-only.** Allow loopback addresses to satisfy SSRF checks. Used by
     /// the integration test suite against wiremock; never used in production.
     #[cfg(any(test, feature = "test-loopback"))]
@@ -115,6 +119,7 @@ impl FetchArgs {
     fn into_runtime_args(self) -> rover::cli::fetch::Args {
         rover::cli::fetch::Args {
             url: self.url,
+            force_refresh: self.force_refresh,
             #[cfg(any(test, feature = "test-loopback"))]
             ssrf_test_loopback: self.ssrf_test_loopback,
         }
