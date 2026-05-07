@@ -1730,22 +1730,22 @@ where
     };
 
     if !(200..300).contains(&fetched.status) {
-        return Err(FetcherError::Http(reqwest_status_error(&fetched)));
+        return Err(FetcherError::Status {
+            status: fetched.status,
+            url: fetched.final_url.to_string(),
+        });
     }
 
     // --- Step 3: extract ---
     let extracted = extract_fn(&fetched.body, &fetched.final_url)?;
 
     // --- Step 4: TTL ---
-    let cache_control_value = fetched
-        .content_type
-        .as_deref()
-        .map(|_| ())
-        .and(extract_header(&fetched, "cache-control"))
-        .unwrap_or_default();
-    let expires_value = extract_header(&fetched, "expires");
+    // Task 8 wires real Cache-Control / Expires header extraction from
+    // FetchedPage; Task 7 falls back to default_ttl.
+    let cache_control_value = String::new();
+    let expires_value: Option<&str> = None;
     let host = url.host_str().unwrap_or("");
-    let decision = compute_ttl(now, host, &cache_control_value, expires_value.as_deref(), cfg);
+    let decision = compute_ttl(now, host, &cache_control_value, expires_value, cfg);
 
     let expires_at = match decision {
         TtlDecision::Cache { expires_at } => Some(expires_at),
@@ -1815,24 +1815,6 @@ fn map_storage_err(e: crate::storage::StorageError) -> FetcherError {
     FetcherError::Decode
 }
 
-fn extract_header(fetched: &FetchedPage, _name: &str) -> Option<String> {
-    // Task 7 extracts content_type and link_header from FetchedPage already;
-    // for cache-control / expires, M2 surfaces them via Task 8's expansion of
-    // FetchedPage. For now, return None — Task 8 fills this in.
-    let _ = fetched;
-    None
-}
-
-fn reqwest_status_error(_fetched: &FetchedPage) -> reqwest::Error {
-    // Synthesize via reqwest's builder is non-trivial; the cached fetch flow
-    // returns the status as part of the Err path, but for v1 we wrap it as a
-    // generic reqwest error. The CLI emits a clean "HTTP {status}" message
-    // anyway, so this only matters for callers that match on the variant.
-    //
-    // Practical alternative: extend FetcherError with a Status variant in Task 8.
-    unreachable!("placeholder; reachable only in 4xx/5xx pre-Task-8")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1896,8 +1878,6 @@ pub enum FetcherError {
     Status { status: u16, url: String },
 }
 ```
-
-(The new `Status` variant replaces the awkward `reqwest_status_error` placeholder. Update `cached.rs` accordingly: `return Err(FetcherError::Status { status: fetched.status, url: fetched.final_url.to_string() });`.)
 
 - [ ] **Step 3: Run the tests**
 
@@ -2071,7 +2051,7 @@ if !(200..300).contains(&fetched.status) {
 // header values from `fetched.cache_control` and `fetched.expires`.
 ```
 
-Replace the `extract_header` placeholder with direct field access:
+Replace the Task 7 stubbed `cache_control_value = String::new()` / `expires_value = None` with direct field access:
 
 ```rust
 let host = url.host_str().unwrap_or("");
@@ -2083,8 +2063,6 @@ let decision = compute_ttl(
     cfg,
 );
 ```
-
-Delete the stub `extract_header` and `reqwest_status_error` functions.
 
 - [ ] **Step 4: Update existing M1 fetcher tests**
 
