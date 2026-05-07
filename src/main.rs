@@ -68,10 +68,35 @@ struct FetchArgs {
 
 #[derive(Debug, Subcommand)]
 enum CacheCmd {
-    List,
+    /// List cached URLs (most recent first).
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: u64,
+        #[arg(long, default_value_t = 0)]
+        offset: u64,
+    },
+    /// Print the cached Markdown for a URL.
     Get { url: String },
-    Purge { pattern: String },
+    /// Delete cache entries matching a glob (`*`, `?`).
+    Purge {
+        pattern: String,
+        /// Required to wipe the entire cache (`*` pattern).
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show cache size, entry count, expired count.
     Stats,
+}
+
+impl CacheCmd {
+    fn into_runtime_args(self) -> rover::cli::cache::Args {
+        match self {
+            CacheCmd::List { limit, offset } => rover::cli::cache::Args::List { limit, offset },
+            CacheCmd::Get { url } => rover::cli::cache::Args::Get { url },
+            CacheCmd::Purge { pattern, all } => rover::cli::cache::Args::Purge { pattern, all },
+            CacheCmd::Stats => rover::cli::cache::Args::Stats,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -95,10 +120,13 @@ async fn dispatch(cli: Cli) -> ExitCode {
         Command::Fetch(args) => {
             rover::cli::fetch::run(args.into_runtime_args(), cli.config.as_deref()).await
         }
+        Command::Cache(sub) => {
+            let args = sub.into_runtime_args();
+            rover::cli::cache::run(args, cli.config.as_deref()).await
+        }
         Command::Mcp
         | Command::Batch { .. }
         | Command::Task { .. }
-        | Command::Cache(_)
         | Command::Doctor
         | Command::Config(_) => {
             eprintln!("not yet implemented (planned for a later milestone)");
