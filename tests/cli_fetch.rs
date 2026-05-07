@@ -50,7 +50,8 @@ fn fetch_help_lists_args() {
         .args(["fetch", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("<URL>"));
+        .stdout(predicate::str::contains("<URL>"))
+        .stdout(predicate::str::contains("URL to fetch"));
 }
 
 #[test]
@@ -59,5 +60,5 @@ fn unknown_subcommand_errors() {
         .unwrap()
         .args(["nope"])
         .assert()
-        .failure();
+        .code(2);
 }

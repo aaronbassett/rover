@@ -15,6 +15,9 @@ pub enum ConfigError {
 
     #[error("failed to parse config at {path}: {source}")]
     Parse { path: String, source: toml::de::Error },
+
+    #[error("invalid config at {path}: {message}")]
+    Invalid { path: String, message: String },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -73,7 +76,15 @@ pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
         .map_err(|source| ConfigError::Read { path: path.display().to_string(), source })?;
     let cfg: Config = toml::from_str(&bytes)
         .map_err(|source| ConfigError::Parse { path: path.display().to_string(), source })?;
+    validate(&cfg).map_err(|message| ConfigError::Invalid { path: path.display().to_string(), message })?;
     Ok(cfg)
+}
+
+fn validate(cfg: &Config) -> Result<(), String> {
+    if cfg.fetch.timeout_secs == 0 {
+        return Err("fetch.timeout_secs must be > 0".to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -131,5 +142,16 @@ unknown_field = "x"
 "#).unwrap();
         let result = load(Some(file.path()));
         assert!(matches!(result, Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn load_rejects_zero_timeout() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, r#"
+[fetch]
+timeout_secs = 0
+"#).unwrap();
+        let result = load(Some(file.path()));
+        assert!(matches!(result, Err(ConfigError::Invalid { .. })));
     }
 }
