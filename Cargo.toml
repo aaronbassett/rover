@@ -34,6 +34,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 readabilityrs = "0.1"
 regex = "1"
+tokio-rusqlite = { version = "0.7", features = ["bundled"] }
+humantime-serde = "1"
 
 [dev-dependencies]
 wiremock = "0.6"
