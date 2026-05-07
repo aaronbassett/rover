@@ -14,6 +14,9 @@ pub enum Error {
     #[error("fetcher error: {0}")]
     Fetcher(#[from] crate::fetcher::FetcherError),
 
+    #[error("extractor error: {0}")]
+    Extractor(#[from] crate::extractor::ExtractorError),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
