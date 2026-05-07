@@ -1,5 +1,6 @@
 //! HTTP fetching, charset detection, SSRF enforcement.
 
+pub mod canonical;
 pub mod charset;
 pub mod client;
 pub mod ssrf;
