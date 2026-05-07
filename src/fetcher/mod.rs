@@ -6,6 +6,7 @@ pub mod charset;
 pub mod client;
 pub mod fetch;
 pub mod ssrf;
+pub mod ttl;
 
 pub use fetch::FetchedPage;
 
