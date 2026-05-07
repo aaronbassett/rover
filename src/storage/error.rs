@@ -22,5 +22,5 @@ pub enum StorageError {
     Db(#[from] tokio_rusqlite::Error),
 
     #[error("rusqlite error: {0}")]
-    Sqlite(#[from] tokio_rusqlite::rusqlite::Error),
+    Sqlite(#[from] rusqlite::Error),
 }
