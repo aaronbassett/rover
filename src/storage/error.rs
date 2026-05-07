@@ -19,8 +19,11 @@ pub enum StorageError {
     },
 
     #[error("database error: {0}")]
-    Db(#[from] tokio_rusqlite::Error),
+    Backend(#[from] tokio_rusqlite::Error),
+}
 
-    #[error("rusqlite error: {0}")]
-    Sqlite(#[from] rusqlite::Error),
+impl From<rusqlite::Error> for StorageError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::Backend(tokio_rusqlite::Error::Error(err))
+    }
 }

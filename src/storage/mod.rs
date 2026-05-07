@@ -35,9 +35,26 @@ const MIGRATIONS: &[(&str, &str)] = &[(
     include_str!("migrations/001_initial.sql"),
 )];
 
+/// Per-migration outcome shuttled out of the actor closure so the failed
+/// migration's filename survives back to the awaiter.
+enum MigrationOutcome {
+    Ok,
+    FailedAt { name: String, err: rusqlite::Error },
+}
+
 impl Db {
     /// Open the database at `path`, applying any pending migrations.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_with_migrations(path, MIGRATIONS).await
+    }
+
+    /// Test-aware variant of [`Self::open`] taking an explicit migration slice.
+    /// Production callers use [`Self::open`]; this seam lets tests inject a
+    /// deliberately-broken migration without compromising the canonical list.
+    pub(crate) async fn open_with_migrations(
+        path: impl AsRef<Path>,
+        migrations: &'static [(&'static str, &'static str)],
+    ) -> Result<Self, StorageError> {
         let path_str = path.as_ref().display().to_string();
         let conn = Connection::open(path)
             .await
@@ -46,8 +63,6 @@ impl Db {
                 source: tokio_rusqlite::Error::Error(source),
             })?;
 
-        // Set WAL + busy_timeout per-connection. WAL is persistent at the file
-        // level, so this only matters on first open, but it's idempotent.
         conn.call(|c| {
             c.pragma_update(None, "journal_mode", "WAL")?;
             c.busy_timeout(Duration::from_secs(5))?;
@@ -56,44 +71,81 @@ impl Db {
         .await?;
 
         let db = Self { conn };
-        db.run_migrations().await?;
+        db.run_migrations(migrations).await?;
         Ok(db)
     }
 
-    async fn run_migrations(&self) -> Result<(), StorageError> {
-        self.conn
-            .call(|c| {
-                let current = system::read_schema_version(c)
-                    .map_err(|_| rusqlite::Error::ExecuteReturnedResults)?;
-                for (idx, (name, sql)) in MIGRATIONS.iter().enumerate() {
+    async fn run_migrations(
+        &self,
+        migrations: &'static [(&'static str, &'static str)],
+    ) -> Result<(), StorageError> {
+        let outcome = self
+            .conn
+            .call(move |c| {
+                let current = system::read_schema_version(c).map_err(unwrap_storage_err)?;
+                for (idx, (name, sql)) in migrations.iter().enumerate() {
                     let target = (idx + 1) as u32;
                     if current >= target {
                         continue;
                     }
+                    // unchecked = no compile-time &mut Connection proof; safe at
+                    // runtime because the actor closure is the only borrow.
                     let tx = c.unchecked_transaction()?;
-                    tx.execute_batch(sql)?;
-                    system::write_schema_version(&tx, target)
-                        .map_err(|_| rusqlite::Error::ExecuteReturnedResults)?;
-                    tx.commit()?;
+                    if let Err(err) = tx
+                        .execute_batch(sql)
+                        .and_then(|()| {
+                            system::write_schema_version(&tx, target).map_err(unwrap_storage_err)
+                        })
+                        .and_then(|()| tx.commit())
+                    {
+                        return Ok(MigrationOutcome::FailedAt {
+                            name: (*name).to_string(),
+                            err,
+                        });
+                    }
                     tracing::info!(target: "rover::storage", migration = name, "applied migration");
                 }
-                Ok::<_, rusqlite::Error>(())
+                Ok::<_, rusqlite::Error>(MigrationOutcome::Ok)
             })
             .await?;
-        Ok(())
+
+        match outcome {
+            MigrationOutcome::Ok => Ok(()),
+            MigrationOutcome::FailedAt { name, err } => Err(StorageError::Migration {
+                name,
+                source: tokio_rusqlite::Error::Error(err),
+            }),
+        }
     }
 
     /// Current schema version (for `rover doctor` and tests).
     pub async fn schema_version(&self) -> Result<u32, StorageError> {
-        let v = self
-            .conn
-            .call(|c| {
-                system::read_schema_version(c).map_err(|_| rusqlite::Error::ExecuteReturnedResults)
-            })
-            .await?;
-        Ok(v)
+        self.conn
+            .call(|c| Ok::<_, rusqlite::Error>(system::read_schema_version(c)))
+            .await?
     }
 }
+
+/// Collapse a `StorageError` raised inside an actor closure back to a
+/// `rusqlite::Error` so it can flow through `Connection::call`'s typed result.
+/// `system::{read,write}_schema_version` only ever produce `Backend(Error(rusqlite))`
+/// internally, so unwrapping is total in practice; the fallback preserves the
+/// message rather than panicking.
+fn unwrap_storage_err(e: StorageError) -> rusqlite::Error {
+    match e {
+        StorageError::Backend(tokio_rusqlite::Error::Error(inner)) => inner,
+        other => rusqlite::Error::ToSqlConversionFailure(Box::new(StringErr(other.to_string()))),
+    }
+}
+
+#[derive(Debug)]
+struct StringErr(String);
+impl std::fmt::Display for StringErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for StringErr {}
 
 #[cfg(test)]
 mod tests {
@@ -131,5 +183,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    const BROKEN_MIGRATIONS: &[(&str, &str)] =
+        &[("001_broken.sql", "CREATE TABLE oops(SYNTAX ERROR);")];
+
+    #[tokio::test]
+    async fn broken_migration_surfaces_named_migration_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("rover.db");
+        let err = Db::open_with_migrations(&path, BROKEN_MIGRATIONS)
+            .await
+            .expect_err("broken migration must fail");
+        match err {
+            StorageError::Migration { name, .. } => {
+                assert_eq!(name, "001_broken.sql");
+            }
+            other => panic!("expected StorageError::Migration, got {other:?}"),
+        }
     }
 }
