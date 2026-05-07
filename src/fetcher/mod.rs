@@ -36,4 +36,7 @@ pub enum FetcherError {
 
     #[error("HTTP {status} from {url}")]
     Status { status: u16, url: String },
+
+    #[error("storage error: {0}")]
+    Storage(#[from] crate::storage::StorageError),
 }

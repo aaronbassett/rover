@@ -222,9 +222,8 @@ async fn lookup_cached(db: &Db, url: &Url) -> Result<Option<Page>, FetcherError>
 }
 
 fn map_storage_err(e: crate::storage::StorageError) -> FetcherError {
-    // Surface as a generic decode failure for now; M3 may want a Storage variant.
     tracing::error!(target: "rover::fetcher::cached", error = %e, "storage error");
-    FetcherError::Decode
+    FetcherError::Storage(e)
 }
 
 #[cfg(test)]
@@ -234,6 +233,16 @@ mod tests {
     #[test]
     fn cache_status_eq() {
         assert_ne!(CacheStatus::Hit, CacheStatus::Stale);
+    }
+
+    #[test]
+    fn map_storage_err_routes_to_storage_variant() {
+        // Regression: previously collapsed every StorageError into FetcherError::Decode,
+        // producing the misleading "response decoding failed" message for DB failures.
+        let storage_err = crate::storage::StorageError::from(rusqlite::Error::QueryReturnedNoRows);
+        let mapped = map_storage_err(storage_err);
+        assert!(matches!(mapped, FetcherError::Storage(_)));
+        assert!(mapped.to_string().starts_with("storage error:"));
     }
 
     #[test]
