@@ -1415,7 +1415,7 @@ pub fn compute_ttl(
     let cc = CacheControl::parse(cache_control);
 
     // Step 1: no-store handling.
-    if cc.no_store {
+    let no_store_overridden = if cc.no_store {
         let host_override = cfg
             .override_no_store_domains
             .iter()
@@ -1423,14 +1423,24 @@ pub fn compute_ttl(
         if !cfg.override_no_store && !host_override {
             return TtlDecision::DoNotCache;
         }
-        // Override active: continue, but floor at min_ttl below.
-    }
+        // Override active: treat the base TTL as 0 and let `min_ttl` floor
+        // below take effect.
+        true
+    } else {
+        false
+    };
 
     // Steps 2-4: pick the base TTL.
+    //
+    // no-store-with-override branches treat the base TTL as 0, so the
+    // `min_ttl` floor lifts the result to `min_ttl`. This is the
+    // spec-intent of `min_ttl` for force-cached entries.
     let mut ttl_secs = if let Some(s) = cc.s_maxage {
         s
     } else if let Some(m) = cc.max_age {
         m
+    } else if no_store_overridden {
+        0
     } else if let Some(exp) = expires_header
         .and_then(parse_expires_header)
         .map(|t| (t - now).max(0))
@@ -1457,7 +1467,9 @@ pub fn compute_ttl(
 }
 
 fn parse_expires_header(value: &str) -> Option<i64> {
-    rfc2822::parse(value).ok().map(|ts| ts.as_second())
+    rfc2822::parse(value)
+        .ok()
+        .map(|z| z.timestamp().as_second())
 }
 
 #[cfg(test)]
@@ -1514,9 +1526,38 @@ mod tests {
     #[test]
     fn expires_header_used_without_cache_control() {
         let d = compute_ttl(0, "x", "", Some("Mon, 1 Jan 2035 00:00:00 GMT"), &cfg());
+        // Expires header in 2035 + max_ttl=7*86400 cap → expires_at = max_ttl.
+        assert_eq!(
+            d,
+            TtlDecision::Cache {
+                expires_at: 7 * 86400
+            }
+        );
+    }
+
+    #[test]
+    fn expires_header_within_max_ttl_used_directly() {
+        // Now = 1_700_000_000 (Nov 2023). The Expires header below parses to
+        // some timestamp shortly after `now`. We assert it falls between `now`
+        // and `now + max_ttl`, so the natural Expires-derived TTL is used
+        // (no min_ttl floor or max_ttl cap kicks in).
+        let d = compute_ttl(
+            1_700_000_000,
+            "x",
+            "",
+            Some("Sun, 14 Nov 2023 22:30:00 GMT"),
+            &cfg(),
+        );
         match d {
             TtlDecision::Cache { expires_at } => {
-                assert!(expires_at > 1_900_000_000, "expires_at = {expires_at}");
+                assert!(
+                    expires_at > 1_700_000_000,
+                    "expires_at={expires_at} should be > now"
+                );
+                assert!(
+                    expires_at < 1_700_000_000 + 7 * 86400,
+                    "expires_at={expires_at} should be below now + max_ttl"
+                );
             }
             other => panic!("expected Cache, got {other:?}"),
         }
@@ -1557,7 +1598,7 @@ Add `pub mod ttl;` to the module list (alphabetical position).
 cargo test --features test-loopback fetcher::ttl
 ```
 
-Expected: 9 tests pass. (Task 5 must already be in place so `crate::config::CacheConfig` is available.)
+Expected: 10 tests pass. (Task 5 must already be in place so `crate::config::CacheConfig` is available.)
 
 - [ ] **Step 4: Commit**
 
