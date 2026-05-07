@@ -41,6 +41,23 @@ pub struct FetchedPage {
 
     /// Raw `Last-Modified` header, if present.
     pub last_modified: Option<String>,
+
+    /// `Cache-Control` response header (M2).
+    pub cache_control: Option<String>,
+
+    /// `Expires` response header (M2).
+    pub expires: Option<String>,
+}
+
+/// Conditional GET validators for revalidating a stale cache entry.
+///
+/// Both fields are forwarded as request headers when set:
+/// `If-None-Match` for ETag-based validation and `If-Modified-Since` for
+/// time-based validation. Either, both, or neither may be supplied.
+#[derive(Debug, Clone, Default)]
+pub struct ConditionalGet {
+    pub if_none_match: Option<String>,
+    pub if_modified_since: Option<String>,
 }
 
 /// Fetch `url` honoring the given SSRF level.
@@ -48,6 +65,21 @@ pub async fn fetch_url(
     client: &reqwest::Client,
     url: &Url,
     level: SsrfLevel,
+) -> Result<FetchedPage, FetcherError> {
+    fetch_url_conditional(client, url, level, &ConditionalGet::default()).await
+}
+
+/// Fetch `url` with optional conditional-GET validators.
+///
+/// Behaves identically to [`fetch_url`] but attaches `If-None-Match` and/or
+/// `If-Modified-Since` headers when present in `cond`. Callers should be
+/// prepared for a `304 Not Modified` response: in that case the body is empty
+/// and only the freshness-related headers are meaningful.
+pub async fn fetch_url_conditional(
+    client: &reqwest::Client,
+    url: &Url,
+    level: SsrfLevel,
+    cond: &ConditionalGet,
 ) -> Result<FetchedPage, FetcherError> {
     ssrf::validate_url(url, level)?;
     let host = url
@@ -60,7 +92,14 @@ pub async fn fetch_url(
     let addrs = resolve_host(host, port).await?;
     ssrf::validate_addresses(&addrs, level)?;
 
-    let response = client.get(url.clone()).send().await?;
+    let mut req = client.get(url.clone());
+    if let Some(etag) = &cond.if_none_match {
+        req = req.header(reqwest::header::IF_NONE_MATCH, etag);
+    }
+    if let Some(lm) = &cond.if_modified_since {
+        req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm);
+    }
+    let response = req.send().await?;
     let status = response.status().as_u16();
     let final_url = Url::parse(response.url().as_str())?;
 
@@ -82,6 +121,16 @@ pub async fn fetch_url(
     let last_modified = response
         .headers()
         .get(reqwest::header::LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let cache_control = response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let expires = response
+        .headers()
+        .get(reqwest::header::EXPIRES)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
 
@@ -111,6 +160,8 @@ pub async fn fetch_url(
         link_header,
         etag,
         last_modified,
+        cache_control,
+        expires,
     })
 }
 

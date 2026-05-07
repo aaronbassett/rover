@@ -4,17 +4,17 @@
 //! (future) MCP `fetch` tool. It wraps the raw `fetcher::fetch::fetch_url`
 //! with cache lookup, TTL-driven freshness, and write-back.
 //!
-//! Task 7 ships a minimal version that always does a full GET on miss/stale.
-//! Task 8 adds conditional GETs (`If-None-Match` / `If-Modified-Since`) and
-//! 304 Not Modified handling, plus real `Cache-Control` / `Expires` header
-//! extraction (currently stubbed — TTL falls back to `cache.default_ttl`).
+//! Task 7 shipped the orchestrator skeleton (always a full GET on miss/stale).
+//! Task 8 added conditional GETs (`If-None-Match` / `If-Modified-Since`),
+//! 304 Not Modified handling via `pages::touch`, and real `Cache-Control` /
+//! `Expires` header propagation into the TTL decision.
 
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::FetcherError;
-use super::fetch::fetch_url;
+use super::fetch::{ConditionalGet, fetch_url_conditional};
 use super::ssrf::SsrfLevel;
 use super::ttl::{TtlDecision, compute_ttl};
 use crate::config::CacheConfig;
@@ -71,38 +71,75 @@ where
 {
     let now = Timestamp::now().as_second();
 
-    // Step 1: cache lookup.
-    if !opts.force_refresh {
-        if let Some(p) = lookup_cached(db, url).await? {
-            if let Some(exp) = p.expires_at {
-                if exp > now {
-                    return Ok(CachedFetch {
-                        page: p,
-                        cache_status: CacheStatus::Hit,
-                    });
-                }
-                // expired: fall through to fetch below
+    // Step 1: cache lookup. Fresh hits short-circuit; stale entries are kept
+    // for revalidation (conditional GET) and as a fallback on network error.
+    let stale: Option<Page> = if opts.force_refresh {
+        None
+    } else {
+        match lookup_cached(db, url).await? {
+            Some(p) if p.expires_at.is_some_and(|e| e > now) => {
+                return Ok(CachedFetch {
+                    page: p,
+                    cache_status: CacheStatus::Hit,
+                });
             }
+            Some(p) => Some(p),
+            None => None,
         }
-    }
+    };
 
-    // Step 2: fetch. Task 8 will add conditional GET headers from a stale
-    // entry's etag/last_modified; Task 7 always does a full GET.
-    let fetched = match fetch_url(client, url, opts.ssrf_level).await {
+    // Step 2: build conditional validators from any stale entry.
+    let cond = match &stale {
+        Some(p) => ConditionalGet {
+            if_none_match: p.etag.clone(),
+            if_modified_since: p.last_modified.clone(),
+        },
+        None => ConditionalGet::default(),
+    };
+
+    // Step 3: fetch (conditional if validators present).
+    let fetched = match fetch_url_conditional(client, url, opts.ssrf_level, &cond).await {
         Ok(f) => f,
         Err(e) => {
             // Network failure with a stale entry available → return stale.
-            if let Some(stale) = lookup_cached(db, url).await? {
+            if let Some(s) = stale {
                 tracing::warn!(target: "rover::fetcher::cached",
                     error = %e, url = url.as_str(), "fetch failed; serving stale");
                 return Ok(CachedFetch {
-                    page: stale,
+                    page: s,
                     cache_status: CacheStatus::Stale,
                 });
             }
             return Err(e);
         }
     };
+
+    // Step 4: 304 Not Modified — extend freshness on the stale row and serve it.
+    if fetched.status == 304 {
+        let stale = stale.expect("304 implies a stale entry was sent");
+        let host = url.host_str().unwrap_or("");
+        let decision = compute_ttl(
+            now,
+            host,
+            fetched.cache_control.as_deref().unwrap_or(""),
+            fetched.expires.as_deref(),
+            cfg,
+        );
+        let expires_at = match decision {
+            TtlDecision::Cache { expires_at } => Some(expires_at),
+            TtlDecision::DoNotCache => None,
+        };
+        pages::touch(db, &stale.url_hash, now, expires_at)
+            .await
+            .map_err(map_storage_err)?;
+        let mut page = stale;
+        page.fetched_at = now;
+        page.expires_at = expires_at;
+        return Ok(CachedFetch {
+            page,
+            cache_status: CacheStatus::Hit,
+        });
+    }
 
     if !(200..300).contains(&fetched.status) {
         return Err(FetcherError::Status {
@@ -111,15 +148,18 @@ where
         });
     }
 
-    // Step 3: extract.
+    // Step 5: extract.
     let extracted = extract_fn(&fetched.body, &fetched.final_url)?;
 
-    // Step 4: TTL. Task 8 wires real Cache-Control / Expires headers from
-    // FetchedPage; Task 7 falls back to default_ttl.
-    let cache_control_value = String::new();
-    let expires_value: Option<&str> = None;
+    // Step 6: TTL from real Cache-Control / Expires headers.
     let host = url.host_str().unwrap_or("");
-    let decision = compute_ttl(now, host, &cache_control_value, expires_value, cfg);
+    let decision = compute_ttl(
+        now,
+        host,
+        fetched.cache_control.as_deref().unwrap_or(""),
+        fetched.expires.as_deref(),
+        cfg,
+    );
 
     let expires_at = match decision {
         TtlDecision::Cache { expires_at } => Some(expires_at),
@@ -141,7 +181,7 @@ where
         metadata_json: None,
     };
 
-    // Step 5: store (only if cacheable).
+    // Step 7: store (only if cacheable).
     if expires_at.is_some() {
         pages::upsert(db, page.clone())
             .await
@@ -202,5 +242,57 @@ mod tests {
             sha256_hex(b""),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         );
+    }
+
+    #[tokio::test]
+    async fn cache_hit_within_ttl() {
+        use crate::storage::Db;
+        use std::time::Duration;
+        use tempfile::tempdir;
+        let tmp = tempdir().unwrap();
+        let db = Db::open(tmp.path().join("rover.db")).await.unwrap();
+        let url = Url::parse("https://example.com/").unwrap();
+        let now = Timestamp::now().as_second();
+        let page = Page {
+            url_hash: url_hash(url.as_str()),
+            url: url.to_string(),
+            canonical_url: url.to_string(),
+            title: Some("cached".into()),
+            fetched_at: now - 60,
+            expires_at: Some(now + 600),
+            etag: None,
+            last_modified: None,
+            content_hash: "x".into(),
+            extracted_md: "# cached".into(),
+            metadata_json: None,
+        };
+        pages::upsert(&db, page.clone()).await.unwrap();
+
+        let cfg = CacheConfig {
+            default_ttl: Duration::from_secs(3600),
+            min_ttl: Duration::from_secs(60),
+            max_ttl: Duration::from_secs(86400),
+            override_no_store: false,
+            override_no_store_domains: vec![],
+            store_raw_html: false,
+        };
+        let client = super::super::client::build_http_client("test/0.1", Duration::from_secs(5));
+        let result = fetch_with_cache(
+            &db,
+            &client,
+            &url,
+            &cfg,
+            FetchOptions {
+                force_refresh: false,
+                ssrf_level: SsrfLevel::Strict,
+            },
+            |_, _| {
+                panic!("extract_fn must not be called on cache hit");
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.cache_status, CacheStatus::Hit);
+        assert_eq!(result.page.title.as_deref(), Some("cached"));
     }
 }
