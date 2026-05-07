@@ -135,26 +135,35 @@ pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
         path: path.display().to_string(),
         source,
     })?;
-    let cfg: Config = toml::from_str(&bytes).map_err(|source| ConfigError::Parse {
+    let mut cfg: Config = toml::from_str(&bytes).map_err(|source| ConfigError::Parse {
         path: path.display().to_string(),
         source,
     })?;
-    validate(&cfg).map_err(|message| ConfigError::Invalid {
+    validate(&mut cfg).map_err(|message| ConfigError::Invalid {
         path: path.display().to_string(),
         message,
     })?;
     Ok(cfg)
 }
 
-fn validate(cfg: &Config) -> Result<(), String> {
+fn validate(cfg: &mut Config) -> Result<(), String> {
     if cfg.fetch.timeout_secs == 0 {
         return Err("fetch.timeout_secs must be > 0".to_string());
     }
     if cfg.cache.min_ttl > cfg.cache.default_ttl {
-        return Err("cache.min_ttl must be <= cache.default_ttl".to_string());
+        return Err(format!(
+            "cache.min_ttl ({:?}) must be <= cache.default_ttl ({:?})",
+            cfg.cache.min_ttl, cfg.cache.default_ttl
+        ));
     }
     if cfg.cache.default_ttl > cfg.cache.max_ttl {
-        return Err("cache.default_ttl must be <= cache.max_ttl".to_string());
+        return Err(format!(
+            "cache.default_ttl ({:?}) must be <= cache.max_ttl ({:?})",
+            cfg.cache.default_ttl, cfg.cache.max_ttl
+        ));
+    }
+    for d in &mut cfg.cache.override_no_store_domains {
+        d.make_ascii_lowercase();
     }
     Ok(())
 }
@@ -321,5 +330,40 @@ max_ttl = "1d"
         .unwrap();
         let result = load(Some(file.path()));
         assert!(matches!(result, Err(ConfigError::Invalid { .. })));
+    }
+
+    #[test]
+    fn override_no_store_domains_normalized_to_lowercase() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[cache]
+override_no_store_domains = ["DOCS.example.COM", "CDN.foo.com"]
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(file.path())).unwrap();
+        assert_eq!(
+            cfg.cache.override_no_store_domains,
+            vec!["docs.example.com".to_string(), "cdn.foo.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_accepts_equal_ttls() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[cache]
+default_ttl = "1h"
+min_ttl = "1h"
+max_ttl = "1h"
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(file.path())).unwrap();
+        assert_eq!(cfg.cache.default_ttl, Duration::from_secs(3600));
     }
 }
