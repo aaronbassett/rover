@@ -1,0 +1,50 @@
+# Lefthook configuration — https://lefthook.dev
+#
+# Install lefthook (`brew install lefthook` or see project docs).
+# Then activate hooks in this clone: `lefthook install`.
+#
+# Tooling preference: cargo-native where possible (rustfmt, clippy, cargo test,
+# cargo build) plus the Rust-based `commit-check` (from the
+# conventional-commits-check crate). Lefthook itself is the only non-Rust dep.
+
+# Treat all warnings as errors — see Cargo.toml `[lints]` and the
+# `-- -D warnings` flag passed to clippy below.
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      # Format-check only the staged Rust files. Rustfmt accepts file paths
+      # directly (cargo-fmt always runs over the whole crate, so we use
+      # rustfmt to scope to staged files).
+      glob: "*.rs"
+      run: rustfmt --check --edition 2024 {staged_files}
+
+    clippy:
+      # Clippy is project-wide — scope this command by glob so it only runs
+      # when something Rust-relevant is staged. The `-D warnings` flag turns
+      # every clippy warning (and rustc warning) into a hard error.
+      glob: "*.{rs,toml}"
+      run: cargo clippy --all-targets --features test-loopback -- -D warnings
+
+pre-push:
+  parallel: false
+  commands:
+    fmt:
+      run: cargo fmt --all -- --check
+
+    clippy:
+      run: cargo clippy --all-targets --features test-loopback -- -D warnings
+
+    test:
+      run: cargo test --features test-loopback
+
+    build:
+      run: cargo build --release
+
+commit-msg:
+  commands:
+    conventional:
+      # `commit-check` (from the conventional-commits-check crate) validates
+      # Conventional Commits format. Description max length is 500 chars.
+      run: commit-check --max-length 500 -m "$(cat {1})"
