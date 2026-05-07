@@ -80,7 +80,7 @@ path = "src/main.rs"
 anyhow = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-tls", "stream", "charset"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "charset"] }
 url = "2"
 encoding_rs = "0.8"
 chardetng = "1"
