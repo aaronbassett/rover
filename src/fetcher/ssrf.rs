@@ -17,7 +17,11 @@ use url::Url;
 pub enum SsrfLevel {
     /// Public IPs only, http/https only.
     Strict,
-    // loopback, project, lan, none — added in later milestones.
+
+    /// **Test-only.** Strict + loopback. Used by integration tests against
+    /// wiremock. Not exposed in the production CLI/config surface.
+    #[cfg(any(test, feature = "test-loopback"))]
+    TestLoopback,
 }
 
 #[derive(Debug, Error)]
@@ -36,15 +40,14 @@ pub enum SsrfError {
 ///
 /// Call this *before* DNS resolution — it's cheap and rules out bad URLs early.
 pub fn validate_url(url: &Url, level: SsrfLevel) -> Result<(), SsrfError> {
-    match level {
-        SsrfLevel::Strict => match url.scheme() {
-            "http" | "https" => {}
-            other => return Err(SsrfError::Scheme { scheme: other.to_string() }),
-        },
+    match url.scheme() {
+        "http" | "https" => {}
+        other => return Err(SsrfError::Scheme { scheme: other.to_string() }),
     }
     if url.host_str().is_none() {
         return Err(SsrfError::NoHost);
     }
+    let _ = level; // currently no scheme variation across levels
     Ok(())
 }
 
@@ -54,9 +57,20 @@ pub fn validate_url(url: &Url, level: SsrfLevel) -> Result<(), SsrfError> {
 /// the policy, this returns an error and the request must not proceed.
 pub fn validate_addresses(addrs: &[IpAddr], level: SsrfLevel) -> Result<(), SsrfError> {
     for &addr in addrs {
-        if let Some(reason) = strict_reject_reason(addr) {
-            if matches!(level, SsrfLevel::Strict) {
-                return Err(SsrfError::Address { address: addr, level, reason });
+        let strict_reject = strict_reject_reason(addr);
+        match level {
+            SsrfLevel::Strict => {
+                if let Some(reason) = strict_reject {
+                    return Err(SsrfError::Address { address: addr, level, reason });
+                }
+            }
+            #[cfg(any(test, feature = "test-loopback"))]
+            SsrfLevel::TestLoopback => {
+                if let Some(reason) = strict_reject {
+                    if !addr.is_loopback() {
+                        return Err(SsrfError::Address { address: addr, level, reason });
+                    }
+                }
             }
         }
     }

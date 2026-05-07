@@ -3,7 +3,10 @@
 pub mod canonical;
 pub mod charset;
 pub mod client;
+pub mod fetch;
 pub mod ssrf;
+
+pub use fetch::FetchedPage;
 
 use thiserror::Error;
 
