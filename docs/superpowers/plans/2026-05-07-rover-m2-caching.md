@@ -6,7 +6,7 @@
 
 **Architecture:** A `tokio-rusqlite::Connection` actor owns the database; all storage access is async. The fetch path becomes two-layered: `fetcher::fetch::fetch_url` stays as the raw HTTP fetch, and a new `fetcher::cached::fetch_with_cache` orchestrator wraps it with cache lookup → fetch → store. Migrations are SQL files embedded via `include_str!` and applied on `Db::open`. WAL mode set per-connection. `[cache]` config section adds humantime-parsed TTL fields.
 
-**Tech Stack:** `tokio-rusqlite` 0.7, `rusqlite` 0.39 (bundled), `humantime-serde` for `[cache]` durations, plus the M1 stack. No new external services.
+**Tech Stack:** `tokio-rusqlite` 0.7 (bundled), `rusqlite` 0.37, `humantime-serde` for `[cache]` durations, plus the M1 stack. No new external services.
 
 **Scope of this plan:** PRD milestone M2 only. Earlier milestones complete; later milestones (M3 MCP server, M4 metadata extraction, M5 rate limiting, M6 long-running tasks, M7 summarization, M8 polish, M9 feature flags) get their own plans.
 
