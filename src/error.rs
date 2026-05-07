@@ -8,8 +8,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    // Variants are added as their respective modules introduce error types.
-    // See tasks 4 (Config), 5+ (Fetcher), 9+ (Extractor).
+    #[error("config error: {0}")]
+    Config(#[from] crate::config::ConfigError),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
