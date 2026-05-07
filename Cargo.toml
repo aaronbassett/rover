@@ -1,0 +1,42 @@
+[package]
+name = "rover"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "An MCP server for fetching and prepping web content for LLM agents."
+repository = "https://github.com/aaronbassett/rover"
+readme = "README.md"
+rust-version = "1.85"
+
+[lib]
+name = "rover"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rover"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "charset"] }
+url = "2"
+encoding_rs = "0.8"
+chardetng = "1"
+scraper = "0.26"
+clap = { version = "4", features = ["derive"] }
+toml = "1"
+sha2 = "0.11"
+jiff = { version = "0.2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+readabilityrs = "0.1"
+regex = "1"
+
+[dev-dependencies]
+wiremock = "0.6"
+assert_cmd = "2"
+predicates = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal", "test-util"] }
