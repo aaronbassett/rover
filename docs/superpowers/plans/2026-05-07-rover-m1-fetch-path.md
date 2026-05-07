@@ -770,7 +770,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 cargo test --lib fetcher::ssrf
 ```
 
-Expected: 11 tests pass.
+Expected: 12 tests pass.
 
 - [ ] **Step 5: Commit**
 
