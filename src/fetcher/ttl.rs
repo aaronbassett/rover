@@ -56,20 +56,21 @@ pub fn compute_ttl(
     // Steps 2-4: pick the base TTL.
     //
     // When no-store is overridden, the server's intent is "do not cache",
-    // so we treat any absent max-age as 0 (rather than falling back to
+    // so we treat the base TTL as 0 (rather than falling back to
     // default_ttl) and let `min_ttl` floor it. This honors the operator's
-    // override while still keeping cached entries minimal.
+    // override while still keeping cached entries minimal: the spec-intent
+    // of `min_ttl` for force-cached entries.
     let mut ttl_secs = if let Some(s) = cc.s_maxage {
         s
     } else if let Some(m) = cc.max_age {
         m
     } else if no_store_overridden {
         0
-    } else if let Some(exp_at) = expires_header.and_then(parse_expires_header) {
-        // Expires is an absolute timestamp from the origin; honor it as-is
-        // (clamped to non-negative) without applying min/max bounds.
-        let expires_at = exp_at.max(now);
-        return TtlDecision::Cache { expires_at };
+    } else if let Some(exp) = expires_header
+        .and_then(parse_expires_header)
+        .map(|t| (t - now).max(0))
+    {
+        exp as u64
     } else {
         cfg.default_ttl.as_secs()
     };
@@ -152,9 +153,38 @@ mod tests {
     #[test]
     fn expires_header_used_without_cache_control() {
         let d = compute_ttl(0, "x", "", Some("Mon, 1 Jan 2035 00:00:00 GMT"), &cfg());
+        // Expires header in 2035 + max_ttl=7*86400 cap → expires_at = max_ttl.
+        assert_eq!(
+            d,
+            TtlDecision::Cache {
+                expires_at: 7 * 86400
+            }
+        );
+    }
+
+    #[test]
+    fn expires_header_within_max_ttl_used_directly() {
+        // Now = 1_700_000_000 (Nov 2023). The Expires header below parses to
+        // some timestamp shortly after `now`. We assert it falls between `now`
+        // and `now + max_ttl`, so the natural Expires-derived TTL is used
+        // (no min_ttl floor or max_ttl cap kicks in).
+        let d = compute_ttl(
+            1_700_000_000,
+            "x",
+            "",
+            Some("Sun, 14 Nov 2023 22:30:00 GMT"),
+            &cfg(),
+        );
         match d {
             TtlDecision::Cache { expires_at } => {
-                assert!(expires_at > 1_900_000_000, "expires_at = {expires_at}");
+                assert!(
+                    expires_at > 1_700_000_000,
+                    "expires_at={expires_at} should be > now"
+                );
+                assert!(
+                    expires_at < 1_700_000_000 + 7 * 86400,
+                    "expires_at={expires_at} should be below now + max_ttl"
+                );
             }
             other => panic!("expected Cache, got {other:?}"),
         }
