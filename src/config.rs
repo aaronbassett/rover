@@ -31,6 +31,9 @@ pub enum ConfigError {
 pub struct Config {
     #[serde(default)]
     pub fetch: FetchConfig,
+
+    #[serde(default)]
+    pub cache: CacheConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -70,6 +73,57 @@ fn default_timeout_secs() -> u64 {
     15
 }
 
+/// Cache configuration. All durations are parsed by `humantime` (e.g. "1h",
+/// "5m", "7d", "30s"). Defaults follow PRD §12.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheConfig {
+    #[serde(default = "default_cache_default_ttl", with = "humantime_serde")]
+    pub default_ttl: Duration,
+
+    #[serde(default = "default_cache_min_ttl", with = "humantime_serde")]
+    pub min_ttl: Duration,
+
+    #[serde(default = "default_cache_max_ttl", with = "humantime_serde")]
+    pub max_ttl: Duration,
+
+    #[serde(default)]
+    pub override_no_store: bool,
+
+    #[serde(default)]
+    pub override_no_store_domains: Vec<String>,
+
+    /// When true, store the gzipped raw HTML alongside the extracted Markdown.
+    /// Disabled by default to keep the database small.
+    #[serde(default)]
+    pub store_raw_html: bool,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            default_ttl: default_cache_default_ttl(),
+            min_ttl: default_cache_min_ttl(),
+            max_ttl: default_cache_max_ttl(),
+            override_no_store: false,
+            override_no_store_domains: vec![],
+            store_raw_html: false,
+        }
+    }
+}
+
+fn default_cache_default_ttl() -> Duration {
+    Duration::from_secs(3600)
+}
+
+fn default_cache_min_ttl() -> Duration {
+    Duration::from_secs(300)
+}
+
+fn default_cache_max_ttl() -> Duration {
+    Duration::from_secs(7 * 86400)
+}
+
 /// Load config. If `path` is provided, the file must exist and parse cleanly.
 /// If `path` is None, return defaults.
 pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
@@ -96,6 +150,12 @@ fn validate(cfg: &Config) -> Result<(), String> {
     if cfg.fetch.timeout_secs == 0 {
         return Err("fetch.timeout_secs must be > 0".to_string());
     }
+    if cfg.cache.min_ttl > cfg.cache.default_ttl {
+        return Err("cache.min_ttl must be <= cache.default_ttl".to_string());
+    }
+    if cfg.cache.default_ttl > cfg.cache.max_ttl {
+        return Err("cache.default_ttl must be <= cache.max_ttl".to_string());
+    }
     Ok(())
 }
 
@@ -109,6 +169,14 @@ mod tests {
         let cfg = Config::default();
         assert!(cfg.fetch.user_agent.starts_with("Rover/"));
         assert_eq!(cfg.fetch.timeout_secs, 15);
+
+        // Cache defaults per PRD §12.
+        assert_eq!(cfg.cache.default_ttl, Duration::from_secs(3600));
+        assert_eq!(cfg.cache.min_ttl, Duration::from_secs(300));
+        assert_eq!(cfg.cache.max_ttl, Duration::from_secs(7 * 86400));
+        assert!(!cfg.cache.override_no_store);
+        assert!(cfg.cache.override_no_store_domains.is_empty());
+        assert!(!cfg.cache.store_raw_html);
     }
 
     #[test]
@@ -165,6 +233,21 @@ unknown_field = "x"
     }
 
     #[test]
+    fn load_unknown_field_in_cache_errors() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[cache]
+unknown_field = "x"
+"#
+        )
+        .unwrap();
+        let result = load(Some(file.path()));
+        assert!(matches!(result, Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
     fn load_rejects_zero_timeout() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         writeln!(
@@ -172,6 +255,67 @@ unknown_field = "x"
             r#"
 [fetch]
 timeout_secs = 0
+"#
+        )
+        .unwrap();
+        let result = load(Some(file.path()));
+        assert!(matches!(result, Err(ConfigError::Invalid { .. })));
+    }
+
+    #[test]
+    fn load_cache_overrides() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[cache]
+default_ttl = "30m"
+min_ttl = "1m"
+max_ttl = "1d"
+override_no_store = true
+override_no_store_domains = ["docs.example.com"]
+store_raw_html = true
+"#
+        )
+        .unwrap();
+
+        let cfg = load(Some(file.path())).unwrap();
+        assert_eq!(cfg.cache.default_ttl, Duration::from_secs(30 * 60));
+        assert_eq!(cfg.cache.min_ttl, Duration::from_secs(60));
+        assert_eq!(cfg.cache.max_ttl, Duration::from_secs(86400));
+        assert!(cfg.cache.override_no_store);
+        assert_eq!(
+            cfg.cache.override_no_store_domains,
+            vec!["docs.example.com".to_string()]
+        );
+        assert!(cfg.cache.store_raw_html);
+    }
+
+    #[test]
+    fn load_rejects_min_greater_than_default() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[cache]
+default_ttl = "1m"
+min_ttl = "10m"
+"#
+        )
+        .unwrap();
+        let result = load(Some(file.path()));
+        assert!(matches!(result, Err(ConfigError::Invalid { .. })));
+    }
+
+    #[test]
+    fn load_rejects_default_greater_than_max() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[cache]
+default_ttl = "10d"
+max_ttl = "1d"
 "#
         )
         .unwrap();
