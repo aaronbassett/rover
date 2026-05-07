@@ -4,7 +4,7 @@ An MCP (Model Context Protocol) server that fetches web pages and turns them
 into clean, token-efficient Markdown for LLM agents.
 
 > **Status:** early development. Milestone M1 (single-URL fetch path) is
-> currently being implemented. See `docs/superpowers/prd/2026-05-07-rover-prd.md`
+> complete; M2 (caching) is next. See `docs/superpowers/prd/2026-05-07-rover-prd.md`
 > for the product spec and `docs/superpowers/specs/2026-05-07-rover-design.md`
 > for architectural decisions.
 

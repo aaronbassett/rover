@@ -20,17 +20,11 @@ pub enum ConfigError {
     Invalid { path: String, message: String },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub fetch: FetchConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self { fetch: FetchConfig::default() }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
