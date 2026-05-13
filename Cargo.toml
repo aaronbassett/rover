@@ -38,6 +38,9 @@ regex = "1"
 rusqlite = "0.37"
 tokio-rusqlite = { version = "0.7", features = ["bundled"] }
 humantime-serde = "1"
+rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.4", default-features = false, features = ["ureq", "rustls-tls"] }
 
 [dev-dependencies]
 wiremock = "0.6"
@@ -45,6 +48,7 @@ assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal", "test-util"] }
+rmcp = { version = "1", features = ["client", "transport-child-process"] }
 
 [features]
 default = []
