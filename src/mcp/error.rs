@@ -67,12 +67,15 @@ impl McpError {
                 use crate::fetcher::FetcherError as F;
                 match e {
                     F::Ssrf(_) => RoverError::new(RoverError::SSRF_DENIED, e.to_string()),
-                    F::Status { .. } => RoverError::new(RoverError::FETCH_FAILED, e.to_string()),
-                    _ => RoverError::new(RoverError::FETCH_FAILED, e.to_string()),
+                    F::Url(_) => RoverError::new(RoverError::INVALID_URL, e.to_string()),
+                    F::Storage(_) => RoverError::new(RoverError::STORAGE_ERROR, e.to_string()),
+                    F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
+                        RoverError::new(RoverError::FETCH_FAILED, e.to_string())
+                    }
                 }
             }
-            Self::Extractor(_) => RoverError::new(RoverError::EXTRACT_FAILED, self.to_string()),
-            Self::Storage(_) => RoverError::new(RoverError::STORAGE_ERROR, self.to_string()),
+            Self::Extractor(e) => RoverError::new(RoverError::EXTRACT_FAILED, e.to_string()),
+            Self::Storage(e) => RoverError::new(RoverError::STORAGE_ERROR, e.to_string()),
         }
     }
 }
@@ -108,5 +111,27 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::INVALID_ARGS);
         assert_eq!(r.message, "bad");
+    }
+
+    #[test]
+    fn fetcher_url_routes_to_invalid_url() {
+        use crate::fetcher::FetcherError;
+        // url::ParseError doesn't have a no-arg constructor, so build by parsing a bad URL.
+        let parse_err = url::Url::parse("not a url").unwrap_err();
+        let e = McpError::Fetcher(FetcherError::Url(parse_err));
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::INVALID_URL);
+    }
+
+    #[test]
+    fn fetcher_storage_routes_to_storage_error() {
+        use crate::fetcher::FetcherError;
+        use crate::storage::StorageError;
+        // Build a synthetic StorageError via rusqlite::Error (no DB connection needed).
+        let rusqlite_err = rusqlite::Error::InvalidQuery;
+        let storage_err: StorageError = rusqlite_err.into();
+        let e = McpError::Fetcher(FetcherError::Storage(storage_err));
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::STORAGE_ERROR);
     }
 }
