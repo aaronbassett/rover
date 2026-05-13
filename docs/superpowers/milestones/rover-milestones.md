@@ -131,6 +131,11 @@ Migration `001_initial.sql` should include schemas for `pages`, `robots_cache`, 
 
 ## M3 — MCP Server Mode
 
+**Status:** plan executed; PR open against `main`.
+
+**Plan:** [`docs/superpowers/plans/2026-05-13-rover-m3-mcp-server.md`](../plans/2026-05-13-rover-m3-mcp-server.md).
+**Spec:** [`docs/superpowers/specs/2026-05-13-rover-m3-mcp-design.md`](../specs/2026-05-13-rover-m3-mcp-design.md).
+
 **Scope.** `rover mcp` subcommand starts the MCP server over stdio. Implement `fetch` and `count_tokens` MCP tools. Real tokenizers replace the M1 chars/4 heuristic. Multi-instance support with `servers` table and PID-tagged ownership.
 
 **Prerequisites.** M1, M2.
@@ -174,7 +179,8 @@ The M1 `extractor::frontmatter::estimate_tokens(text: &str) -> usize` function g
 - `batch_fetch`, `summarize`, `get_metadata` tools → M4 (`get_metadata`), M6 (`batch_fetch`), M7 (`summarize`).
 - Stale-while-revalidate task scheduling → M6 if not already in M2.
 
-**Open questions before planning.**
+**Open questions before planning.** *(All resolved during pre-plan brainstorming. Decisions are recorded in the M3 design spec.)*
+
 1. **rmcp API shape.** Pin a concrete `rmcp` version. Confirm the tool registration and transport pattern (likely `rmcp::serve_stdio` or similar). Look at the latest rmcp examples at planning time.
 2. **`fetch` tool arg shape.** Define the MCP-side argument struct. PRD §4.1 lists arguments — encode them as a serde struct. Args for unimplemented features (`tables`, `images`, `summarize`, etc.) should be accepted but ignored, with a one-line `tracing::debug` noting the no-op.
 3. **`force_refresh` plumbing.** Pass through from MCP arg → fetcher.
