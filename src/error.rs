@@ -23,6 +23,9 @@ pub enum Error {
     #[error("tokenizer error: {0}")]
     Tokenizer(#[from] crate::tokenizer::TokenizerError),
 
+    #[error("mcp error: {0}")]
+    Mcp(#[from] crate::mcp::McpError),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

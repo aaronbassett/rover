@@ -1,8 +1,12 @@
 //! MCP server mode (rover mcp).
 //!
-//! Tasks 8-11 fill this module in. The shape is:
-//!   - envelope.rs: wire types returned to clients
-//!   - error.rs:    internal McpError
-//!   - handler.rs:  RoverHandler { db, config, client }
-//!   - tools/:      #[tool] handlers
-//!   - server.rs:   serve_stdio + lifecycle
+//! Architecture: a `RoverHandler` (Task 9) backed by `rmcp`'s `#[tool_router]`
+//! macros holds the `Db` + `Config` + `reqwest::Client` shared state. Two
+//! tools (`fetch`, `count_tokens`) wrap the M1/M2 pipeline behind typed
+//! arg structs. Errors are translated to a stable wire envelope.
+
+pub mod envelope;
+pub mod error;
+
+pub use envelope::{CacheStatus, CountResponse, CountSource, FetchResponse, RoverError};
+pub use error::McpError;
