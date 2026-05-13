@@ -124,11 +124,8 @@ async fn dispatch(cli: Cli) -> ExitCode {
             let args = sub.into_runtime_args();
             rover::cli::cache::run(args, cli.config.as_deref()).await
         }
-        Command::Mcp
-        | Command::Batch { .. }
-        | Command::Task { .. }
-        | Command::Doctor
-        | Command::Config(_) => {
+        Command::Mcp => rover::cli::mcp::run(cli.config.as_deref()).await,
+        Command::Batch { .. } | Command::Task { .. } | Command::Doctor | Command::Config(_) => {
             eprintln!("not yet implemented (planned for a later milestone)");
             return ExitCode::from(2);
         }
