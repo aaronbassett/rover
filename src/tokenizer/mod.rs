@@ -99,6 +99,16 @@ pub(crate) fn _clear_registry_for_tests() {
         .clear();
 }
 
+/// Test-only: shared mutex for tests that mutate the process-global
+/// tokenizer registry. Tests must acquire this guard before calling
+/// [`_clear_registry_for_tests`] or otherwise touching the registry, so
+/// they serialise under cargo's parallel test runner.
+#[cfg(test)]
+pub(crate) fn _test_mutex() -> &'static std::sync::Mutex<()> {
+    static M: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    M.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,6 +121,7 @@ mod tests {
 
     #[test]
     fn count_without_load_errors() {
+        let _guard = _test_mutex().lock().expect("test mutex");
         _clear_registry_for_tests();
         let err = count("abab", Tokenizer::Llama3).unwrap_err();
         assert!(matches!(err, TokenizerError::NotLoaded(Tokenizer::Llama3)));
@@ -118,6 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn manual_insert_then_count_works() {
+        let _guard = _test_mutex().lock().expect("test mutex");
         _clear_registry_for_tests();
         let tk = HfTokenizer::from_path(&fixture(), Tokenizer::Cl100k).unwrap();
         registry()
