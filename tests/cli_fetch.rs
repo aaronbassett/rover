@@ -31,9 +31,11 @@ async fn fetch_prints_markdown_with_frontmatter() {
         .await;
 
     let url = format!("{}/article", server.uri());
+    let tmp = tempfile::tempdir().unwrap();
 
     Command::cargo_bin("rover")
         .unwrap()
+        .env("ROVER_DATA_DIR", tmp.path())
         .args(["fetch", &url, "--ssrf-test-loopback"])
         .assert()
         .success()

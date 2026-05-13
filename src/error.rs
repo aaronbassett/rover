@@ -17,6 +17,9 @@ pub enum Error {
     #[error("extractor error: {0}")]
     Extractor(#[from] crate::extractor::ExtractorError),
 
+    #[error("storage error: {0}")]
+    Storage(#[from] crate::storage::StorageError),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

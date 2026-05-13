@@ -26,6 +26,7 @@ encoding_rs = "0.8"
 chardetng = "1"
 scraper = "0.26"
 clap = { version = "4", features = ["derive"] }
+dirs = "5"
 toml = "1"
 sha2 = "0.11"
 jiff = { version = "0.2", features = ["serde"] }
@@ -34,6 +35,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 readabilityrs = "0.1"
 regex = "1"
+rusqlite = "0.37"
+tokio-rusqlite = { version = "0.7", features = ["bundled"] }
+humantime-serde = "1"
 
 [dev-dependencies]
 wiremock = "0.6"

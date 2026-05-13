@@ -3,10 +3,11 @@
 An MCP (Model Context Protocol) server that fetches web pages and turns them
 into clean, token-efficient Markdown for LLM agents.
 
-> **Status:** early development. Milestone M1 (single-URL fetch path) is
-> complete; M2 (caching) is next. See `docs/superpowers/prd/2026-05-07-rover-prd.md`
-> for the product spec and `docs/superpowers/specs/2026-05-07-rover-design.md`
-> for architectural decisions.
+> **Status:** early development. Milestones M1 (single-URL fetch path) and
+> M2 (caching & storage) are complete; M3 (MCP server mode) is next. See
+> `docs/superpowers/prd/2026-05-07-rover-prd.md` for the product spec and
+> `docs/superpowers/specs/2026-05-07-rover-design.md` for architectural
+> decisions.
 
 ## Build
 
@@ -38,11 +39,26 @@ estimated_tokens: 14823
 Rust is a multi-paradigm, general-purpose programming language ...
 ```
 
+## Cache
+
+`rover` keeps a local SQLite cache at `$XDG_DATA_HOME/rover/rover.db` (or
+`~/.local/share/rover/rover.db` by default; override with `ROVER_DATA_DIR`).
+
+```sh
+rover cache list                 # paginated URL listing
+rover cache get <url>            # print cached Markdown for a URL
+rover cache purge 'https://x/*'  # delete cache entries by glob
+rover cache stats                # entry count, total size, expired count
+```
+
+`rover fetch <url>` writes through the cache. `rover fetch --force-refresh <url>`
+bypasses it.
+
 ## Subcommands
 
-`rover fetch <url>` is implemented in M1. The full subcommand surface
-(`rover mcp`, `rover batch`, `rover task`, `rover cache`, `rover doctor`,
-`rover config`) ships across milestones M2–M8 — see the PRD.
+`rover fetch <url>` and `rover cache ...` are implemented in M1 and M2. The
+remaining subcommand surface (`rover mcp`, `rover batch`, `rover task`,
+`rover doctor`, `rover config`) ships across milestones M3–M8 — see the PRD.
 
 ## License
 

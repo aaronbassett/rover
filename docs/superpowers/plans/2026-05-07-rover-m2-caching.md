@@ -6,7 +6,7 @@
 
 **Architecture:** A `tokio-rusqlite::Connection` actor owns the database; all storage access is async. The fetch path becomes two-layered: `fetcher::fetch::fetch_url` stays as the raw HTTP fetch, and a new `fetcher::cached::fetch_with_cache` orchestrator wraps it with cache lookup → fetch → store. Migrations are SQL files embedded via `include_str!` and applied on `Db::open`. WAL mode set per-connection. `[cache]` config section adds humantime-parsed TTL fields.
 
-**Tech Stack:** `tokio-rusqlite` 0.7, `rusqlite` 0.39 (bundled), `humantime-serde` for `[cache]` durations, plus the M1 stack. No new external services.
+**Tech Stack:** `tokio-rusqlite` 0.7 (bundled), `rusqlite` 0.37, `humantime-serde` for `[cache]` durations, plus the M1 stack. No new external services.
 
 **Scope of this plan:** PRD milestone M2 only. Earlier milestones complete; later milestones (M3 MCP server, M4 metadata extraction, M5 rate limiting, M6 long-running tasks, M7 summarization, M8 polish, M9 feature flags) get their own plans.
 
@@ -98,12 +98,12 @@ This task lays the storage module skeleton, the first migration file, and the St
 In the `[dependencies]` section, add:
 
 ```toml
-rusqlite = { version = "0.39", features = ["bundled"] }
-tokio-rusqlite = "0.7"
+rusqlite = "0.37"
+tokio-rusqlite = { version = "0.7", features = ["bundled"] }
 humantime-serde = "1"
 ```
 
-The `bundled` feature on `rusqlite` ships SQLite as part of the build; no system SQLite needed.
+We pin `rusqlite = "0.37"` instead of `0.39` because `tokio-rusqlite 0.7` (the latest published version) depends on `rusqlite ^0.37`, and `libsqlite3-sys` enforces a single native `sqlite3` link per build graph, so `rusqlite 0.39` cannot coexist with the version `tokio-rusqlite` brings in. The `bundled` feature is enabled on `tokio-rusqlite` rather than directly on `rusqlite`: enabling `bundled` there activates `rusqlite/bundled` transitively for every consumer of `rusqlite` in the graph, so the SQLite C library is still bundled and no system SQLite is required.
 
 - [ ] **Step 2: Create `src/storage/migrations/001_initial.sql`**
 
@@ -1415,7 +1415,7 @@ pub fn compute_ttl(
     let cc = CacheControl::parse(cache_control);
 
     // Step 1: no-store handling.
-    if cc.no_store {
+    let no_store_overridden = if cc.no_store {
         let host_override = cfg
             .override_no_store_domains
             .iter()
@@ -1423,19 +1423,31 @@ pub fn compute_ttl(
         if !cfg.override_no_store && !host_override {
             return TtlDecision::DoNotCache;
         }
-        // Override active: continue, but floor at min_ttl below.
-    }
+        // Override active: treat the base TTL as 0 and let `min_ttl` floor
+        // below take effect.
+        true
+    } else {
+        false
+    };
 
     // Steps 2-4: pick the base TTL.
+    //
+    // no-store-with-override branches treat the base TTL as 0, so the
+    // `min_ttl` floor lifts the result to `min_ttl`. This is the
+    // spec-intent of `min_ttl` for force-cached entries.
     let mut ttl_secs = if let Some(s) = cc.s_maxage {
         s
     } else if let Some(m) = cc.max_age {
         m
-    } else if let Some(exp) = expires_header
-        .and_then(parse_expires_header)
-        .map(|t| (t - now).max(0))
-    {
-        exp as u64
+    } else if no_store_overridden {
+        0
+    } else if let Some(t) = expires_header.and_then(parse_expires_header) {
+        // RFC 9111 §5.3: an Expires at-or-before `now` is equivalent to
+        // `must-revalidate, max-age=0` — do not cache.
+        if t <= now {
+            return TtlDecision::DoNotCache;
+        }
+        (t - now) as u64
     } else {
         cfg.default_ttl.as_secs()
     };
@@ -1457,7 +1469,9 @@ pub fn compute_ttl(
 }
 
 fn parse_expires_header(value: &str) -> Option<i64> {
-    rfc2822::parse(value).ok().map(|ts| ts.as_second())
+    rfc2822::parse(value)
+        .ok()
+        .map(|z| z.timestamp().as_second())
 }
 
 #[cfg(test)]
@@ -1514,9 +1528,38 @@ mod tests {
     #[test]
     fn expires_header_used_without_cache_control() {
         let d = compute_ttl(0, "x", "", Some("Mon, 1 Jan 2035 00:00:00 GMT"), &cfg());
+        // Expires header in 2035 + max_ttl=7*86400 cap → expires_at = max_ttl.
+        assert_eq!(
+            d,
+            TtlDecision::Cache {
+                expires_at: 7 * 86400
+            }
+        );
+    }
+
+    #[test]
+    fn expires_header_within_max_ttl_used_directly() {
+        // Now = 1_700_000_000 (Nov 2023). The Expires header below parses to
+        // some timestamp shortly after `now`. We assert it falls between `now`
+        // and `now + max_ttl`, so the natural Expires-derived TTL is used
+        // (no min_ttl floor or max_ttl cap kicks in).
+        let d = compute_ttl(
+            1_700_000_000,
+            "x",
+            "",
+            Some("Sun, 14 Nov 2023 22:30:00 GMT"),
+            &cfg(),
+        );
         match d {
             TtlDecision::Cache { expires_at } => {
-                assert!(expires_at > 1_900_000_000, "expires_at = {expires_at}");
+                assert!(
+                    expires_at > 1_700_000_000,
+                    "expires_at={expires_at} should be > now"
+                );
+                assert!(
+                    expires_at < 1_700_000_000 + 7 * 86400,
+                    "expires_at={expires_at} should be below now + max_ttl"
+                );
             }
             other => panic!("expected Cache, got {other:?}"),
         }
@@ -1544,6 +1587,20 @@ mod tests {
         let d = compute_ttl(0, "x", "max-age=10", None, &cfg());
         assert_eq!(d, TtlDecision::Cache { expires_at: 300 });
     }
+
+    #[test]
+    fn past_expires_skips_cache() {
+        // Jan 1 2000 was a Saturday; jiff's RFC 2822 parser strictly
+        // validates the weekday, so we must use the correct one.
+        let d = compute_ttl(
+            1_700_000_000,
+            "x",
+            "",
+            Some("Sat, 1 Jan 2000 00:00:00 GMT"),
+            &cfg(),
+        );
+        assert_eq!(d, TtlDecision::DoNotCache);
+    }
 }
 ```
 
@@ -1557,7 +1614,7 @@ Add `pub mod ttl;` to the module list (alphabetical position).
 cargo test --features test-loopback fetcher::ttl
 ```
 
-Expected: 9 tests pass. (Task 5 must already be in place so `crate::config::CacheConfig` is available.)
+Expected: 11 tests pass. (Task 5 must already be in place so `crate::config::CacheConfig` is available.)
 
 - [ ] **Step 4: Commit**
 
@@ -1673,22 +1730,22 @@ where
     };
 
     if !(200..300).contains(&fetched.status) {
-        return Err(FetcherError::Http(reqwest_status_error(&fetched)));
+        return Err(FetcherError::Status {
+            status: fetched.status,
+            url: fetched.final_url.to_string(),
+        });
     }
 
     // --- Step 3: extract ---
     let extracted = extract_fn(&fetched.body, &fetched.final_url)?;
 
     // --- Step 4: TTL ---
-    let cache_control_value = fetched
-        .content_type
-        .as_deref()
-        .map(|_| ())
-        .and(extract_header(&fetched, "cache-control"))
-        .unwrap_or_default();
-    let expires_value = extract_header(&fetched, "expires");
+    // Task 8 wires real Cache-Control / Expires header extraction from
+    // FetchedPage; Task 7 falls back to default_ttl.
+    let cache_control_value = String::new();
+    let expires_value: Option<&str> = None;
     let host = url.host_str().unwrap_or("");
-    let decision = compute_ttl(now, host, &cache_control_value, expires_value.as_deref(), cfg);
+    let decision = compute_ttl(now, host, &cache_control_value, expires_value, cfg);
 
     let expires_at = match decision {
         TtlDecision::Cache { expires_at } => Some(expires_at),
@@ -1758,24 +1815,6 @@ fn map_storage_err(e: crate::storage::StorageError) -> FetcherError {
     FetcherError::Decode
 }
 
-fn extract_header(fetched: &FetchedPage, _name: &str) -> Option<String> {
-    // Task 7 extracts content_type and link_header from FetchedPage already;
-    // for cache-control / expires, M2 surfaces them via Task 8's expansion of
-    // FetchedPage. For now, return None — Task 8 fills this in.
-    let _ = fetched;
-    None
-}
-
-fn reqwest_status_error(_fetched: &FetchedPage) -> reqwest::Error {
-    // Synthesize via reqwest's builder is non-trivial; the cached fetch flow
-    // returns the status as part of the Err path, but for v1 we wrap it as a
-    // generic reqwest error. The CLI emits a clean "HTTP {status}" message
-    // anyway, so this only matters for callers that match on the variant.
-    //
-    // Practical alternative: extend FetcherError with a Status variant in Task 8.
-    unreachable!("placeholder; reachable only in 4xx/5xx pre-Task-8")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1839,8 +1878,6 @@ pub enum FetcherError {
     Status { status: u16, url: String },
 }
 ```
-
-(The new `Status` variant replaces the awkward `reqwest_status_error` placeholder. Update `cached.rs` accordingly: `return Err(FetcherError::Status { status: fetched.status, url: fetched.final_url.to_string() });`.)
 
 - [ ] **Step 3: Run the tests**
 
@@ -2014,7 +2051,7 @@ if !(200..300).contains(&fetched.status) {
 // header values from `fetched.cache_control` and `fetched.expires`.
 ```
 
-Replace the `extract_header` placeholder with direct field access:
+Replace the Task 7 stubbed `cache_control_value = String::new()` / `expires_value = None` with direct field access:
 
 ```rust
 let host = url.host_str().unwrap_or("");
@@ -2026,8 +2063,6 @@ let decision = compute_ttl(
     cfg,
 );
 ```
-
-Delete the stub `extract_header` and `reqwest_status_error` functions.
 
 - [ ] **Step 4: Update existing M1 fetcher tests**
 
