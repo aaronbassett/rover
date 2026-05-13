@@ -2433,6 +2433,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tokio-rusqlite",
+ "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",

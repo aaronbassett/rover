@@ -12,7 +12,6 @@ use url::Url;
 
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
-use crate::fetcher::ssrf::SsrfLevel;
 use crate::mcp::envelope::{CacheStatus, CountResponse, CountSource};
 use crate::mcp::error::McpError;
 use crate::mcp::handler::{RoverHandler, resolve_tokenizer};
@@ -77,7 +76,7 @@ impl RoverHandler {
             &self.config.cache,
             FetchOptions {
                 force_refresh: false,
-                ssrf_level: SsrfLevel::Strict,
+                ssrf_level: self.ssrf_level,
             },
             |body, base| {
                 let extracted =
@@ -127,7 +126,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("rover.db");
         let db = crate::storage::Db::open(&path).await.unwrap();
-        (RoverHandler::new(db, cfg, client), tmp)
+        (
+            RoverHandler::new(db, cfg, client, crate::fetcher::ssrf::SsrfLevel::Strict),
+            tmp,
+        )
     }
 
     #[tokio::test]

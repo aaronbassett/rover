@@ -4,13 +4,14 @@
 //! The `code` strings on [`RoverError`] are stable from M3 onward and will
 //! be documented in `docs/mcp-tools.md` (M8).
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Status of a fetch response relative to the cache. Mirrors the three
 /// variants of [`crate::fetcher::cached::CacheStatus`]; M3 does not
 /// distinguish 304-revalidated from a fresh hit (M2 treats a 304 as a
 /// regular `Hit` after refreshing `expires_at`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheStatus {
     Hit,
@@ -30,7 +31,7 @@ impl From<crate::fetcher::cached::CacheStatus> for CacheStatus {
 }
 
 /// Where the token count came from on a `count_tokens` response.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CountSource {
     Text,
@@ -38,7 +39,7 @@ pub enum CountSource {
 }
 
 /// Successful `fetch` response (full content).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FetchResponse {
     pub markdown: String,
     pub frontmatter: String,
@@ -46,7 +47,7 @@ pub struct FetchResponse {
 }
 
 /// `count_tokens` or `fetch{count_only:true}` response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CountResponse {
     pub tokens: usize,
     pub tokenizer: String,

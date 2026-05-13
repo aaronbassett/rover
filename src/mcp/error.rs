@@ -81,8 +81,6 @@ impl McpError {
 }
 
 /// Convenience: log + translate. Use this at the tool boundary.
-/// First caller arrives in Task 9 (the `fetch` tool handler).
-#[allow(dead_code)]
 pub(crate) fn log_and_translate(err: McpError) -> RoverError {
     tracing::warn!(target: "rover::mcp", error = ?err, "tool error");
     err.into_rover_error()

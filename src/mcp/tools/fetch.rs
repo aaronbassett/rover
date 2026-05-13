@@ -7,7 +7,6 @@ use url::Url;
 use crate::extractor::frontmatter::{PageMeta, render as render_frontmatter};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
-use crate::fetcher::ssrf::SsrfLevel;
 use crate::mcp::envelope::{CacheStatus, CountResponse, CountSource, FetchResponse};
 use crate::mcp::error::McpError;
 use crate::mcp::handler::{RoverHandler, resolve_tokenizer};
@@ -56,11 +55,36 @@ pub struct FetchArgs {
 
 /// One of the two response shapes the `fetch` tool can produce, depending
 /// on `count_only`.
+///
+/// `JsonSchema` is implemented manually so the generated schema is rooted
+/// at `type: "object"` with a `oneOf` of the two variants. The MCP spec
+/// requires `outputSchema.type == "object"`, but the default schemars
+/// derive for an `#[serde(untagged)]` enum emits a bare `oneOf` with no
+/// root type, which rmcp's `schema_for_output` rejects at startup.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FetchOutput {
     Full(FetchResponse),
     Count(CountResponse),
+}
+
+impl JsonSchema for FetchOutput {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FetchOutput".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::FetchOutput").into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let full = generator.subschema_for::<FetchResponse>();
+        let count = generator.subschema_for::<CountResponse>();
+        schemars::json_schema!({
+            "type": "object",
+            "oneOf": [full, count],
+        })
+    }
 }
 
 impl RoverHandler {
@@ -79,7 +103,7 @@ impl RoverHandler {
             &self.config.cache,
             FetchOptions {
                 force_refresh: args.force_refresh,
-                ssrf_level: SsrfLevel::Strict,
+                ssrf_level: self.ssrf_level,
             },
             |body, base| {
                 let extracted =

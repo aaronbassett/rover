@@ -8,8 +8,10 @@
 pub mod envelope;
 pub mod error;
 pub mod handler;
+pub mod server;
 pub mod tools;
 
 pub use envelope::{CacheStatus, CountResponse, CountSource, FetchResponse, RoverError};
 pub use error::McpError;
 pub use handler::RoverHandler;
+pub use server::serve_stdio;
