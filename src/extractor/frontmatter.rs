@@ -135,7 +135,10 @@ mod tests {
     #[test]
     fn omits_canonical_when_same_as_url() {
         let url = u("https://example.com/page");
-        let out = render(&PageMeta { title: None, ..meta(&url, "x") });
+        let out = render(&PageMeta {
+            title: None,
+            ..meta(&url, "x")
+        });
         assert!(!out.contains("canonical_url"));
     }
 
@@ -173,7 +176,10 @@ mod tests {
     #[test]
     fn token_count_is_passed_through_verbatim() {
         let url = u("https://example.com/p");
-        let out = render(&PageMeta { tokens: 1234, ..meta(&url, "hello") });
+        let out = render(&PageMeta {
+            tokens: 1234,
+            ..meta(&url, "hello")
+        });
         assert!(out.contains("estimated_tokens: 1234"));
     }
 
