@@ -7,9 +7,11 @@
 //!   - fetched_at (RFC 3339, UTC)
 //!   - content_hash (sha256:...)
 //!   - estimated_tokens
+//!   - tokenizer
 //!
 //! M4 expands this with metadata, language, schema_types, tables/images
-//! transformations, etc. M3 swaps the token estimator for real tokenizers.
+//! transformations, etc. As of M3, real tokenizers compute `tokens` upstream
+//! and pass it in via `PageMeta`; the writer no longer estimates.
 
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
@@ -22,6 +24,12 @@ pub struct PageMeta<'a> {
     pub title: Option<&'a str>,
     pub fetched_at: Timestamp,
     pub body: &'a str,
+    /// Precomputed token count for `body`, in units of `tokenizer_name`.
+    pub tokens: usize,
+    /// Short tokenizer family name (e.g. `"o200k"`). Surfaced in the
+    /// `tokenizer` frontmatter field so consumers know how `tokens` was
+    /// measured.
+    pub tokenizer_name: &'a str,
 }
 
 /// Render `meta` as a frontmatter-envelope string followed by `body`.
@@ -42,8 +50,8 @@ pub fn render(meta: &PageMeta<'_>) -> String {
     let hash_field = format!("sha256:{content_hash}");
     write_field(&mut buf, "content_hash", &hash_field);
 
-    let est = estimate_tokens(meta.body);
-    buf.push_str(&format!("estimated_tokens: {est}\n"));
+    buf.push_str(&format!("estimated_tokens: {}\n", meta.tokens));
+    write_field(&mut buf, "tokenizer", meta.tokenizer_name);
 
     buf.push_str("---\n\n");
     buf.push_str(meta.body);
@@ -84,12 +92,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     s
 }
 
-/// **M1 placeholder.** chars/4. M3 replaces this with real tokenizers via a
-/// trait so the call site here doesn't change.
-pub fn estimate_tokens(text: &str) -> usize {
-    text.chars().count().div_ceil(4)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,37 +104,38 @@ mod tests {
         Url::parse(s).unwrap()
     }
 
+    fn meta<'a>(url: &'a Url, body: &'a str) -> PageMeta<'a> {
+        PageMeta {
+            url,
+            canonical_url: url,
+            title: Some("Sample"),
+            fetched_at: ts(),
+            body,
+            tokens: 7,
+            tokenizer_name: "o200k",
+        }
+    }
+
     #[test]
     fn emits_required_fields() {
         let url = u("https://example.com/page");
         let body = "# Title\n\nBody.\n";
-        let out = render(&PageMeta {
-            url: &url,
-            canonical_url: &url,
-            title: Some("Sample"),
-            fetched_at: ts(),
-            body,
-        });
+        let out = render(&meta(&url, body));
 
         assert!(out.starts_with("---\n"));
         assert!(out.contains(r#"url: "https://example.com/page""#));
         assert!(out.contains(r#"title: "Sample""#));
         assert!(out.contains(r#"fetched_at: "2026-05-07T12:34:56Z""#));
         assert!(out.contains("content_hash: \"sha256:"));
-        assert!(out.contains("estimated_tokens: "));
+        assert!(out.contains("estimated_tokens: 7"));
+        assert!(out.contains(r#"tokenizer: "o200k""#));
         assert!(out.ends_with(body));
     }
 
     #[test]
     fn omits_canonical_when_same_as_url() {
         let url = u("https://example.com/page");
-        let out = render(&PageMeta {
-            url: &url,
-            canonical_url: &url,
-            title: None,
-            fetched_at: ts(),
-            body: "x",
-        });
+        let out = render(&PageMeta { title: None, ..meta(&url, "x") });
         assert!(!out.contains("canonical_url"));
     }
 
@@ -141,11 +144,9 @@ mod tests {
         let url = u("https://example.com/page?utm=1");
         let canon = u("https://example.com/page");
         let out = render(&PageMeta {
-            url: &url,
             canonical_url: &canon,
             title: None,
-            fetched_at: ts(),
-            body: "x",
+            ..meta(&url, "x")
         });
         assert!(out.contains(r#"canonical_url: "https://example.com/page""#));
     }
@@ -154,11 +155,8 @@ mod tests {
     fn quotes_in_title_are_escaped() {
         let url = u("https://example.com/p");
         let out = render(&PageMeta {
-            url: &url,
-            canonical_url: &url,
             title: Some(r#"He said "hi""#),
-            fetched_at: ts(),
-            body: "x",
+            ..meta(&url, "x")
         });
         assert!(out.contains(r#"title: "He said \"hi\"""#));
     }
@@ -167,40 +165,24 @@ mod tests {
     fn content_hash_is_deterministic() {
         let url = u("https://example.com/p");
         let body = "stable body";
-        let a = render(&PageMeta {
-            url: &url,
-            canonical_url: &url,
-            title: None,
-            fetched_at: ts(),
-            body,
-        });
-        let b = render(&PageMeta {
-            url: &url,
-            canonical_url: &url,
-            title: None,
-            fetched_at: ts(),
-            body,
-        });
+        let a = render(&meta(&url, body));
+        let b = render(&meta(&url, body));
         assert_eq!(a, b);
     }
 
     #[test]
-    fn estimate_tokens_chars_div_4_rounded_up() {
-        assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("a"), 1);
-        assert_eq!(estimate_tokens("aaaa"), 1);
-        assert_eq!(estimate_tokens("aaaaa"), 2);
+    fn token_count_is_passed_through_verbatim() {
+        let url = u("https://example.com/p");
+        let out = render(&PageMeta { tokens: 1234, ..meta(&url, "hello") });
+        assert!(out.contains("estimated_tokens: 1234"));
     }
 
     #[test]
     fn body_terminates_with_newline() {
         let url = u("https://example.com/p");
         let out = render(&PageMeta {
-            url: &url,
-            canonical_url: &url,
             title: None,
-            fetched_at: ts(),
-            body: "no trailing newline",
+            ..meta(&url, "no trailing newline")
         });
         assert!(out.ends_with('\n'));
     }
