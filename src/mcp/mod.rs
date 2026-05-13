@@ -7,6 +7,9 @@
 
 pub mod envelope;
 pub mod error;
+pub mod handler;
+pub mod tools;
 
 pub use envelope::{CacheStatus, CountResponse, CountSource, FetchResponse, RoverError};
 pub use error::McpError;
+pub use handler::RoverHandler;

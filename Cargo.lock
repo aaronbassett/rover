@@ -2423,6 +2423,7 @@ dependencies = [
  "reqwest 0.13.3",
  "rmcp",
  "rusqlite",
+ "schemars",
  "scraper 0.26.0",
  "serde",
  "serde_json",
