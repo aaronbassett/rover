@@ -18,8 +18,6 @@ pub enum TokenizerError {
         source: hf_hub::api::sync::ApiError,
     },
 
-    // Constructed by the loader landing in Task 3.
-    #[allow(dead_code)]
     #[error("tokenizer file for {family} is corrupt: {source}")]
     Parse {
         family: Tokenizer,
