@@ -9,23 +9,32 @@ use crate::tokenizer::{Tokenizer, TokenizerError};
 #[derive(Debug)]
 pub struct HfTokenizer {
     inner: Inner,
+    family: Tokenizer,
 }
 
 impl HfTokenizer {
-    /// Parse a `tokenizer.json` file from disk.
+    /// Parse a `tokenizer.json` file from disk for `family`.
     pub fn from_path(path: &Path, family: Tokenizer) -> Result<Self, TokenizerError> {
         let inner =
             Inner::from_file(path).map_err(|e| TokenizerError::Parse { family, source: e })?;
-        Ok(Self { inner })
+        Ok(Self { inner, family })
     }
 
-    /// Count tokens in `text`. Special tokens are not added.
+    /// Count tokens in `text`. Special tokens are not added — see PRD §10:
+    /// `count_tokens` measures plain user text, not chat-completion budgets
+    /// (which would include role/turn tokens).
+    ///
+    /// Returns `Err(TokenizerError::Parse)` if `tokenizers::Tokenizer::encode`
+    /// rejects the input. In practice this is vanishingly rare for a
+    /// successfully-parsed tokenizer with a `&str` input + `add_special_tokens=false`
+    /// (the post-processor branch where most encode failures live is skipped),
+    /// but the upstream API is fallible so we propagate.
     pub fn count(&self, text: &str) -> Result<usize, TokenizerError> {
         let encoded = self
             .inner
             .encode(text, false)
             .map_err(|e| TokenizerError::Parse {
-                family: Tokenizer::Cl100k, // placeholder; encode errors are vanishingly rare in practice
+                family: self.family,
                 source: e,
             })?;
         Ok(encoded.get_ids().len())
@@ -46,8 +55,7 @@ mod tests {
     #[test]
     fn parses_fixture_tokenizer() {
         let tk = HfTokenizer::from_path(&fixture_path(), Tokenizer::Cl100k).unwrap();
-        // Just confirm the type round-trips through parse.
-        let _ = tk;
+        assert_eq!(tk.count("").unwrap(), 0);
     }
 
     #[test]
