@@ -20,6 +20,9 @@ pub enum Error {
     #[error("storage error: {0}")]
     Storage(#[from] crate::storage::StorageError),
 
+    #[error("tokenizer error: {0}")]
+    Tokenizer(#[from] crate::tokenizer::TokenizerError),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
