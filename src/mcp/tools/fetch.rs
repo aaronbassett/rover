@@ -1,7 +1,5 @@
 //! MCP `fetch` tool — wraps the M1/M2 pipeline behind a typed arg struct.
 
-use std::str::FromStr;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -12,8 +10,8 @@ use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha2
 use crate::fetcher::ssrf::SsrfLevel;
 use crate::mcp::envelope::{CacheStatus, CountResponse, CountSource, FetchResponse};
 use crate::mcp::error::McpError;
-use crate::mcp::handler::RoverHandler;
-use crate::tokenizer::{self, Tokenizer};
+use crate::mcp::handler::{RoverHandler, resolve_tokenizer};
+use crate::tokenizer;
 
 /// Wire-side `fetch` tool arguments.
 ///
@@ -72,10 +70,7 @@ impl RoverHandler {
         log_deferred_args(&args);
 
         let url = Url::parse(&args.url).map_err(|e| McpError::InvalidUrl(e.to_string()))?;
-        let family = match args.tokenizer.as_deref() {
-            Some(s) => Tokenizer::from_str(s).map_err(|e| McpError::InvalidArgs(e.to_string()))?,
-            None => self.config.tokenizer.default,
-        };
+        let family = resolve_tokenizer(args.tokenizer.as_deref(), &self.config)?;
 
         let result = fetch_with_cache(
             &self.db,
@@ -171,7 +166,10 @@ fn log_deferred_args(args: &FetchArgs) {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
+    use crate::tokenizer::Tokenizer;
 
     #[test]
     fn fetch_args_deserialize_minimal() {
