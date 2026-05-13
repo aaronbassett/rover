@@ -9,6 +9,7 @@
 
 pub mod error;
 pub mod pages;
+pub mod servers;
 pub mod system;
 
 pub use error::StorageError;
@@ -30,10 +31,16 @@ pub struct Db {
 /// To add a migration: increment its filename (e.g. `002_servers.sql`),
 /// append the `(name, sql)` pair here, never edit a previously-released
 /// migration in place.
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "001_initial.sql",
-    include_str!("migrations/001_initial.sql"),
-)];
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "001_initial.sql",
+        include_str!("migrations/001_initial.sql"),
+    ),
+    (
+        "002_servers.sql",
+        include_str!("migrations/002_servers.sql"),
+    ),
+];
 
 /// Per-migration outcome shuttled out of the actor closure so the failed
 /// migration's filename survives back to the awaiter.
@@ -156,7 +163,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("rover.db");
         let db = Db::open(&path).await.unwrap();
-        assert_eq!(db.schema_version().await.unwrap(), 1);
+        assert_eq!(db.schema_version().await.unwrap(), MIGRATIONS.len() as u32);
     }
 
     #[tokio::test]
@@ -165,7 +172,7 @@ mod tests {
         let path = tmp.path().join("rover.db");
         let _db1 = Db::open(&path).await.unwrap();
         let db2 = Db::open(&path).await.unwrap();
-        assert_eq!(db2.schema_version().await.unwrap(), 1);
+        assert_eq!(db2.schema_version().await.unwrap(), MIGRATIONS.len() as u32);
     }
 
     #[tokio::test]
