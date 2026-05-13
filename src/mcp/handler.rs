@@ -103,8 +103,15 @@ impl ServerHandler for RoverHandler {
 }
 
 fn into_error_data(err: crate::mcp::error::McpError) -> ErrorData {
+    use crate::mcp::error::McpError;
+    let is_user_error = matches!(&err, McpError::InvalidArgs(_) | McpError::InvalidUrl(_));
     let r = crate::mcp::error::log_and_translate(err);
+    let code = if is_user_error {
+        rmcp::model::ErrorCode::INVALID_PARAMS
+    } else {
+        rmcp::model::ErrorCode::INTERNAL_ERROR
+    };
     let message = format!("{}: {}", r.code, r.message);
     let data = serde_json::to_value(&r).ok();
-    ErrorData::new(rmcp::model::ErrorCode::INTERNAL_ERROR, message, data)
+    ErrorData::new(code, message, data)
 }
