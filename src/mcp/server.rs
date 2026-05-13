@@ -77,10 +77,8 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
         });
     }
 
-    let client = reqwest::Client::builder()
-        .user_agent(config.fetch.user_agent.clone())
-        .timeout(config.fetch.timeout())
-        .build()?;
+    let client =
+        crate::fetcher::client::build_http_client(&config.fetch.user_agent, config.fetch.timeout());
     let handler = RoverHandler::new(db.clone(), config, client, ssrf_level);
 
     let service = handler.serve(stdio()).await?;
@@ -105,6 +103,11 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
             tracing::info!(target: "rover::mcp", "shutting down on signal");
         }
     }
+
+    // Make sure the heartbeat + signal tasks see the cancel before we
+    // delete the row — otherwise the heartbeat can race and re-touch a
+    // soon-to-be-deleted row.
+    cancel.cancel();
 
     db.delete_server_self(pid).await?;
     Ok(())
