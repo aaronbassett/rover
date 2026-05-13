@@ -3,8 +3,9 @@
 An MCP (Model Context Protocol) server that fetches web pages and turns them
 into clean, token-efficient Markdown for LLM agents.
 
-> **Status:** early development. Milestones M1 (single-URL fetch path) and
-> M2 (caching & storage) are complete; M3 (MCP server mode) is next. See
+> **Status:** early development. Milestones M1 (single-URL fetch path),
+> M2 (caching & storage), and M3 (MCP server mode) are complete. M4
+> (metadata extraction & table/image modes) is next. See
 > `docs/superpowers/prd/2026-05-07-rover-prd.md` for the product spec and
 > `docs/superpowers/specs/2026-05-07-rover-design.md` for architectural
 > decisions.
@@ -56,9 +57,9 @@ bypasses it.
 
 ## Subcommands
 
-`rover fetch <url>` and `rover cache ...` are implemented in M1 and M2. The
-remaining subcommand surface (`rover mcp`, `rover batch`, `rover task`,
-`rover doctor`, `rover config`) ships across milestones M3–M8 — see the PRD.
+`rover fetch <url>`, `rover cache ...`, and `rover mcp` are implemented in
+M1–M3. The remaining subcommand surface (`rover batch`, `rover task`,
+`rover doctor`, `rover config`) ships across milestones M6–M8 — see the PRD.
 
 ## License
 

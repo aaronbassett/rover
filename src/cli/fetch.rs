@@ -74,12 +74,23 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
 
     let canonical =
         Url::parse(&result.page.canonical_url).context("parsing canonical URL from cache row")?;
+
+    // Choose the tokenizer for frontmatter `estimated_tokens` from config.
+    let family = cfg.tokenizer.default;
+    crate::tokenizer::ensure_loaded(family)
+        .await
+        .context("loading default tokenizer")?;
+    let tokens = crate::tokenizer::count(&result.page.extracted_md, family)
+        .context("counting tokens for frontmatter")?;
+
     let meta = PageMeta {
         url: &url,
         canonical_url: &canonical,
         title: result.page.title.as_deref(),
         fetched_at: Timestamp::now(),
         body: &result.page.extracted_md,
+        tokens,
+        tokenizer_name: family.as_str(),
     };
 
     let envelope = render(&meta);
