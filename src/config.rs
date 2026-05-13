@@ -34,6 +34,12 @@ pub struct Config {
 
     #[serde(default)]
     pub cache: CacheConfig,
+
+    #[serde(default)]
+    pub tokenizer: TokenizerConfig,
+
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -124,6 +130,56 @@ fn default_cache_max_ttl() -> Duration {
     Duration::from_secs(7 * 86400)
 }
 
+/// Tokenizer configuration. The `default` family is used for token counting
+/// in the frontmatter and the MCP layer when callers don't specify one.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenizerConfig {
+    #[serde(default = "default_tokenizer")]
+    pub default: crate::tokenizer::Tokenizer,
+}
+
+impl Default for TokenizerConfig {
+    fn default() -> Self {
+        Self {
+            default: default_tokenizer(),
+        }
+    }
+}
+
+fn default_tokenizer() -> crate::tokenizer::Tokenizer {
+    crate::tokenizer::Tokenizer::O200k
+}
+
+/// MCP server configuration. Durations are parsed by `humantime`
+/// (e.g. "5s", "60s", "2m"). Both intervals must be non-zero.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpConfig {
+    #[serde(default = "default_heartbeat_interval", with = "humantime_serde")]
+    pub heartbeat_interval: Duration,
+
+    #[serde(default = "default_reap_threshold", with = "humantime_serde")]
+    pub reap_threshold: Duration,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval: default_heartbeat_interval(),
+            reap_threshold: default_reap_threshold(),
+        }
+    }
+}
+
+fn default_heartbeat_interval() -> Duration {
+    Duration::from_secs(5)
+}
+
+fn default_reap_threshold() -> Duration {
+    Duration::from_secs(60)
+}
+
 /// Load config. If `path` is provided, the file must exist and parse cleanly.
 /// If `path` is None, return defaults.
 pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
@@ -164,6 +220,12 @@ fn validate(cfg: &mut Config) -> Result<(), String> {
     }
     for d in &mut cfg.cache.override_no_store_domains {
         d.make_ascii_lowercase();
+    }
+    if cfg.mcp.heartbeat_interval.is_zero() {
+        return Err("mcp.heartbeat_interval must be > 0".to_string());
+    }
+    if cfg.mcp.reap_threshold.is_zero() {
+        return Err("mcp.reap_threshold must be > 0".to_string());
     }
     Ok(())
 }
@@ -365,5 +427,80 @@ max_ttl = "1h"
         .unwrap();
         let cfg = load(Some(file.path())).unwrap();
         assert_eq!(cfg.cache.default_ttl, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn default_tokenizer_is_o200k() {
+        let cfg = Config::default();
+        assert_eq!(cfg.tokenizer.default, crate::tokenizer::Tokenizer::O200k);
+    }
+
+    #[test]
+    fn default_mcp_intervals() {
+        let cfg = Config::default();
+        assert_eq!(cfg.mcp.heartbeat_interval, Duration::from_secs(5));
+        assert_eq!(cfg.mcp.reap_threshold, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn load_tokenizer_override() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[tokenizer]
+default = "claude"
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(file.path())).unwrap();
+        assert_eq!(cfg.tokenizer.default, crate::tokenizer::Tokenizer::Claude);
+    }
+
+    #[test]
+    fn load_unknown_tokenizer_errors() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[tokenizer]
+default = "gpt-5"
+"#
+        )
+        .unwrap();
+        let result = load(Some(file.path()));
+        assert!(matches!(result, Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn load_mcp_overrides() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[mcp]
+heartbeat_interval = "10s"
+reap_threshold = "2m"
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(file.path())).unwrap();
+        assert_eq!(cfg.mcp.heartbeat_interval, Duration::from_secs(10));
+        assert_eq!(cfg.mcp.reap_threshold, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn load_rejects_zero_heartbeat() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[mcp]
+heartbeat_interval = "0s"
+"#
+        )
+        .unwrap();
+        let result = load(Some(file.path()));
+        assert!(matches!(result, Err(ConfigError::Invalid { .. })));
     }
 }
