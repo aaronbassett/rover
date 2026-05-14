@@ -88,6 +88,20 @@ impl RoverHandler {
             Err(e) => Err(into_error_data(e)),
         }
     }
+
+    /// Fetch a URL and return ONLY its structured metadata (no markdown body).
+    #[tool(description = "Fetch a URL and return only its structured metadata: \
+                       title, description, author, published/modified dates, \
+                       schema_types, image, canonical, language, extraction_quality.")]
+    pub async fn get_metadata_tool(
+        &self,
+        Parameters(args): Parameters<crate::mcp::tools::get_metadata::GetMetadataArgs>,
+    ) -> Result<Json<crate::mcp::envelope::MetadataResponse>, ErrorData> {
+        match self.get_metadata_inner(args).await {
+            Ok(out) => Ok(Json(out)),
+            Err(e) => Err(into_error_data(e)),
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -98,7 +112,9 @@ impl ServerHandler for RoverHandler {
                 "rover",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions("Web fetch & prep for LLM agents. Tools: fetch, count_tokens.")
+            .with_instructions(
+                "Web fetch & prep for LLM agents. Tools: fetch, count_tokens, get_metadata.",
+            )
     }
 }
 

@@ -89,7 +89,7 @@ async fn call_tool_any(
 }
 
 #[tokio::test]
-async fn lists_two_tools() {
+async fn lists_three_tools() {
     let tmp = tempfile::tempdir().unwrap();
     let client = spawn_client(tmp.path()).await;
     let tools = client.list_all_tools().await.unwrap();
@@ -101,6 +101,10 @@ async fn lists_two_tools() {
     assert!(
         names.contains(&"count_tokens_tool"),
         "missing count_tokens_tool: {names:?}"
+    );
+    assert!(
+        names.contains(&"get_metadata_tool"),
+        "missing get_metadata_tool: {names:?}"
     );
     client.cancel().await.unwrap();
 }
