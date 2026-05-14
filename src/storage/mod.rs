@@ -12,6 +12,7 @@ pub mod pages;
 pub mod robots;
 pub mod servers;
 pub mod system;
+pub mod tasks;
 
 pub use error::StorageError;
 
@@ -45,6 +46,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "003_robots_state.sql",
         include_str!("migrations/003_robots_state.sql"),
     ),
+    ("004_tasks.sql", include_str!("migrations/004_tasks.sql")),
 ];
 
 /// Per-migration outcome shuttled out of the actor closure so the failed
@@ -235,6 +237,6 @@ mod tests {
             .await
             .unwrap();
         assert!(cols.contains(&"state".to_string()), "cols = {cols:?}");
-        assert_eq!(db.schema_version().await.unwrap(), 3);
+        assert_eq!(db.schema_version().await.unwrap(), MIGRATIONS.len() as u32);
     }
 }

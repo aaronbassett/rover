@@ -38,6 +38,7 @@ readabilityrs = "0.1"
 regex = "1"
 rusqlite = "0.37"
 tokio-rusqlite = { version = "0.7", features = ["bundled"] }
+uuid = { version = "1", features = ["v7", "std"] }
 humantime-serde = "1"
 rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
 schemars = "1"
