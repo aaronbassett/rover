@@ -18,7 +18,7 @@ use crate::storage::events::{EventInsert, append};
 use crate::storage::tasks::{
     TaskInsert, TaskKind, TaskStatus, get, insert, is_cancelled, set_status,
 };
-use crate::tasks::types::{RetryParams, TaskId};
+use crate::tasks::types::{CoreEvent, RetryParams, TaskId};
 
 const RETRY_WAIT_CAP_MS: u64 = 5 * 60 * 1000;
 
@@ -50,7 +50,7 @@ pub async fn run(deps: RetryDeps, db: Db, task_id: TaskId, cancel: CancellationT
         &db,
         EventInsert {
             task_id: task_id.as_str().to_string(),
-            kind: "task_started".into(),
+            kind: CoreEvent::TaskStarted.as_str().into(),
             payload_json: json!({"kind":"retry","attempt": params.attempt}).to_string(),
         },
     )
@@ -146,7 +146,7 @@ pub async fn run(deps: RetryDeps, db: Db, task_id: TaskId, cancel: CancellationT
                 &db,
                 EventInsert {
                     task_id: task_id.as_str().to_string(),
-                    kind: "task_completed".into(),
+                    kind: CoreEvent::TaskCompleted.as_str().into(),
                     payload_json: json!({"duration_ms": duration_ms}).to_string(),
                 },
             )
@@ -206,7 +206,7 @@ pub async fn run(deps: RetryDeps, db: Db, task_id: TaskId, cancel: CancellationT
                     &db,
                     EventInsert {
                         task_id: task_id.as_str().to_string(),
-                        kind: "task_completed".into(),
+                        kind: CoreEvent::TaskCompleted.as_str().into(),
                         payload_json: json!({
                             "chained_next_task_id": new_id,
                             "duration_ms": duration_ms,
@@ -226,7 +226,7 @@ async fn terminal_fail(db: &Db, task_id: &str, slug: &str, message: &str, durati
         db,
         EventInsert {
             task_id: task_id.to_string(),
-            kind: "task_failed".into(),
+            kind: CoreEvent::TaskFailed.as_str().into(),
             payload_json: json!({
                 "error": slug,
                 "message": message,
@@ -251,7 +251,7 @@ async fn cancelled_terminal(db: &Db, task_id: &str, duration_ms: i64) {
         db,
         EventInsert {
             task_id: task_id.to_string(),
-            kind: "task_cancelled".into(),
+            kind: CoreEvent::TaskCancelled.as_str().into(),
             payload_json: json!({"at": "during_wait", "duration_ms": duration_ms}).to_string(),
         },
     )

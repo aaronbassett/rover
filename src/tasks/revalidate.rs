@@ -17,7 +17,7 @@ use crate::fetcher::ssrf::SsrfLevel;
 use crate::storage::Db;
 use crate::storage::events::{EventInsert, append};
 use crate::storage::tasks::{TaskStatus, get, set_status};
-use crate::tasks::types::{RevalidateParams, TaskId};
+use crate::tasks::types::{CoreEvent, RevalidateParams, TaskId};
 
 #[derive(Clone)]
 pub struct RevalidateDeps {
@@ -47,7 +47,7 @@ pub async fn run(deps: RevalidateDeps, db: Db, task_id: TaskId, _cancel: Cancell
         &db,
         EventInsert {
             task_id: task_id.as_str().to_string(),
-            kind: "task_started".into(),
+            kind: CoreEvent::TaskStarted.as_str().into(),
             payload_json: json!({"kind":"revalidate"}).to_string(),
         },
     )
@@ -123,7 +123,7 @@ pub async fn run(deps: RevalidateDeps, db: Db, task_id: TaskId, _cancel: Cancell
                 &db,
                 EventInsert {
                     task_id: task_id.as_str().to_string(),
-                    kind: "task_completed".into(),
+                    kind: CoreEvent::TaskCompleted.as_str().into(),
                     payload_json: json!({"duration_ms": duration_ms}).to_string(),
                 },
             )
@@ -148,7 +148,7 @@ async fn terminal_fail(db: &Db, task_id: &str, slug: &str, message: &str, durati
         db,
         EventInsert {
             task_id: task_id.to_string(),
-            kind: "task_failed".into(),
+            kind: CoreEvent::TaskFailed.as_str().into(),
             payload_json: json!({
                 "error": slug,
                 "message": message,

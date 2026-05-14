@@ -24,7 +24,7 @@ use crate::fetcher::ssrf::SsrfLevel;
 use crate::storage::Db;
 use crate::storage::events::{EventInsert, append, range_since};
 use crate::storage::tasks::{TaskStatus, get, is_cancelled, set_status};
-use crate::tasks::types::{BatchFetchParams, BatchFetchResult, TaskId};
+use crate::tasks::types::{BatchFetchParams, BatchFetchResult, CoreEvent, TaskId};
 
 /// Dependencies needed by the worker. Built once by `mcp::server` and shared
 /// across every batch worker via `Arc`.
@@ -99,7 +99,7 @@ pub async fn run(deps: BatchDeps, db: Db, task_id: TaskId, cancel: CancellationT
         &db,
         EventInsert {
             task_id: task_id.as_str().to_string(),
-            kind: "task_started".into(),
+            kind: CoreEvent::TaskStarted.as_str().into(),
             payload_json: json!({"kind":"batch_fetch","total":params.urls.len()}).to_string(),
         },
     )
@@ -307,7 +307,7 @@ pub async fn run(deps: BatchDeps, db: Db, task_id: TaskId, cancel: CancellationT
             &db,
             EventInsert {
                 task_id: task_id.as_str().to_string(),
-                kind: "task_cancelled".into(),
+                kind: CoreEvent::TaskCancelled.as_str().into(),
                 payload_json: json!({"at": "between_items", "duration_ms": duration_ms})
                     .to_string(),
             },
@@ -340,7 +340,7 @@ pub async fn run(deps: BatchDeps, db: Db, task_id: TaskId, cancel: CancellationT
             &db,
             EventInsert {
                 task_id: task_id.as_str().to_string(),
-                kind: "task_completed".into(),
+                kind: CoreEvent::TaskCompleted.as_str().into(),
                 payload_json: json!({"result": result, "duration_ms": duration_ms}).to_string(),
             },
         )
@@ -367,7 +367,7 @@ async fn emit_terminal_failure(
         db,
         EventInsert {
             task_id: task_id.to_string(),
-            kind: "task_failed".into(),
+            kind: CoreEvent::TaskFailed.as_str().into(),
             payload_json: json!({
                 "error": error_slug,
                 "message": message,
@@ -424,7 +424,7 @@ mod tests {
             &db,
             EventInsert {
                 task_id: "t1".into(),
-                kind: "task_started".into(),
+                kind: CoreEvent::TaskStarted.as_str().into(),
                 payload_json: "{}".into(),
             },
         )
