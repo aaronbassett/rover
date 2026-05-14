@@ -6,6 +6,8 @@
 
 use crate::storage::{Db, StorageError};
 
+use super::StringErr;
+
 /// One row from `robots_cache`. The `state` discriminator is a string at the
 /// storage edge so SQL migrations don't have to know about Rust enums.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,27 +43,21 @@ impl RobotsState {
             other => {
                 // tokio_rusqlite 0.7's `Error` enum has no `Other` variant
                 // (only `ConnectionClosed`, `Close`, `Error(rusqlite::Error)`),
-                // so we mirror the `StringErr` fallback used in
-                // `super::unwrap_storage_err` and wrap a synthetic
-                // `rusqlite::Error::ToSqlConversionFailure`.
+                // so we wrap a synthetic `rusqlite::Error::FromSqlConversionFailure`
+                // — semantically correct here since we're failing to map a SQL
+                // text value back to a Rust enum. Column index 4 matches the
+                // `state` position in `lookup`'s SELECT projection.
                 return Err(StorageError::Backend(tokio_rusqlite::Error::Error(
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(StringErr(format!(
-                        "unknown robots_cache.state = {other}"
-                    )))),
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(StringErr(format!("unknown robots_cache.state = {other}"))),
+                    ),
                 )));
             }
         })
     }
 }
-
-#[derive(Debug)]
-struct StringErr(String);
-impl std::fmt::Display for StringErr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl std::error::Error for StringErr {}
 
 pub async fn lookup(db: &Db, host: &str) -> Result<Option<RobotsEntry>, StorageError> {
     let host = host.to_string();

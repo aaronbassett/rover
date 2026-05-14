@@ -151,7 +151,7 @@ fn unwrap_storage_err(e: StorageError) -> rusqlite::Error {
 }
 
 #[derive(Debug)]
-struct StringErr(String);
+pub(crate) struct StringErr(pub(crate) String);
 impl std::fmt::Display for StringErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
