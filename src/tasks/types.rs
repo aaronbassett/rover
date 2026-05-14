@@ -42,7 +42,6 @@ impl Default for TaskId {
 #[serde(rename_all = "snake_case")]
 pub enum CoreEvent {
     TaskStarted,
-    TaskProgress,
     TaskCompleted,
     TaskFailed,
     TaskCancelled,
@@ -52,7 +51,6 @@ impl CoreEvent {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::TaskStarted => "task_started",
-            Self::TaskProgress => "task_progress",
             Self::TaskCompleted => "task_completed",
             Self::TaskFailed => "task_failed",
             Self::TaskCancelled => "task_cancelled",
