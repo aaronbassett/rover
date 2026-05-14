@@ -32,6 +32,15 @@ pub struct Detected {
     pub source: DetectionSource,
 }
 
+impl Default for Detected {
+    fn default() -> Self {
+        Self {
+            encoding: UTF_8,
+            source: DetectionSource::Fallback,
+        }
+    }
+}
+
 /// Detect the source encoding for an HTTP response body.
 pub fn detect_encoding(content_type: Option<&str>, bytes: &[u8]) -> Detected {
     // 1. BOM
