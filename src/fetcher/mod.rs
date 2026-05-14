@@ -9,6 +9,8 @@ pub mod fetch;
 pub mod ssrf;
 pub mod ttl;
 
+pub mod concurrency;
+
 pub use cached::{CacheStatus, CachedFetch, ExtractResult, FetchOptions, fetch_with_cache};
 pub use fetch::FetchedPage;
 
