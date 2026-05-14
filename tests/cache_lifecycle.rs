@@ -71,7 +71,7 @@ async fn cache_hit_then_force_refresh_and_purge() {
     // First fetch -- miss, hits the network.
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
-        .args(["fetch", &url, "--ssrf-test-loopback"])
+        .args(["fetch", &url, "--ignore-robots", "--ssrf-test-loopback"])
         .assert()
         .success()
         .stdout(predicate::str::contains("How to do the thing"));
@@ -84,7 +84,7 @@ async fn cache_hit_then_force_refresh_and_purge() {
     // Second fetch -- hit, no network.
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
-        .args(["fetch", &url, "--ssrf-test-loopback"])
+        .args(["fetch", &url, "--ignore-robots", "--ssrf-test-loopback"])
         .assert()
         .success()
         .stdout(predicate::str::contains("How to do the thing"));
@@ -97,7 +97,13 @@ async fn cache_hit_then_force_refresh_and_purge() {
     // Force refresh -- bypass cache, hit network again.
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
-        .args(["fetch", &url, "--force-refresh", "--ssrf-test-loopback"])
+        .args([
+            "fetch",
+            &url,
+            "--force-refresh",
+            "--ignore-robots",
+            "--ssrf-test-loopback",
+        ])
         .assert()
         .success();
     assert_eq!(
@@ -184,6 +190,7 @@ async fn revalidation_returns_304_and_serves_cache() {
             cfg_path.to_str().unwrap(),
             "fetch",
             &url,
+            "--ignore-robots",
             "--ssrf-test-loopback",
         ])
         .assert()
@@ -201,6 +208,7 @@ async fn revalidation_returns_304_and_serves_cache() {
             cfg_path.to_str().unwrap(),
             "fetch",
             &url,
+            "--ignore-robots",
             "--ssrf-test-loopback",
         ])
         .assert()

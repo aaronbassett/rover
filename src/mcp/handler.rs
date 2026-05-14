@@ -10,6 +10,7 @@ use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router};
 
 use crate::config::Config;
+use crate::fetcher::concurrency::Pacer;
 use crate::fetcher::ssrf::SsrfLevel;
 use crate::mcp::tools::count_tokens::CountTokensArgs;
 use crate::mcp::tools::fetch::{FetchArgs, FetchOutput};
@@ -22,6 +23,7 @@ pub struct RoverHandler {
     pub(crate) config: Arc<Config>,
     pub(crate) client: reqwest::Client,
     pub(crate) ssrf_level: SsrfLevel,
+    pub(crate) pacer: Arc<Pacer>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -31,12 +33,14 @@ impl RoverHandler {
         config: Arc<Config>,
         client: reqwest::Client,
         ssrf_level: SsrfLevel,
+        pacer: Arc<Pacer>,
     ) -> Self {
         Self {
             db,
             config,
             client,
             ssrf_level,
+            pacer,
             tool_router: Self::tool_router(),
         }
     }

@@ -36,7 +36,7 @@ async fn fetch_prints_markdown_with_frontmatter() {
     Command::cargo_bin("rover")
         .unwrap()
         .env("ROVER_DATA_DIR", tmp.path())
-        .args(["fetch", &url, "--ssrf-test-loopback"])
+        .args(["fetch", &url, "--ignore-robots", "--ssrf-test-loopback"])
         .assert()
         .success()
         .stdout(predicate::str::starts_with("---\n"))

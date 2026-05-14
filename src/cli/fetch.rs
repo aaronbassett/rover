@@ -23,6 +23,7 @@ use crate::storage::Db;
 pub struct Args {
     pub url: String,
     pub force_refresh: bool,
+    pub ignore_robots: bool,
 
     #[cfg(any(test, feature = "test-loopback"))]
     pub ssrf_test_loopback: bool,
@@ -40,15 +41,21 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         .context("opening cache database")?;
 
     let client = build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout());
+    let pacer = crate::fetcher::concurrency::Pacer::new(&cfg.rate_limit);
 
     let result = fetch_with_cache(
         &db,
         &client,
+        &pacer,
+        &cfg.rate_limit,
+        &cfg.robots,
         &url,
         &cfg.cache,
         FetchOptions {
             force_refresh: args.force_refresh,
             ssrf_level: level,
+            ignore_robots: args.ignore_robots,
+            user_agent: cfg.fetch.user_agent.clone(),
         },
         |body, base| {
             let extracted =

@@ -32,11 +32,16 @@ impl RoverHandler {
         let result = fetch_with_cache(
             &self.db,
             &self.client,
+            &self.pacer,
+            &self.config.rate_limit,
+            &self.config.robots,
             &url,
             &self.config.cache,
             FetchOptions {
                 force_refresh: args.force_refresh,
                 ssrf_level: self.ssrf_level,
+                ignore_robots: false,
+                user_agent: self.config.fetch.user_agent.clone(),
             },
             |body, base| {
                 let extracted = crate::extractor::pipeline::extract(body, Some(base))

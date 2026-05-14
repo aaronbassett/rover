@@ -59,6 +59,10 @@ struct FetchArgs {
     #[arg(long)]
     force_refresh: bool,
 
+    /// Skip the robots.txt gate for this fetch. CLI-only escape hatch.
+    #[arg(long)]
+    ignore_robots: bool,
+
     /// **Test-only.** Allow loopback addresses to satisfy SSRF checks. Used by
     /// the integration test suite against wiremock; never used in production.
     #[cfg(any(test, feature = "test-loopback"))]
@@ -145,6 +149,7 @@ impl FetchArgs {
         rover::cli::fetch::Args {
             url: self.url,
             force_refresh: self.force_refresh,
+            ignore_robots: self.ignore_robots,
             #[cfg(any(test, feature = "test-loopback"))]
             ssrf_test_loopback: self.ssrf_test_loopback,
         }
