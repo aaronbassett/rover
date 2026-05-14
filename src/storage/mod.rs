@@ -8,6 +8,7 @@
 //! process safety via WAL mode + `busy_timeout`. Migrations applied on open.
 
 pub mod error;
+pub mod events;
 pub mod pages;
 pub mod robots;
 pub mod servers;
