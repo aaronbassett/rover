@@ -15,29 +15,14 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::config::{CacheConfig, FetchConfig, RateLimitConfig, RobotsConfig};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::FetcherError;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache};
-use crate::fetcher::concurrency::Pacer;
-use crate::fetcher::ssrf::SsrfLevel;
 use crate::storage::Db;
 use crate::storage::events::{EventInsert, append, range_since};
 use crate::storage::tasks::{TaskStatus, get, is_cancelled, set_status};
+use crate::tasks::deps::WorkerDeps;
 use crate::tasks::types::{BatchFetchParams, BatchFetchResult, CoreEvent, TaskId};
-
-/// Dependencies needed by the worker. Built once by `mcp::server` and shared
-/// across every batch worker via `Arc`.
-#[derive(Clone)]
-pub struct BatchDeps {
-    pub client: reqwest::Client,
-    pub pacer: Arc<Pacer>,
-    pub cache_cfg: CacheConfig,
-    pub rate_cfg: RateLimitConfig,
-    pub robots_cfg: RobotsConfig,
-    pub fetch_cfg: FetchConfig,
-    pub ssrf_level: SsrfLevel,
-}
 
 /// Classify a fetcher error as a "deferred" failure that warrants a follow-up
 /// retry task. `FetcherError::Deferred` is produced by `with_retries` when a
@@ -81,7 +66,7 @@ async fn already_processed_indices(db: &Db, task_id: &str) -> HashSet<u32> {
 }
 
 /// Worker entry point used by `DefaultSpawner`.
-pub async fn run(deps: BatchDeps, db: Db, task_id: TaskId, cancel: CancellationToken) {
+pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, cancel: CancellationToken) {
     let started = Instant::now();
     let row = match get(&db, task_id.as_str()).await {
         Ok(Some(r)) => r,

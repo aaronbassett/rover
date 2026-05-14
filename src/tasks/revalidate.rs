@@ -1,36 +1,22 @@
 //! `revalidate` worker — refreshes a stale cache entry in the background.
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::config::{CacheConfig, FetchConfig, RateLimitConfig, RobotsConfig};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{
     CacheStatus, ExtractResult, FetchOptions, fetch_with_cache, sha256_hex,
 };
-use crate::fetcher::concurrency::Pacer;
-use crate::fetcher::ssrf::SsrfLevel;
 use crate::storage::Db;
 use crate::storage::events::{EventInsert, append};
 use crate::storage::tasks::{TaskStatus, get, set_status};
+use crate::tasks::deps::WorkerDeps;
 use crate::tasks::types::{CoreEvent, RevalidateParams, TaskId};
 
-#[derive(Clone)]
-pub struct RevalidateDeps {
-    pub client: reqwest::Client,
-    pub pacer: Arc<Pacer>,
-    pub cache_cfg: CacheConfig,
-    pub rate_cfg: RateLimitConfig,
-    pub robots_cfg: RobotsConfig,
-    pub fetch_cfg: FetchConfig,
-    pub ssrf_level: SsrfLevel,
-}
-
-pub async fn run(deps: RevalidateDeps, db: Db, task_id: TaskId, _cancel: CancellationToken) {
+pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, _cancel: CancellationToken) {
     let started = Instant::now();
     let row = match get(&db, task_id.as_str()).await {
         Ok(Some(r)) => r,

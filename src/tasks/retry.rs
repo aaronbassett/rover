@@ -1,6 +1,5 @@
 //! `retry` worker — long-deferred retries scheduled by the fetcher.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
@@ -8,32 +7,19 @@ use tokio::time;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::config::{CacheConfig, FetchConfig, RateLimitConfig, RobotsConfig};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
-use crate::fetcher::concurrency::Pacer;
-use crate::fetcher::ssrf::SsrfLevel;
 use crate::storage::Db;
 use crate::storage::events::{EventInsert, append};
 use crate::storage::tasks::{
     TaskInsert, TaskKind, TaskStatus, get, insert, is_cancelled, set_status,
 };
+use crate::tasks::deps::WorkerDeps;
 use crate::tasks::types::{CoreEvent, RetryParams, TaskId};
 
 const RETRY_WAIT_CAP_MS: u64 = 5 * 60 * 1000;
 
-#[derive(Clone)]
-pub struct RetryDeps {
-    pub client: reqwest::Client,
-    pub pacer: Arc<Pacer>,
-    pub cache_cfg: CacheConfig,
-    pub rate_cfg: RateLimitConfig,
-    pub robots_cfg: RobotsConfig,
-    pub fetch_cfg: FetchConfig,
-    pub ssrf_level: SsrfLevel,
-}
-
-pub async fn run(deps: RetryDeps, db: Db, task_id: TaskId, cancel: CancellationToken) {
+pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, cancel: CancellationToken) {
     let started = Instant::now();
     let row = match get(&db, task_id.as_str()).await {
         Ok(Some(r)) => r,
