@@ -88,7 +88,22 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
 
     // Build the in-process scheduler so MCP tools can hand off long-running
     // work (batch_fetch, retry, revalidate) to background workers.
-    let (new_task_tx, new_task_rx) = Scheduler::channel();
+    let (sched_task_tx, new_task_rx) = Scheduler::channel();
+
+    // Storage → scheduler bridge. Every `storage::tasks::insert` (MCP tool,
+    // fetcher SWR, deferred retry, retry chain) routes through the storage
+    // notifier, which this task forwards into the scheduler's typed channel.
+    // The bridge dies when the storage sender drops on `Db` teardown.
+    let (storage_tx, mut storage_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    db.set_new_task_sender(storage_tx);
+    let bridge_tx = sched_task_tx.clone();
+    tokio::spawn(async move {
+        while let Some(id) = storage_rx.recv().await {
+            if bridge_tx.send(crate::tasks::types::TaskId(id)).is_err() {
+                break;
+            }
+        }
+    });
     let batch_deps = BatchDeps {
         client: client.clone(),
         pacer: pacer.clone(),
@@ -147,7 +162,10 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
     };
     let sched_handle = tokio::spawn(sched.run());
 
-    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer, new_task_tx);
+    // `sched_task_tx` is kept alive by the bridge spawn above; the handler
+    // no longer holds its own sender (single source of truth: storage layer).
+    let _ = sched_task_tx;
+    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer);
 
     let service = handler.serve(stdio()).await?;
 

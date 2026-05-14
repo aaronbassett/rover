@@ -142,6 +142,7 @@ pub async fn insert(db: &Db, input: TaskInsert) -> Result<(), StorageError> {
     } = input;
     let kind_s = kind.as_str().to_string();
     let now = now_epoch_ms();
+    let id_for_notify = id.clone();
     db.conn
         .call(move |c| {
             c.execute(
@@ -154,6 +155,22 @@ pub async fn insert(db: &Db, input: TaskInsert) -> Result<(), StorageError> {
             Ok::<_, rusqlite::Error>(())
         })
         .await?;
+    // Notify the scheduler if a listener has been installed. This is the
+    // single source of truth for new-task dispatch — every insert site
+    // (MCP tool, fetcher SWR, deferred retry, retry chain) benefits.
+    // A poisoned mutex or a closed channel is non-fatal: the orphan scan
+    // will pick the row up eventually if the inserting process dies.
+    if let Ok(guard) = db.new_task_tx.lock() {
+        if let Some(tx) = guard.as_ref() {
+            if let Err(e) = tx.send(id_for_notify) {
+                tracing::debug!(
+                    target: "rover::storage",
+                    error = ?e,
+                    "new-task notify channel closed",
+                );
+            }
+        }
+    }
     Ok(())
 }
 

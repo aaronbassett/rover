@@ -114,14 +114,9 @@ impl Scheduler {
                 )
                 .await?;
                 if claimed {
-                    set_status(
-                        &self.db,
-                        &orphan.id,
-                        TaskStatus::Failed,
-                        None,
-                        Some("owner_died".into()),
-                    )
-                    .await?;
+                    // Event-before-status ordering matches every worker, so
+                    // a tailing CLI never sees `Failed` without a prior
+                    // `task_failed` event.
                     append(
                         &self.db,
                         EventInsert {
@@ -129,6 +124,14 @@ impl Scheduler {
                             kind: "task_failed".into(),
                             payload_json: r#"{"error":"owner_died","message":"original owner pid disappeared and task kind is not resumable"}"#.into(),
                         },
+                    )
+                    .await?;
+                    set_status(
+                        &self.db,
+                        &orphan.id,
+                        TaskStatus::Failed,
+                        None,
+                        Some("owner_died".into()),
                     )
                     .await?;
                 }

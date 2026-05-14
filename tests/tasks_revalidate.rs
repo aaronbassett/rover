@@ -157,3 +157,39 @@ async fn revalidate_marks_completed_after_fresh_fetch() {
     assert!(kinds.contains(&"revalidation_started"));
     assert!(kinds.contains(&"revalidation_completed"));
 }
+
+/// Regression: every `storage::tasks::insert` must notify a listener
+/// installed via `Db::set_new_task_sender`. Before the M6 fix, only the
+/// MCP `batch_fetch` tool sent on the scheduler channel directly; tasks
+/// inserted by the fetcher SWR path, the deferred retry path, and the
+/// retry-chain worker never reached the scheduler because the orphan scan
+/// excludes the live `servers.pid` of the inserting process.
+#[tokio::test]
+async fn insert_notifies_scheduler_via_storage_channel() {
+    use std::time::Duration;
+
+    use rover::storage::{self, Db};
+    use tempfile::tempdir;
+
+    let tmp = tempdir().unwrap();
+    let db = Db::open(tmp.path().join("rover.db")).await.unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    db.set_new_task_sender(tx);
+
+    storage::tasks::insert(
+        &db,
+        storage::tasks::TaskInsert {
+            id: "rv".into(),
+            kind: storage::tasks::TaskKind::Revalidate,
+            params_json: "{}".into(),
+            owner_pid: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+
+    let got = tokio::time::timeout(Duration::from_millis(500), rx.recv())
+        .await
+        .expect("notify did not fire");
+    assert_eq!(got.as_deref(), Some("rv"));
+}

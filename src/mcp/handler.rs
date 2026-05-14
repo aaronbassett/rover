@@ -17,6 +17,11 @@ use crate::mcp::tools::fetch::{FetchArgs, FetchOutput};
 use crate::storage::Db;
 
 /// State shared across all MCP tool invocations.
+///
+/// Note: this struct no longer carries its own scheduler `Sender`. Every
+/// `storage::tasks::insert` call notifies the scheduler via the `Db`-owned
+/// notifier installed by `mcp::server::serve_stdio`, so the MCP tool layer
+/// has no extra wiring to do — it just inserts.
 #[derive(Clone)]
 pub struct RoverHandler {
     pub(crate) db: Db,
@@ -24,7 +29,6 @@ pub struct RoverHandler {
     pub(crate) client: reqwest::Client,
     pub(crate) ssrf_level: SsrfLevel,
     pub(crate) pacer: Arc<Pacer>,
-    pub(crate) new_task_tx: crate::tasks::scheduler::NewTaskSender,
     tool_router: ToolRouter<Self>,
 }
 
@@ -35,7 +39,6 @@ impl RoverHandler {
         client: reqwest::Client,
         ssrf_level: SsrfLevel,
         pacer: Arc<Pacer>,
-        new_task_tx: crate::tasks::scheduler::NewTaskSender,
     ) -> Self {
         Self {
             db,
@@ -43,7 +46,6 @@ impl RoverHandler {
             client,
             ssrf_level,
             pacer,
-            new_task_tx,
             tool_router: Self::tool_router(),
         }
     }

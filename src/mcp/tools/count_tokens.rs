@@ -133,7 +133,6 @@ mod tests {
         let path = tmp.path().join("rover.db");
         let db = crate::storage::Db::open(&path).await.unwrap();
         let pacer = std::sync::Arc::new(crate::fetcher::concurrency::Pacer::new(&cfg.rate_limit));
-        let (tx, _rx) = crate::tasks::scheduler::Scheduler::channel();
         (
             RoverHandler::new(
                 db,
@@ -141,7 +140,6 @@ mod tests {
                 client,
                 crate::fetcher::ssrf::SsrfLevel::Strict,
                 pacer,
-                tx,
             ),
             tmp,
         )

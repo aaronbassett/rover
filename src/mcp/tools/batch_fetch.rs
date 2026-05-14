@@ -1,9 +1,11 @@
 //! MCP `batch_fetch` tool.
 //!
 //! Validates inputs, runs each URL through the SSRF policy, inserts a
-//! `batch_fetch` task carrying serialised `BatchFetchParams`, sends the new
-//! ID on the in-process MPSC, returns the immediate `TaskCreatedResponse`
-//! envelope. SSRF rejects pre-empt the task insert.
+//! `batch_fetch` task carrying serialised `BatchFetchParams`, and returns
+//! the immediate `TaskCreatedResponse` envelope. The scheduler is notified
+//! by the storage layer itself — see `storage::tasks::insert` and the
+//! bridge installed in `mcp::server::serve_stdio`. SSRF rejects pre-empt
+//! the task insert.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -76,11 +78,9 @@ impl RoverHandler {
             },
         )
         .await?;
-        // Notify scheduler. Failure to send means the channel is closed —
-        // log + continue: the next orphan scan picks it up.
-        if let Err(e) = self.new_task_tx.send(id.clone()) {
-            tracing::warn!(target: "rover::mcp", error = ?e, "scheduler channel closed");
-        }
+        // Scheduler notification happens inside `storage::tasks::insert` via
+        // the Db-owned notifier installed by `mcp::server::serve_stdio`. No
+        // direct send from the tool layer.
         Ok(TaskCreatedResponse {
             task_id: id.as_str().to_string(),
             status: "running".into(),
