@@ -1,6 +1,6 @@
 //! `rover mcp` subcommand — start the MCP server over stdio.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -13,7 +13,7 @@ use crate::storage::Db;
 pub async fn run(config_path: Option<&Path>) -> anyhow::Result<()> {
     let cfg = Arc::new(config::load(config_path).context("loading config")?);
 
-    let data_dir = data_dir()?;
+    let data_dir = crate::paths::data_dir();
     std::fs::create_dir_all(&data_dir).context("creating data dir")?;
     let db = Db::open(data_dir.join("rover.db"))
         .await
@@ -22,15 +22,6 @@ pub async fn run(config_path: Option<&Path>) -> anyhow::Result<()> {
     let ssrf_level = ssrf_level_from_env();
 
     mcp::serve_stdio(db, cfg, ssrf_level).await
-}
-
-fn data_dir() -> anyhow::Result<PathBuf> {
-    if let Ok(env_dir) = std::env::var("ROVER_DATA_DIR") {
-        return Ok(PathBuf::from(env_dir));
-    }
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine local data dir"))?;
-    Ok(base.join("rover"))
 }
 
 /// Production builds always use `SsrfLevel::Strict`.

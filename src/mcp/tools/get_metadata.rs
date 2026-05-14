@@ -40,7 +40,7 @@ impl RoverHandler {
             },
             |body, base| {
                 let extracted = crate::extractor::pipeline::extract(body, Some(base))
-                    .map_err(|_| crate::fetcher::FetcherError::Decode)?;
+                    .map_err(crate::fetcher::FetcherError::Extract)?;
                 let content_hash = format!("sha256:{}", sha256_hex(extracted.body_md.as_bytes()));
                 Ok(ExtractResult {
                     title: extracted.title,

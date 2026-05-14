@@ -39,4 +39,7 @@ pub enum FetcherError {
 
     #[error("storage error: {0}")]
     Storage(#[from] crate::storage::StorageError),
+
+    #[error("extractor error: {0}")]
+    Extract(#[from] crate::extractor::ExtractorError),
 }

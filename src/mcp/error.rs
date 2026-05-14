@@ -69,6 +69,7 @@ impl McpError {
                     F::Ssrf(_) => RoverError::new(RoverError::SSRF_DENIED, e.to_string()),
                     F::Url(_) => RoverError::new(RoverError::INVALID_URL, e.to_string()),
                     F::Storage(_) => RoverError::new(RoverError::STORAGE_ERROR, e.to_string()),
+                    F::Extract(_) => RoverError::new(RoverError::EXTRACT_FAILED, e.to_string()),
                     F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
                         RoverError::new(RoverError::FETCH_FAILED, e.to_string())
                     }
@@ -143,5 +144,19 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::EXTRACT_FAILED);
         assert!(r.message.contains("/no/such"));
+    }
+
+    #[test]
+    fn fetcher_extract_routes_to_extract_failed() {
+        use crate::extractor::ExtractorError;
+        use crate::fetcher::FetcherError;
+        let inner = ExtractorError::Output {
+            path: "/tmp/x".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "nope"),
+        };
+        let e = McpError::Fetcher(FetcherError::Extract(inner));
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::EXTRACT_FAILED);
+        assert!(r.message.contains("/tmp/x"));
     }
 }

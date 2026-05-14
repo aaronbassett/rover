@@ -7,7 +7,7 @@
 
 use anyhow::Context;
 use jiff::Timestamp;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use url::Url;
 
 use crate::config;
@@ -33,7 +33,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let url = Url::parse(&args.url).context("parsing URL argument")?;
     let level = ssrf_level_for_args(&args);
 
-    let data_dir = data_dir()?;
+    let data_dir = crate::paths::data_dir();
     std::fs::create_dir_all(&data_dir).context("creating data dir")?;
     let db = Db::open(data_dir.join("rover.db"))
         .await
@@ -52,7 +52,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         },
         |body, base| {
             let extracted =
-                extract(body, Some(base)).map_err(|_| crate::fetcher::FetcherError::Decode)?;
+                extract(body, Some(base)).map_err(crate::fetcher::FetcherError::Extract)?;
             let content_hash = format!("sha256:{}", sha256_hex(extracted.body_md.as_bytes()));
             Ok(ExtractResult {
                 title: extracted.title,
@@ -129,15 +129,6 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let envelope = render(&meta);
     print!("{envelope}");
     Ok(())
-}
-
-fn data_dir() -> anyhow::Result<PathBuf> {
-    if let Ok(env_dir) = std::env::var("ROVER_DATA_DIR") {
-        return Ok(PathBuf::from(env_dir));
-    }
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine local data dir"))?;
-    Ok(base.join("rover"))
 }
 
 #[cfg(any(test, feature = "test-loopback"))]

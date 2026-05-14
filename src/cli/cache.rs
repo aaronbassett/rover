@@ -17,7 +17,7 @@ pub enum Args {
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let _cfg = config::load(config_path).context("loading config")?;
-    let data_dir = data_dir()?;
+    let data_dir = crate::paths::data_dir();
     std::fs::create_dir_all(&data_dir).context("creating data dir")?;
     let db = Db::open(data_dir.join("rover.db"))
         .await
@@ -116,15 +116,6 @@ fn glob_to_sql_like(pattern: &str) -> String {
         }
     }
     out
-}
-
-fn data_dir() -> anyhow::Result<std::path::PathBuf> {
-    if let Ok(env_dir) = std::env::var("ROVER_DATA_DIR") {
-        return Ok(std::path::PathBuf::from(env_dir));
-    }
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine local data dir"))?;
-    Ok(base.join("rover"))
 }
 
 fn truncate(s: &str, max: usize) -> String {

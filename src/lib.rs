@@ -9,6 +9,7 @@ pub mod error;
 pub mod extractor;
 pub mod fetcher;
 pub mod mcp;
+pub mod paths;
 pub mod storage;
 pub mod telemetry;
 pub mod tokenizer;
