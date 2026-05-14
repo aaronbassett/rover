@@ -9,6 +9,7 @@
 
 pub mod error;
 pub mod pages;
+pub mod robots;
 pub mod servers;
 pub mod system;
 
