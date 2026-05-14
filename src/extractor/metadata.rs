@@ -85,12 +85,82 @@ impl ExtractedMetadata {
     }
 }
 
-pub fn extract(html: &str, _base: &Url) -> ExtractedMetadata {
+pub fn extract(html: &str, base: &Url) -> ExtractedMetadata {
     let doc = Html::parse_document(html);
     let mut out = ExtractedMetadata::default();
     out.merge_in(extract_jsonld(&doc));
-    // OG + Twitter + html[lang] + canonical land in Task 4.
+    out.merge_in(extract_open_graph(&doc));
+    out.merge_in(extract_twitter(&doc));
+    out.merge_in(extract_meta_description(&doc));
+    out.merge_in(extract_html_lang(&doc));
+    out.merge_in(extract_canonical(&doc, base));
     out
+}
+
+fn meta_content(doc: &Html, sel: &str) -> Option<String> {
+    let selector = Selector::parse(sel).ok()?;
+    doc.select(&selector)
+        .next()
+        .and_then(|el| el.value().attr("content"))
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn extract_open_graph(doc: &Html) -> ExtractedMetadata {
+    ExtractedMetadata {
+        title: meta_content(doc, r#"meta[property="og:title"]"#),
+        description: meta_content(doc, r#"meta[property="og:description"]"#),
+        image: meta_content(doc, r#"meta[property="og:image"]"#),
+        og_type: meta_content(doc, r#"meta[property="og:type"]"#),
+        published: meta_content(doc, r#"meta[property="article:published_time"]"#),
+        modified: meta_content(doc, r#"meta[property="article:modified_time"]"#),
+        author: meta_content(doc, r#"meta[property="article:author"]"#),
+        ..Default::default()
+    }
+}
+
+fn extract_twitter(doc: &Html) -> ExtractedMetadata {
+    ExtractedMetadata {
+        title: meta_content(doc, r#"meta[name="twitter:title"]"#),
+        description: meta_content(doc, r#"meta[name="twitter:description"]"#),
+        image: meta_content(doc, r#"meta[name="twitter:image"]"#),
+        ..Default::default()
+    }
+}
+
+fn extract_meta_description(doc: &Html) -> ExtractedMetadata {
+    ExtractedMetadata {
+        description: meta_content(doc, r#"meta[name="description"]"#),
+        ..Default::default()
+    }
+}
+
+fn extract_html_lang(doc: &Html) -> ExtractedMetadata {
+    let selector = Selector::parse("html").unwrap();
+    let language = doc
+        .select(&selector)
+        .next()
+        .and_then(|el| el.value().attr("lang"))
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    ExtractedMetadata {
+        language,
+        ..Default::default()
+    }
+}
+
+fn extract_canonical(doc: &Html, base: &Url) -> ExtractedMetadata {
+    let selector = Selector::parse(r#"link[rel="canonical"]"#).unwrap();
+    let canonical = doc
+        .select(&selector)
+        .next()
+        .and_then(|el| el.value().attr("href"))
+        .and_then(|href| base.join(href).ok())
+        .map(|u| u.to_string());
+    ExtractedMetadata {
+        canonical,
+        ..Default::default()
+    }
 }
 
 fn extract_jsonld(doc: &Html) -> ExtractedMetadata {
@@ -334,5 +404,81 @@ mod jsonld_tests {
             </head><body></body></html>"#;
         let m = extract(html, &base());
         assert!(m.is_empty()); // soft-fail: empty contribution
+    }
+}
+
+#[cfg(test)]
+mod og_twitter_tests {
+    use super::*;
+    use url::Url;
+
+    fn base() -> Url {
+        Url::parse("https://example.com/").unwrap()
+    }
+
+    #[test]
+    fn reads_open_graph_metatags() {
+        let html = r#"<!doctype html><html lang="en"><head>
+            <meta property="og:title" content="OG Title">
+            <meta property="og:description" content="OG Desc">
+            <meta property="og:image" content="https://x/og.png">
+            <meta property="og:type" content="article">
+            <meta property="article:published_time" content="2026-03-01T00:00:00Z">
+            <meta property="article:modified_time" content="2026-03-02T00:00:00Z">
+            <meta property="article:author" content="Grace Hopper">
+            </head><body></body></html>"#;
+        let m = extract(html, &base());
+        assert_eq!(m.title.as_deref(), Some("OG Title"));
+        assert_eq!(m.description.as_deref(), Some("OG Desc"));
+        assert_eq!(m.image.as_deref(), Some("https://x/og.png"));
+        assert_eq!(m.og_type.as_deref(), Some("article"));
+        assert_eq!(m.published.as_deref(), Some("2026-03-01T00:00:00Z"));
+        assert_eq!(m.modified.as_deref(), Some("2026-03-02T00:00:00Z"));
+        assert_eq!(m.author.as_deref(), Some("Grace Hopper"));
+        assert_eq!(m.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn twitter_fills_holes_left_by_og() {
+        let html = r#"<!doctype html><html><head>
+            <meta name="twitter:title" content="Twitter Title">
+            <meta name="twitter:description" content="Twitter Desc">
+            <meta name="twitter:image" content="https://x/tc.png">
+            </head><body></body></html>"#;
+        let m = extract(html, &base());
+        assert_eq!(m.title.as_deref(), Some("Twitter Title"));
+        assert_eq!(m.description.as_deref(), Some("Twitter Desc"));
+        assert_eq!(m.image.as_deref(), Some("https://x/tc.png"));
+    }
+
+    #[test]
+    fn jsonld_wins_over_og_wins_over_twitter() {
+        let html = r#"<!doctype html><html><head>
+            <script type="application/ld+json">
+            {"@type":"Article","headline":"JSON-LD Title"}
+            </script>
+            <meta property="og:title" content="OG Title">
+            <meta name="twitter:title" content="Twitter Title">
+            </head><body></body></html>"#;
+        let m = extract(html, &base());
+        assert_eq!(m.title.as_deref(), Some("JSON-LD Title"));
+    }
+
+    #[test]
+    fn description_meta_fills_when_others_missing() {
+        let html = r#"<!doctype html><html><head>
+            <meta name="description" content="Plain meta desc">
+            </head><body></body></html>"#;
+        let m = extract(html, &base());
+        assert_eq!(m.description.as_deref(), Some("Plain meta desc"));
+    }
+
+    #[test]
+    fn canonical_absolutized_against_base() {
+        let html = r#"<!doctype html><html><head>
+            <link rel="canonical" href="/article">
+            </head><body></body></html>"#;
+        let m = extract(html, &base());
+        assert_eq!(m.canonical.as_deref(), Some("https://example.com/article"));
     }
 }
