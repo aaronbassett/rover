@@ -24,7 +24,6 @@ pub enum ExtractorError {
     #[error("metadata extraction failed: {0}")]
     Metadata(String),
 
-    #[allow(dead_code)] // constructed in Task 8 (output paths)
     #[error("output directory error at {path}: {source}")]
     Output {
         path: String,

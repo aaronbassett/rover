@@ -40,6 +40,9 @@ pub struct Config {
 
     #[serde(default)]
     pub mcp: McpConfig,
+
+    #[serde(default)]
+    pub output: OutputConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -178,6 +181,16 @@ fn default_heartbeat_interval() -> Duration {
 
 fn default_reap_threshold() -> Duration {
     Duration::from_secs(60)
+}
+
+/// Output configuration. When `dir` is `None`, `ROVER_OUTPUT_DIR` (if set)
+/// takes precedence, otherwise the platform `data_local_dir()/rover/output`
+/// default applies. See `OutputPaths::resolve`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputConfig {
+    #[serde(default)]
+    pub dir: Option<std::path::PathBuf>,
 }
 
 /// Load config. If `path` is provided, the file must exist and parse cleanly.
@@ -487,6 +500,24 @@ reap_threshold = "2m"
         let cfg = load(Some(file.path())).unwrap();
         assert_eq!(cfg.mcp.heartbeat_interval, Duration::from_secs(10));
         assert_eq!(cfg.mcp.reap_threshold, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn load_output_dir_override() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[output]
+dir = "/tmp/rover-out"
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(file.path())).unwrap();
+        assert_eq!(
+            cfg.output.dir.as_deref().unwrap().to_str(),
+            Some("/tmp/rover-out")
+        );
     }
 
     #[test]
