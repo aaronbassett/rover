@@ -103,11 +103,7 @@ where
             &opts.user_agent,
             rate_cfg,
         )
-        .await
-        .map_err(|e| FetcherError::RobotsFetchFailed {
-            host: host.to_string(),
-            source: Box::new(e),
-        })?;
+        .await?;
 
         let verdict = crate::fetcher::robots::evaluate(&entry, &opts.user_agent, url.path());
         if matches!(verdict, crate::fetcher::robots::Verdict::Disallowed) {
