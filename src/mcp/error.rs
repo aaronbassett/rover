@@ -197,6 +197,22 @@ mod tests {
     }
 
     #[test]
+    fn robots_fetch_failed_translation_carries_source_message() {
+        use crate::fetcher::FetcherError;
+        let e = McpError::Fetcher(FetcherError::RobotsFetchFailed {
+            host: "example.com".to_string(),
+            source: Box::new(FetcherError::Decode),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::ROBOTS_FETCH_FAILED);
+        assert!(
+            r.message.contains("response decoding failed"),
+            "expected inner cause in {}",
+            r.message,
+        );
+    }
+
+    #[test]
     fn fetcher_retry_exhausted_routes_to_retry_exhausted() {
         let last = Box::new(crate::fetcher::FetcherError::Status {
             status: 503,

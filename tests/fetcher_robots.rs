@@ -199,21 +199,31 @@ async fn robots_disallow_all_refuses_fetch() {
     )
     .await
     .expect_err("disallow-all sentinel must refuse");
-    // Either RobotsDisallowed (the cached disallow_all path) or
-    // RobotsFetchFailed (if the gate decided to re-fetch) is acceptable.
-    // Both mean the fail-closed path was honoured.
-    assert!(
-        matches!(
-            err,
-            FetcherError::RobotsDisallowed { .. } | FetcherError::RobotsFetchFailed { .. }
-        ),
-        "expected RobotsDisallowed or RobotsFetchFailed, got {err:?}"
-    );
+    match err {
+        FetcherError::RobotsDisallowed { url: u, .. } => assert_eq!(u, url.as_str()),
+        other => panic!("expected RobotsDisallowed, got {other:?}"),
+    }
     let entry = robots::lookup(&db, url.host_str().unwrap())
         .await
         .unwrap()
         .expect("seeded entry present");
     assert_eq!(entry.state, RobotsState::DisallowAll);
+}
+
+#[test]
+fn robots_fetch_failed_display_renders_inner_cause() {
+    use rover::fetcher::FetcherError;
+    let inner = FetcherError::Decode;
+    let outer = FetcherError::RobotsFetchFailed {
+        host: "example.com".to_string(),
+        source: Box::new(inner),
+    };
+    let rendered = outer.to_string();
+    assert!(
+        rendered.contains("response decoding failed"),
+        "expected inner Decode error in {rendered}",
+    );
+    assert!(rendered.contains("example.com"));
 }
 
 #[tokio::test]
