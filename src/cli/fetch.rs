@@ -24,13 +24,29 @@ pub struct Args {
     pub url: String,
     pub force_refresh: bool,
     pub ignore_robots: bool,
+    pub rate_limit_rpm: Option<u32>,
+    pub per_host_concurrency: Option<u32>,
+    pub global_concurrency: Option<u32>,
+    pub max_retries: Option<u8>,
 
     #[cfg(any(test, feature = "test-loopback"))]
     pub ssrf_test_loopback: bool,
 }
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
-    let cfg = config::load(config_path).context("loading config")?;
+    let mut cfg = config::load(config_path).context("loading config")?;
+    if let Some(v) = args.rate_limit_rpm {
+        cfg.rate_limit.requests_per_minute_per_domain = v;
+    }
+    if let Some(v) = args.per_host_concurrency {
+        cfg.rate_limit.per_domain_concurrency = v;
+    }
+    if let Some(v) = args.global_concurrency {
+        cfg.rate_limit.global_concurrency = v;
+    }
+    if let Some(v) = args.max_retries {
+        cfg.rate_limit.max_retries = v;
+    }
     let url = Url::parse(&args.url).context("parsing URL argument")?;
     let level = ssrf_level_for_args(&args);
 

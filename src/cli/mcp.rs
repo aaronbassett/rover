@@ -10,8 +10,32 @@ use crate::fetcher::ssrf::SsrfLevel;
 use crate::mcp;
 use crate::storage::Db;
 
-pub async fn run(config_path: Option<&Path>) -> anyhow::Result<()> {
-    let cfg = Arc::new(config::load(config_path).context("loading config")?);
+pub struct Args {
+    pub ignore_robots: bool,
+    pub rate_limit_rpm: Option<u32>,
+    pub per_host_concurrency: Option<u32>,
+    pub global_concurrency: Option<u32>,
+    pub max_retries: Option<u8>,
+}
+
+pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
+    let mut cfg = config::load(config_path).context("loading config")?;
+    if args.ignore_robots {
+        cfg.robots.respect = false;
+    }
+    if let Some(v) = args.rate_limit_rpm {
+        cfg.rate_limit.requests_per_minute_per_domain = v;
+    }
+    if let Some(v) = args.per_host_concurrency {
+        cfg.rate_limit.per_domain_concurrency = v;
+    }
+    if let Some(v) = args.global_concurrency {
+        cfg.rate_limit.global_concurrency = v;
+    }
+    if let Some(v) = args.max_retries {
+        cfg.rate_limit.max_retries = v;
+    }
+    let cfg = Arc::new(cfg);
 
     let data_dir = crate::paths::data_dir();
     std::fs::create_dir_all(&data_dir).context("creating data dir")?;
