@@ -30,6 +30,7 @@ pub struct ExtractedMetadata {
     pub og_type: Option<String>,
     pub canonical: Option<String>,
     pub language: Option<String>,
+    /// Schema.org `@type` values in first-seen order, deduplicated.
     pub schema_types: Vec<String>,
 }
 
@@ -131,6 +132,18 @@ fn extract_jsonld(doc: &Html) -> ExtractedMetadata {
     out
 }
 
+/// Walk a JSON-LD value tree collecting typed nodes and `@type` strings.
+///
+/// **Recursion policy (deliberate deviation from a naive recurse-everywhere
+/// walk):** when an object has `@type`, we record it but only recurse into
+/// `@graph` from there. Typed nodes' other properties (`author`, `publisher`,
+/// `offers`, etc.) are NOT walked. This keeps `schema_types` focused on
+/// page-level classifications rather than leaking nested referenced entities
+/// (e.g. an Article's `author: Person` should not surface "Person" as a
+/// page type). Untyped containers (the document root, untyped wrappers)
+/// still recurse into all children.
+///
+/// `MAX_DEPTH` caps recursion to defend against pathological inputs.
 fn walk(v: &Value, depth: usize, nodes: &mut Vec<Value>, all_types: &mut Vec<String>) {
     if depth > MAX_DEPTH {
         return;
@@ -294,22 +307,24 @@ mod jsonld_tests {
 
     #[test]
     fn depth_cap_does_not_stack_overflow() {
-        // 20-deep nested object (well past the depth-8 cap).
-        let mut payload = String::from(r#"{"@type":"Thing","x":"#);
+        // Build a 20-deep nested object inside @graph so the walker recurses through it.
+        // The walker's MAX_DEPTH=8 cap prevents stack overflow.
+        let mut chain = String::from(r#"{"@type":"Leaf"}"#);
         for _ in 0..20 {
-            payload.push_str(r#"{"x":"#);
+            chain = format!(r#"{{"nested":{chain}}}"#);
         }
-        payload.push_str(r#""leaf""#);
-        for _ in 0..20 {
-            payload.push('}');
-        }
-        payload.push('}');
+        let payload = format!(r#"{{"@graph":[{chain}]}}"#);
         let html = format!(
             r#"<!doctype html><html><head><script type="application/ld+json">{payload}</script></head><body></body></html>"#
         );
         let m = extract(&html, &base());
-        // Walker bottoms out gracefully; primary node is "Thing".
-        assert!(m.schema_types.contains(&"Thing".to_string()));
+        // The walker stops at depth 8, so the deeply-nested Leaf is NOT reached.
+        // The test verifies that hitting the cap doesn't panic/stack-overflow.
+        assert!(
+            m.schema_types.is_empty(),
+            "expected cap to prevent deep walk, got {:?}",
+            m.schema_types
+        );
     }
 
     #[test]
