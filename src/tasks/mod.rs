@@ -23,10 +23,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::storage::Db;
 
-/// Default production dispatch table. Routes by `TaskKind`. Tasks 7/9/11
-/// replace the `BatchFetch` / `Retry` / `Revalidate` arms with their real
-/// worker calls.
-pub struct DefaultSpawner;
+/// Default production dispatch table. Routes by `TaskKind`. Tasks 9/11
+/// replace the `Retry` / `Revalidate` arms with their real worker calls.
+pub struct DefaultSpawner {
+    pub batch_deps: batch_fetch::BatchDeps,
+}
 
 impl scheduler::WorkerSpawner for DefaultSpawner {
     fn spawn(
@@ -41,15 +42,15 @@ impl scheduler::WorkerSpawner for DefaultSpawner {
             TaskKind::Summarize => {
                 join_set.spawn(summarize::run(db, task_id, cancel));
             }
-            // ↓ replaced wholesale in Task 7
             TaskKind::BatchFetch => {
-                join_set.spawn(summarize::run(db, task_id, cancel));
+                let deps = self.batch_deps.clone();
+                join_set.spawn(batch_fetch::run(deps, db, task_id, cancel));
             }
-            // ↓ replaced wholesale in Task 9
+            // ↓ replaced in Task 9
             TaskKind::Retry => {
                 join_set.spawn(summarize::run(db, task_id, cancel));
             }
-            // ↓ replaced wholesale in Task 11
+            // ↓ replaced in Task 11
             TaskKind::Revalidate => {
                 join_set.spawn(summarize::run(db, task_id, cancel));
             }
@@ -57,6 +58,6 @@ impl scheduler::WorkerSpawner for DefaultSpawner {
     }
 }
 
-pub fn default_spawner() -> Arc<dyn scheduler::WorkerSpawner> {
-    Arc::new(DefaultSpawner)
+pub fn default_spawner(batch_deps: batch_fetch::BatchDeps) -> Arc<dyn scheduler::WorkerSpawner> {
+    Arc::new(DefaultSpawner { batch_deps })
 }

@@ -1,16 +1,34 @@
 //! End-to-end scheduler + worker lifecycle.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tempfile::tempdir;
 use tokio_util::sync::CancellationToken;
 
+use rover::config::Config;
+use rover::fetcher::client::build_http_client;
+use rover::fetcher::concurrency::Pacer;
+use rover::fetcher::ssrf::SsrfLevel;
 use rover::storage::Db;
 use rover::storage::events;
 use rover::storage::tasks::{TaskInsert, TaskKind, TaskStatus, get, insert};
+use rover::tasks::batch_fetch::BatchDeps;
 use rover::tasks::default_spawner;
 use rover::tasks::scheduler::{Scheduler, SchedulerConfig};
 use rover::tasks::types::TaskId;
+
+fn dummy_deps(cfg: &Config) -> BatchDeps {
+    BatchDeps {
+        client: build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout()),
+        pacer: Arc::new(Pacer::new(&cfg.rate_limit)),
+        cache_cfg: cfg.cache.clone(),
+        rate_cfg: cfg.rate_limit.clone(),
+        robots_cfg: cfg.robots.clone(),
+        fetch_cfg: cfg.fetch.clone(),
+        ssrf_level: SsrfLevel::Strict,
+    }
+}
 
 #[tokio::test]
 async fn summarize_stub_runs_through_scheduler() {
@@ -30,6 +48,8 @@ async fn summarize_stub_runs_through_scheduler() {
     .unwrap();
     tx.send(TaskId("t1".into())).unwrap();
     let cancel = CancellationToken::new();
+    let cfg = Config::default();
+    let deps = dummy_deps(&cfg);
     let sched = Scheduler {
         db: db.clone(),
         cfg: SchedulerConfig {
@@ -39,7 +59,7 @@ async fn summarize_stub_runs_through_scheduler() {
         },
         cancel: cancel.clone(),
         new_task_rx: rx,
-        spawner: default_spawner(),
+        spawner: default_spawner(deps),
     };
     let handle = tokio::spawn(sched.run());
     let row = tokio::time::timeout(Duration::from_secs(2), async {
