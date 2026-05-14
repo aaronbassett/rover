@@ -441,6 +441,12 @@ impl RoverHandler {
             .as_deref()
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_default();
+        // Honor MetadataArg::Skip: hide all metadata from the response.
+        // (The cache row still carries metadata_json — only the wire output is blanked.)
+        let metadata = match args.metadata.as_ref() {
+            Some(MetadataArg::Skip) => crate::extractor::ExtractedMetadata::default(),
+            _ => metadata,
+        };
         let quality = crate::extractor::quality::score(
             &body_md,
             body_md.chars().count().max(1),
@@ -584,5 +590,12 @@ mod tests {
         let v: FetchArgs =
             serde_json::from_str(r#"{"url":"https://x/","images":{"mode":"download"}}"#).unwrap();
         assert!(matches!(v.images, Some(ImagesArg::Download)));
+    }
+
+    #[test]
+    fn typed_metadata_skip_parses() {
+        let v: FetchArgs =
+            serde_json::from_str(r#"{"url":"https://x/","metadata":"skip"}"#).unwrap();
+        assert!(matches!(v.metadata, Some(MetadataArg::Skip)));
     }
 }
