@@ -15,11 +15,24 @@ use rover::storage::events;
 use rover::storage::tasks::{TaskInsert, TaskKind, TaskStatus, get, insert};
 use rover::tasks::batch_fetch::BatchDeps;
 use rover::tasks::default_spawner;
+use rover::tasks::retry::RetryDeps;
 use rover::tasks::scheduler::{Scheduler, SchedulerConfig};
 use rover::tasks::types::TaskId;
 
 fn dummy_deps(cfg: &Config) -> BatchDeps {
     BatchDeps {
+        client: build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout()),
+        pacer: Arc::new(Pacer::new(&cfg.rate_limit)),
+        cache_cfg: cfg.cache.clone(),
+        rate_cfg: cfg.rate_limit.clone(),
+        robots_cfg: cfg.robots.clone(),
+        fetch_cfg: cfg.fetch.clone(),
+        ssrf_level: SsrfLevel::Strict,
+    }
+}
+
+fn dummy_retry_deps(cfg: &Config) -> RetryDeps {
+    RetryDeps {
         client: build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout()),
         pacer: Arc::new(Pacer::new(&cfg.rate_limit)),
         cache_cfg: cfg.cache.clone(),
@@ -49,7 +62,8 @@ async fn summarize_stub_runs_through_scheduler() {
     tx.send(TaskId("t1".into())).unwrap();
     let cancel = CancellationToken::new();
     let cfg = Config::default();
-    let deps = dummy_deps(&cfg);
+    let batch_deps = dummy_deps(&cfg);
+    let retry_deps = dummy_retry_deps(&cfg);
     let sched = Scheduler {
         db: db.clone(),
         cfg: SchedulerConfig {
@@ -59,7 +73,7 @@ async fn summarize_stub_runs_through_scheduler() {
         },
         cancel: cancel.clone(),
         new_task_rx: rx,
-        spawner: default_spawner(deps),
+        spawner: default_spawner(batch_deps, retry_deps),
     };
     let handle = tokio::spawn(sched.run());
     let row = tokio::time::timeout(Duration::from_secs(2), async {

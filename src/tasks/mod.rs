@@ -27,6 +27,7 @@ use crate::storage::Db;
 /// replace the `Retry` / `Revalidate` arms with their real worker calls.
 pub struct DefaultSpawner {
     pub batch_deps: batch_fetch::BatchDeps,
+    pub retry_deps: retry::RetryDeps,
 }
 
 impl scheduler::WorkerSpawner for DefaultSpawner {
@@ -46,9 +47,9 @@ impl scheduler::WorkerSpawner for DefaultSpawner {
                 let deps = self.batch_deps.clone();
                 join_set.spawn(batch_fetch::run(deps, db, task_id, cancel));
             }
-            // ↓ replaced in Task 9
             TaskKind::Retry => {
-                join_set.spawn(summarize::run(db, task_id, cancel));
+                let deps = self.retry_deps.clone();
+                join_set.spawn(retry::run(deps, db, task_id, cancel));
             }
             // ↓ replaced in Task 11
             TaskKind::Revalidate => {
@@ -58,6 +59,12 @@ impl scheduler::WorkerSpawner for DefaultSpawner {
     }
 }
 
-pub fn default_spawner(batch_deps: batch_fetch::BatchDeps) -> Arc<dyn scheduler::WorkerSpawner> {
-    Arc::new(DefaultSpawner { batch_deps })
+pub fn default_spawner(
+    batch_deps: batch_fetch::BatchDeps,
+    retry_deps: retry::RetryDeps,
+) -> Arc<dyn scheduler::WorkerSpawner> {
+    Arc::new(DefaultSpawner {
+        batch_deps,
+        retry_deps,
+    })
 }
