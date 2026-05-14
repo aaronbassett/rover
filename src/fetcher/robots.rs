@@ -115,11 +115,18 @@ async fn retry_robots(
     cfg: &crate::config::RateLimitConfig,
 ) -> Result<crate::fetcher::fetch::FetchedPage, FetcherError> {
     use crate::fetcher::fetch::fetch_url_conditional;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
     let host = url
         .host_str()
         .ok_or(FetcherError::Ssrf(crate::fetcher::ssrf::SsrfError::NoHost))?
         .to_string();
     let _guard = pacer.acquire_global_only(&host).await;
+
+    let mut rng: StdRng = match cfg.jitter_seed {
+        Some(s) => StdRng::seed_from_u64(s),
+        None => StdRng::from_os_rng(),
+    };
 
     let mut attempt: u8 = 0;
     loop {
@@ -147,13 +154,19 @@ async fn retry_robots(
                     .as_deref()
                     .and_then(retry::parse_retry_after);
                 let wait = match retry_after {
-                    Some(d) => d.min(cfg.retry_after_ceiling),
-                    None => {
-                        let base = cfg
-                            .initial_backoff
-                            .saturating_mul(2u32.saturating_pow(attempt as u32));
-                        base.min(cfg.max_backoff)
+                    Some(d) => {
+                        let (capped, clamped) = retry::compute_retry_after_wait(d, cfg);
+                        if clamped {
+                            tracing::warn!(
+                                target: "rover::fetcher::robots",
+                                requested_secs = d.as_secs(),
+                                ceiling_secs = cfg.retry_after_ceiling.as_secs(),
+                                "robots.txt Retry-After exceeded ceiling; clamping"
+                            );
+                        }
+                        capped
                     }
+                    None => retry::compute_jittered_backoff(attempt, cfg, &mut rng),
                 };
                 tokio::time::sleep(wait).await;
                 attempt += 1;
@@ -172,10 +185,7 @@ async fn retry_robots(
                         last: Box::new(e),
                     });
                 }
-                let base = cfg
-                    .initial_backoff
-                    .saturating_mul(2u32.saturating_pow(attempt as u32));
-                let wait = base.min(cfg.max_backoff);
+                let wait = retry::compute_jittered_backoff(attempt, cfg, &mut rng);
                 tokio::time::sleep(wait).await;
                 attempt += 1;
             }

@@ -71,12 +71,7 @@ pub async fn with_retries(
                         last: Box::new(err),
                     });
                 }
-                let base = cfg
-                    .initial_backoff
-                    .saturating_mul(2u32.saturating_pow(attempt as u32));
-                let capped = base.min(cfg.max_backoff);
-                let jitter_ms = rng.random_range(0..=(capped.as_millis() as u64 / 2));
-                let wait = capped + Duration::from_millis(jitter_ms);
+                let wait = compute_jittered_backoff(attempt, cfg, &mut rng);
                 tokio::time::sleep(wait).await;
                 attempt += 1;
             }
@@ -87,8 +82,8 @@ pub async fn with_retries(
                         last: Box::new(err),
                     });
                 }
-                let capped = d.min(cfg.retry_after_ceiling);
-                if d > cfg.retry_after_ceiling {
+                let (capped, clamped) = compute_retry_after_wait(d, cfg);
+                if clamped {
                     tracing::warn!(
                         target: "rover::fetcher::retry",
                         requested_secs = d.as_secs(),
@@ -157,6 +152,38 @@ fn classify_err(e: FetcherError) -> Class {
         | FetcherError::RobotsDisallowed { .. }
         | FetcherError::RobotsFetchFailed { .. } => Class::Fatal(e),
     }
+}
+
+/// Compute a jittered exponential backoff for the given attempt.
+///
+/// Doubles `initial_backoff` per attempt up to `max_backoff`, then adds
+/// uniform jitter in `[0, capped/2]` ms. Shared between `with_retries` and
+/// `retry_robots` to prevent thundering-herd retries from drifting.
+pub(crate) fn compute_jittered_backoff(
+    attempt: u8,
+    cfg: &crate::config::RateLimitConfig,
+    rng: &mut StdRng,
+) -> Duration {
+    let base = cfg
+        .initial_backoff
+        .saturating_mul(2u32.saturating_pow(attempt as u32));
+    let capped = base.min(cfg.max_backoff);
+    let jitter_ms = rng.random_range(0..=(capped.as_millis() as u64 / 2));
+    capped + Duration::from_millis(jitter_ms)
+}
+
+/// Clamp a server-provided `Retry-After` value against the local ceiling.
+///
+/// Returns `(wait_duration, was_clamped)`. Callers should emit a `warn!` on
+/// `was_clamped == true` so operators can see when a server is asking for
+/// unreasonably long backoffs (potentially hostile or misconfigured).
+pub(crate) fn compute_retry_after_wait(
+    requested: Duration,
+    cfg: &crate::config::RateLimitConfig,
+) -> (Duration, bool) {
+    let was_clamped = requested > cfg.retry_after_ceiling;
+    let wait = requested.min(cfg.retry_after_ceiling);
+    (wait, was_clamped)
 }
 
 /// Parse a `Retry-After` header value. RFC 9110 allows either integer seconds
