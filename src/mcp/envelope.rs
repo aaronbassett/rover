@@ -63,6 +63,35 @@ pub struct CountResponse {
     pub cache_status: Option<CacheStatus>,
 }
 
+/// `get_metadata` response — structured metadata only, no markdown body.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MetadataResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub og_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    pub schema_types: Vec<String>,
+    pub extraction_quality: f32,
+    pub url: String,
+    pub content_hash: String,
+    pub fetched_at: String,
+    pub cache_status: CacheStatus,
+}
+
 /// Stable error envelope returned over MCP. `code` is from the fixed set
 /// documented in the M3 design.
 #[derive(Debug, Clone, Serialize, Deserialize)]

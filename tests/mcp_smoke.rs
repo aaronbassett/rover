@@ -5,16 +5,17 @@
 //! server. The binary is built with `--features test-loopback` so SSRF
 //! allows the wiremock loopback address.
 
+mod common;
+
 use std::time::Duration;
 
-use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
-use rmcp::transport::child_process::TokioChildProcess;
 use serde_json::json;
-use tokio::process::Command;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use common::{seed_default_tokenizer, spawn_client};
 
 const HTML_BODY: &str = "<html><head><title>Sample</title></head>\
                           <body><article><h1>Sample</h1>\
@@ -31,31 +32,6 @@ async fn start_server() -> MockServer {
         .mount(&server)
         .await;
     server
-}
-
-fn bin_path() -> std::path::PathBuf {
-    assert_cmd::cargo::cargo_bin("rover")
-}
-
-/// Pre-seed the o200k tokenizer (the config default) inside `data_dir` so the
-/// child `rover mcp` process never tries to download from HuggingFace.
-fn seed_default_tokenizer(data_dir: &std::path::Path) {
-    let fixture =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tokenizer/tiny.json");
-    let dest_dir = data_dir.join("tokenizers").join("o200k");
-    std::fs::create_dir_all(&dest_dir).unwrap();
-    let dest = dest_dir.join("tokenizer.json");
-    std::fs::copy(&fixture, &dest).unwrap();
-}
-
-async fn spawn_client(data_dir: &std::path::Path) -> RunningService<rmcp::RoleClient, ()> {
-    let mut cmd = Command::new(bin_path());
-    cmd.arg("mcp");
-    cmd.env("ROVER_DATA_DIR", data_dir);
-    cmd.env("ROVER_MCP_SSRF", "test_loopback");
-    cmd.env("RUST_LOG", "info,rover=debug");
-    let proc = TokioChildProcess::new(cmd).expect("spawn rover mcp");
-    ().serve(proc).await.expect("client handshake")
 }
 
 async fn call_tool(
@@ -89,7 +65,7 @@ async fn call_tool_any(
 }
 
 #[tokio::test]
-async fn lists_two_tools() {
+async fn lists_three_tools() {
     let tmp = tempfile::tempdir().unwrap();
     let client = spawn_client(tmp.path()).await;
     let tools = client.list_all_tools().await.unwrap();
@@ -101,6 +77,10 @@ async fn lists_two_tools() {
     assert!(
         names.contains(&"count_tokens_tool"),
         "missing count_tokens_tool: {names:?}"
+    );
+    assert!(
+        names.contains(&"get_metadata_tool"),
+        "missing get_metadata_tool: {names:?}"
     );
     client.cancel().await.unwrap();
 }

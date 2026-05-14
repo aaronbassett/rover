@@ -18,6 +18,7 @@ use super::fetch::{ConditionalGet, fetch_url_conditional};
 use super::ssrf::SsrfLevel;
 use super::ttl::{TtlDecision, compute_ttl};
 use crate::config::CacheConfig;
+use crate::extractor::metadata::ExtractedMetadata;
 use crate::storage::Db;
 use crate::storage::pages::{self, Page, url_hash};
 
@@ -51,6 +52,7 @@ pub struct ExtractResult {
     pub title: Option<String>,
     pub body_md: String,
     pub content_hash: String,
+    pub metadata: ExtractedMetadata,
 }
 
 /// Cache-aware fetch entry point.
@@ -167,6 +169,7 @@ where
     };
 
     let new_hash = url_hash(fetched.canonical_url.as_str());
+    let metadata_json = serde_json::to_string(&extracted.metadata).ok();
     let page = Page {
         url_hash: new_hash,
         url: url.as_str().to_owned(),
@@ -178,7 +181,7 @@ where
         last_modified: fetched.last_modified.clone(),
         content_hash: extracted.content_hash.clone(),
         extracted_md: extracted.body_md.clone(),
-        metadata_json: None,
+        metadata_json,
     };
 
     // Step 7: store (only if cacheable).

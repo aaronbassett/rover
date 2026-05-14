@@ -19,6 +19,45 @@ pub enum ExtractorError {
 
     #[error("readabilityrs returned no article")]
     NoArticle,
+
+    #[error("metadata extraction failed: {0}")]
+    Metadata(String),
+
+    #[error("output directory error at {path}: {source}")]
+    Output {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("could not write table {ordinal} to {path}: {source}")]
+    TableWrite {
+        ordinal: usize,
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("could not download image at {url}: {source}")]
+    ImageDownload {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[error("could not write image at {path}: {source}")]
+    ImageWrite {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("invalid image url {url}: {source}")]
+    ImageUrlInvalid {
+        url: String,
+        #[source]
+        source: url::ParseError,
+    },
 }
 
 /// Successfully extracted article.
@@ -32,6 +71,8 @@ pub struct ExtractedDoc {
     pub site_name: Option<String>,
     pub published_time: Option<String>,
     pub image: Option<String>,
+    pub metadata: crate::extractor::metadata::ExtractedMetadata,
+    pub raw_html_text_len: usize,
 }
 
 /// Build the markdown options Rover prefers (PRD §6.1: ATX headings, backtick
@@ -49,30 +90,67 @@ fn rover_markdown_options() -> MarkdownOptions {
 }
 
 /// Extract the article from `html`, resolving relative links against `base_url`.
-pub fn extract(html: &str, base_url: Option<&Url>) -> Result<ExtractedDoc, ExtractorError> {
+///
+/// Runs the two-pass M4 shape:
+///   1. Pre-pass on raw HTML — read `<base href>` and extract structured
+///      metadata (JSON-LD / OG / Twitter / `<html lang>` / canonical).
+///   2. readabilityrs main pass against the effective base.
+///   3. Post-pass — absolutize relative links/images in the markdown body.
+pub fn extract_full(html: &str, base_url: &Url) -> Result<ExtractedDoc, ExtractorError> {
+    // Pre-pass: base href + metadata, on raw HTML.
+    let effective_base =
+        crate::extractor::base_href::read_base_href(html).unwrap_or_else(|| base_url.clone());
+    let metadata = crate::extractor::metadata::extract(html, &effective_base);
+    let raw_html_text_len = approximate_html_text_len(html);
+
+    // readabilityrs main pass.
     let opts = ReadabilityOptions::builder()
         .output_markdown(true)
         .markdown_options(rover_markdown_options())
         .build();
-
-    let url_str = base_url.map(|u| u.as_str().to_string());
-    let readability = Readability::new(html, url_str.as_deref(), Some(opts))
+    let readability = Readability::new(html, Some(effective_base.as_str()), Some(opts))
         .map_err(|e| ExtractorError::Readability(e.to_string()))?;
-
     let article = readability.parse().ok_or(ExtractorError::NoArticle)?;
 
     let body_md = article.markdown_content.unwrap_or_default();
 
+    // Post-pass: absolutize links/images against the effective base.
+    let body_md = crate::extractor::links::absolutize(&body_md, &effective_base);
+
     Ok(ExtractedDoc {
-        title: article.title,
+        title: article.title.or_else(|| metadata.title.clone()),
         body_md,
-        language: article.lang,
+        language: article.lang.or_else(|| metadata.language.clone()),
         byline: article.byline,
         excerpt: article.excerpt,
         site_name: article.site_name,
-        published_time: article.published_time,
-        image: article.image,
+        published_time: article
+            .published_time
+            .or_else(|| metadata.published.clone()),
+        image: article.image.or_else(|| metadata.image.clone()),
+        metadata,
+        raw_html_text_len,
     })
+}
+
+/// Backwards-compatible wrapper for callers that don't have a base `Url`.
+pub fn extract(html: &str, base_url: Option<&Url>) -> Result<ExtractedDoc, ExtractorError> {
+    let base = base_url
+        .cloned()
+        .unwrap_or_else(|| Url::parse("about:blank").unwrap());
+    extract_full(html, &base)
+}
+
+/// Approximate the visible-text length of `html` by counting characters
+/// in the `<body>`'s text descendants. Falls back to the full input length
+/// when no `<body>` is present (defends against fragment HTML).
+fn approximate_html_text_len(html: &str) -> usize {
+    let doc = scraper::Html::parse_document(html);
+    let body_sel = scraper::Selector::parse("body").unwrap();
+    doc.select(&body_sel)
+        .next()
+        .map(|b| b.text().map(|t| t.chars().count()).sum())
+        .unwrap_or_else(|| html.chars().count())
 }
 
 #[cfg(test)]

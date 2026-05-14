@@ -58,6 +58,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
                 title: extracted.title,
                 body_md: extracted.body_md,
                 content_hash,
+                metadata: extracted.metadata,
             })
         },
     )
@@ -83,6 +84,25 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let tokens = crate::tokenizer::count(&result.page.extracted_md, family)
         .context("counting tokens for frontmatter")?;
 
+    // Recover the metadata persisted in the cache row (M2 `metadata_json`).
+    // If deserialization fails (legacy rows, corrupt JSON), fall back to empty
+    // — the frontmatter still renders, just without M4 fields.
+    let metadata: crate::extractor::ExtractedMetadata = result
+        .page
+        .metadata_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    // NB: `raw_html_text_len` is not yet persisted on the cache row; we
+    // approximate density from the markdown length itself. In practice that
+    // saturates density to 1.0, so quality is dominated by the title and
+    // metadata bonuses. M5+ can store the raw length to improve fidelity.
+    let quality = crate::extractor::quality::score(
+        &result.page.extracted_md,
+        result.page.extracted_md.chars().count().max(1),
+        !metadata.is_empty(),
+        result.page.title.is_some(),
+    );
     let meta = PageMeta {
         url: &url,
         canonical_url: &canonical,
@@ -91,6 +111,19 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         body: &result.page.extracted_md,
         tokens,
         tokenizer_name: family.as_str(),
+        description: metadata.description.as_deref(),
+        author: metadata.author.as_deref(),
+        published: metadata.published.as_deref(),
+        modified: metadata.modified.as_deref(),
+        image: metadata.image.as_deref(),
+        og_type: metadata.og_type.as_deref(),
+        language: metadata.language.as_deref(),
+        schema_types: &metadata.schema_types,
+        extraction_quality: quality,
+        tables_transformed: &[],
+        images_seen: 0,
+        images_downloaded: 0,
+        images_failed: 0,
     };
 
     let envelope = render(&meta);
