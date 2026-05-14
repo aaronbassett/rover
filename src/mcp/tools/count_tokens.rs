@@ -86,6 +86,7 @@ impl RoverHandler {
                     title: extracted.title,
                     body_md: extracted.body_md,
                     content_hash,
+                    metadata: extracted.metadata,
                 })
             },
         )

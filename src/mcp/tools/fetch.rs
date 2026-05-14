@@ -113,6 +113,7 @@ impl RoverHandler {
                     title: extracted.title,
                     body_md: extracted.body_md,
                     content_hash,
+                    metadata: extracted.metadata,
                 })
             },
         )
@@ -152,6 +153,21 @@ impl RoverHandler {
 
         let canonical = Url::parse(&result.page.canonical_url)
             .map_err(|e| McpError::InvalidUrl(e.to_string()))?;
+        // Recover the metadata persisted in the cache row. See cli/fetch.rs
+        // for the rationale on the `raw_html_text_len` fallback used by the
+        // quality scorer.
+        let metadata: crate::extractor::ExtractedMetadata = result
+            .page
+            .metadata_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        let quality = crate::extractor::quality::score(
+            &result.page.extracted_md,
+            result.page.extracted_md.chars().count().max(1),
+            !metadata.is_empty(),
+            result.page.title.is_some(),
+        );
         let frontmatter = render_frontmatter(&PageMeta {
             url: &url,
             canonical_url: &canonical,
@@ -160,6 +176,19 @@ impl RoverHandler {
             body: &result.page.extracted_md,
             tokens,
             tokenizer_name: family.as_str(),
+            description: metadata.description.as_deref(),
+            author: metadata.author.as_deref(),
+            published: metadata.published.as_deref(),
+            modified: metadata.modified.as_deref(),
+            image: metadata.image.as_deref(),
+            og_type: metadata.og_type.as_deref(),
+            language: metadata.language.as_deref(),
+            schema_types: &metadata.schema_types,
+            extraction_quality: quality,
+            tables_transformed: &[],
+            images_seen: 0,
+            images_downloaded: 0,
+            images_failed: 0,
         });
 
         Ok(FetchOutput::Full(FetchResponse {
