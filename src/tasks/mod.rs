@@ -23,11 +23,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::storage::Db;
 
-/// Default production dispatch table. Routes by `TaskKind`. Tasks 9/11
-/// replace the `Retry` / `Revalidate` arms with their real worker calls.
+/// Default production dispatch table. Routes by `TaskKind`.
 pub struct DefaultSpawner {
     pub batch_deps: batch_fetch::BatchDeps,
     pub retry_deps: retry::RetryDeps,
+    pub revalidate_deps: revalidate::RevalidateDeps,
 }
 
 impl scheduler::WorkerSpawner for DefaultSpawner {
@@ -51,9 +51,9 @@ impl scheduler::WorkerSpawner for DefaultSpawner {
                 let deps = self.retry_deps.clone();
                 join_set.spawn(retry::run(deps, db, task_id, cancel));
             }
-            // ↓ replaced in Task 11
             TaskKind::Revalidate => {
-                join_set.spawn(summarize::run(db, task_id, cancel));
+                let deps = self.revalidate_deps.clone();
+                join_set.spawn(revalidate::run(deps, db, task_id, cancel));
             }
         }
     }
@@ -62,9 +62,11 @@ impl scheduler::WorkerSpawner for DefaultSpawner {
 pub fn default_spawner(
     batch_deps: batch_fetch::BatchDeps,
     retry_deps: retry::RetryDeps,
+    revalidate_deps: revalidate::RevalidateDeps,
 ) -> Arc<dyn scheduler::WorkerSpawner> {
     Arc::new(DefaultSpawner {
         batch_deps,
         retry_deps,
+        revalidate_deps,
     })
 }
