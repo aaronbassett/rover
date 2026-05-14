@@ -29,19 +29,10 @@ fn registry() -> &'static RwLock<HashMap<Tokenizer, Arc<HfTokenizer>>> {
     REG.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// Compute the XDG tokenizer root (`$XDG_DATA_HOME/rover/tokenizers` or the
-/// platform-appropriate fallback). The `ROVER_DATA_DIR` env var, when set,
-/// overrides the parent. Mirrors `cli::fetch::data_dir`.
+/// Base directory for cached tokenizer files. Delegates to
+/// [`crate::paths::data_dir`] for the resolution order.
 pub fn xdg_root() -> Result<PathBuf, TokenizerError> {
-    if let Ok(env_dir) = std::env::var("ROVER_DATA_DIR") {
-        let p = PathBuf::from(env_dir).join("tokenizers");
-        return Ok(p);
-    }
-    let base = dirs::data_local_dir().ok_or_else(|| TokenizerError::Io {
-        path: "<data_local_dir>".to_string(),
-        source: std::io::Error::new(std::io::ErrorKind::NotFound, "no data dir"),
-    })?;
-    Ok(base.join("rover").join("tokenizers"))
+    Ok(crate::paths::data_dir().join("tokenizers"))
 }
 
 /// Download (if needed) and parse the tokenizer for `family` into the

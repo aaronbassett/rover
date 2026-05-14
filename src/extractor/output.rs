@@ -22,16 +22,7 @@ impl OutputPaths {
         } else if let Some(p) = configured {
             p.to_path_buf()
         } else {
-            dirs::data_local_dir()
-                .ok_or_else(|| ExtractorError::Output {
-                    path: "<data_local_dir>".to_string(),
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "no platform data dir",
-                    ),
-                })?
-                .join("rover")
-                .join("output")
+            crate::paths::data_dir().join("output")
         };
         std::fs::create_dir_all(&root).map_err(|source| ExtractorError::Output {
             path: root.display().to_string(),

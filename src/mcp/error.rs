@@ -69,6 +69,19 @@ impl McpError {
                     F::Ssrf(_) => RoverError::new(RoverError::SSRF_DENIED, e.to_string()),
                     F::Url(_) => RoverError::new(RoverError::INVALID_URL, e.to_string()),
                     F::Storage(_) => RoverError::new(RoverError::STORAGE_ERROR, e.to_string()),
+                    F::Extract(_) => RoverError::new(RoverError::EXTRACT_FAILED, e.to_string()),
+                    F::RobotsDisallowed { .. } => {
+                        RoverError::new(RoverError::ROBOTS_DISALLOWED, e.to_string())
+                    }
+                    F::RobotsFetchFailed { .. } => {
+                        RoverError::new(RoverError::ROBOTS_FETCH_FAILED, e.to_string())
+                    }
+                    F::RetryExhausted { .. } => {
+                        RoverError::new(RoverError::RETRY_EXHAUSTED, e.to_string())
+                    }
+                    F::RateLimited { .. } => {
+                        RoverError::new(RoverError::RATE_LIMITED, e.to_string())
+                    }
                     F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
                         RoverError::new(RoverError::FETCH_FAILED, e.to_string())
                     }
@@ -143,5 +156,66 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::EXTRACT_FAILED);
         assert!(r.message.contains("/no/such"));
+    }
+
+    #[test]
+    fn fetcher_extract_routes_to_extract_failed() {
+        use crate::extractor::ExtractorError;
+        use crate::fetcher::FetcherError;
+        let inner = ExtractorError::Output {
+            path: "/tmp/x".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "nope"),
+        };
+        let e = McpError::Fetcher(FetcherError::Extract(inner));
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::EXTRACT_FAILED);
+        assert!(r.message.contains("/tmp/x"));
+    }
+
+    #[test]
+    fn fetcher_robots_disallowed_routes_to_robots_disallowed() {
+        let e = McpError::Fetcher(crate::fetcher::FetcherError::RobotsDisallowed {
+            url: "https://example.com/admin".into(),
+            ua: "Rover/0.1".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::ROBOTS_DISALLOWED);
+        assert!(r.message.contains("example.com/admin"));
+        assert!(r.message.contains("Rover/0.1"));
+    }
+
+    #[test]
+    fn fetcher_robots_fetch_failed_routes_to_robots_fetch_failed() {
+        let inner = crate::fetcher::FetcherError::Decode;
+        let e = McpError::Fetcher(crate::fetcher::FetcherError::RobotsFetchFailed {
+            host: "example.com".into(),
+            source: Box::new(inner),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::ROBOTS_FETCH_FAILED);
+        assert!(r.message.contains("example.com"));
+    }
+
+    #[test]
+    fn fetcher_retry_exhausted_routes_to_retry_exhausted() {
+        let last = Box::new(crate::fetcher::FetcherError::Status {
+            status: 503,
+            url: "https://example.com/".into(),
+        });
+        let e =
+            McpError::Fetcher(crate::fetcher::FetcherError::RetryExhausted { attempts: 4, last });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::RETRY_EXHAUSTED);
+        assert!(r.message.contains("4 attempts"));
+    }
+
+    #[test]
+    fn fetcher_rate_limited_routes_to_rate_limited() {
+        let e = McpError::Fetcher(crate::fetcher::FetcherError::RateLimited {
+            retry_after_secs: 60,
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::RATE_LIMITED);
+        assert!(r.message.contains("60"));
     }
 }

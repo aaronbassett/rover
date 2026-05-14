@@ -7,7 +7,7 @@
 
 use anyhow::Context;
 use jiff::Timestamp;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use url::Url;
 
 use crate::config;
@@ -23,36 +23,61 @@ use crate::storage::Db;
 pub struct Args {
     pub url: String,
     pub force_refresh: bool,
+    pub ignore_robots: bool,
+    pub rate_limit_rpm: Option<u32>,
+    pub per_host_concurrency: Option<u32>,
+    pub global_concurrency: Option<u32>,
+    pub max_retries: Option<u8>,
 
     #[cfg(any(test, feature = "test-loopback"))]
     pub ssrf_test_loopback: bool,
 }
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
-    let cfg = config::load(config_path).context("loading config")?;
+    let mut cfg = config::load(config_path).context("loading config")?;
+    // NOTE: overrides bypass config::validate; concurrency widths clamped to
+    // >=1 to avoid Semaphore::new(0) silently hanging on acquire.
+    if let Some(v) = args.rate_limit_rpm {
+        cfg.rate_limit.requests_per_minute_per_domain = v;
+    }
+    if let Some(v) = args.per_host_concurrency {
+        cfg.rate_limit.per_domain_concurrency = v.max(1);
+    }
+    if let Some(v) = args.global_concurrency {
+        cfg.rate_limit.global_concurrency = v.max(1);
+    }
+    if let Some(v) = args.max_retries {
+        cfg.rate_limit.max_retries = v;
+    }
     let url = Url::parse(&args.url).context("parsing URL argument")?;
     let level = ssrf_level_for_args(&args);
 
-    let data_dir = data_dir()?;
+    let data_dir = crate::paths::data_dir();
     std::fs::create_dir_all(&data_dir).context("creating data dir")?;
     let db = Db::open(data_dir.join("rover.db"))
         .await
         .context("opening cache database")?;
 
     let client = build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout());
+    let pacer = crate::fetcher::concurrency::Pacer::new(&cfg.rate_limit);
 
     let result = fetch_with_cache(
         &db,
         &client,
+        &pacer,
+        &cfg.rate_limit,
+        &cfg.robots,
         &url,
         &cfg.cache,
         FetchOptions {
             force_refresh: args.force_refresh,
             ssrf_level: level,
+            ignore_robots: args.ignore_robots,
+            user_agent: cfg.fetch.user_agent.clone(),
         },
         |body, base| {
             let extracted =
-                extract(body, Some(base)).map_err(|_| crate::fetcher::FetcherError::Decode)?;
+                extract(body, Some(base)).map_err(crate::fetcher::FetcherError::Extract)?;
             let content_hash = format!("sha256:{}", sha256_hex(extracted.body_md.as_bytes()));
             Ok(ExtractResult {
                 title: extracted.title,
@@ -129,15 +154,6 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let envelope = render(&meta);
     print!("{envelope}");
     Ok(())
-}
-
-fn data_dir() -> anyhow::Result<PathBuf> {
-    if let Ok(env_dir) = std::env::var("ROVER_DATA_DIR") {
-        return Ok(PathBuf::from(env_dir));
-    }
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine local data dir"))?;
-    Ok(base.join("rover"))
 }
 
 #[cfg(any(test, feature = "test-loopback"))]

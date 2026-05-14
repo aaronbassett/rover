@@ -109,6 +109,10 @@ impl RoverError {
     pub const EXTRACT_FAILED: &'static str = "extract_failed";
     pub const STORAGE_ERROR: &'static str = "storage_error";
     pub const TOKENIZER_UNAVAILABLE: &'static str = "tokenizer_unavailable";
+    pub const ROBOTS_DISALLOWED: &'static str = "robots_disallowed";
+    pub const ROBOTS_FETCH_FAILED: &'static str = "robots_fetch_failed";
+    pub const RETRY_EXHAUSTED: &'static str = "retry_exhausted";
+    pub const RATE_LIMITED: &'static str = "rate_limited";
 
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
@@ -161,6 +165,10 @@ mod tests {
             RoverError::STORAGE_ERROR,
             RoverError::TOKENIZER_UNAVAILABLE,
             RoverError::INVALID_URL,
+            RoverError::ROBOTS_DISALLOWED,
+            RoverError::ROBOTS_FETCH_FAILED,
+            RoverError::RETRY_EXHAUSTED,
+            RoverError::RATE_LIMITED,
         ];
         for (i, a) in codes.iter().enumerate() {
             for (j, b) in codes.iter().enumerate() {

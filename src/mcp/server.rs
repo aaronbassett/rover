@@ -79,7 +79,8 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
 
     let client =
         crate::fetcher::client::build_http_client(&config.fetch.user_agent, config.fetch.timeout());
-    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level);
+    let pacer = Arc::new(crate::fetcher::concurrency::Pacer::new(&config.rate_limit));
+    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer);
 
     let service = handler.serve(stdio()).await?;
 

@@ -9,6 +9,11 @@ pub mod fetch;
 pub mod ssrf;
 pub mod ttl;
 
+pub mod concurrency;
+pub mod rate_limit;
+pub mod retry;
+pub mod robots;
+
 pub use cached::{CacheStatus, CachedFetch, ExtractResult, FetchOptions, fetch_with_cache};
 pub use fetch::FetchedPage;
 
@@ -39,4 +44,26 @@ pub enum FetcherError {
 
     #[error("storage error: {0}")]
     Storage(#[from] crate::storage::StorageError),
+
+    #[error("extractor error: {0}")]
+    Extract(#[from] crate::extractor::ExtractorError),
+
+    #[error("retries exhausted after {attempts} attempts; last error: {last}")]
+    RetryExhausted {
+        attempts: u8,
+        last: Box<FetcherError>,
+    },
+
+    #[error("rate limited: server requested wait of {retry_after_secs}s")]
+    RateLimited { retry_after_secs: u64 },
+
+    #[error("robots.txt disallows {url} for user-agent {ua}")]
+    RobotsDisallowed { url: String, ua: String },
+
+    #[error("robots.txt fetch failed for {host}")]
+    RobotsFetchFailed {
+        host: String,
+        #[source]
+        source: Box<FetcherError>,
+    },
 }

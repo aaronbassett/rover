@@ -72,15 +72,20 @@ impl RoverHandler {
         let result = fetch_with_cache(
             &self.db,
             &self.client,
+            &self.pacer,
+            &self.config.rate_limit,
+            &self.config.robots,
             &url,
             &self.config.cache,
             FetchOptions {
                 force_refresh: false,
                 ssrf_level: self.ssrf_level,
+                ignore_robots: false,
+                user_agent: self.config.fetch.user_agent.clone(),
             },
             |body, base| {
                 let extracted =
-                    extract(body, Some(base)).map_err(|_| crate::fetcher::FetcherError::Decode)?;
+                    extract(body, Some(base)).map_err(crate::fetcher::FetcherError::Extract)?;
                 let content_hash = format!("sha256:{}", sha256_hex(extracted.body_md.as_bytes()));
                 Ok(ExtractResult {
                     title: extracted.title,
@@ -127,8 +132,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("rover.db");
         let db = crate::storage::Db::open(&path).await.unwrap();
+        let pacer = std::sync::Arc::new(crate::fetcher::concurrency::Pacer::new(&cfg.rate_limit));
         (
-            RoverHandler::new(db, cfg, client, crate::fetcher::ssrf::SsrfLevel::Strict),
+            RoverHandler::new(
+                db,
+                cfg,
+                client,
+                crate::fetcher::ssrf::SsrfLevel::Strict,
+                pacer,
+            ),
             tmp,
         )
     }

@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use super::FetcherError;
-use super::fetch::{ConditionalGet, fetch_url_conditional};
+use super::fetch::ConditionalGet;
 use super::ssrf::SsrfLevel;
 use super::ttl::{TtlDecision, compute_ttl};
 use crate::config::CacheConfig;
@@ -39,10 +39,15 @@ pub struct CachedFetch {
     pub cache_status: CacheStatus,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FetchOptions {
     pub force_refresh: bool,
     pub ssrf_level: SsrfLevel,
+    /// When `true`, skip the robots gate. Used by `--ignore-robots`.
+    pub ignore_robots: bool,
+    /// User-Agent used for robots.txt UA-rule evaluation. Must match
+    /// `[fetch] user_agent`.
+    pub user_agent: String,
 }
 
 /// What `fetch_with_cache` needs from the extractor. Defined here as a tiny
@@ -60,11 +65,15 @@ pub struct ExtractResult {
 /// The extraction step is delegated to `extract_fn`: this keeps the fetcher
 /// independent of the extractor module. The CLI/MCP layer wires up
 /// `extractor::pipeline::extract`.
+#[allow(clippy::too_many_arguments)]
 pub async fn fetch_with_cache<F>(
     db: &Db,
     client: &reqwest::Client,
+    pacer: &crate::fetcher::concurrency::Pacer,
+    rate_cfg: &crate::config::RateLimitConfig,
+    robots_cfg: &crate::config::RobotsConfig,
     url: &Url,
-    cfg: &CacheConfig,
+    cache_cfg: &CacheConfig,
     opts: FetchOptions,
     mut extract_fn: F,
 ) -> Result<CachedFetch, FetcherError>
@@ -72,6 +81,39 @@ where
     F: FnMut(&str, &Url) -> Result<ExtractResult, FetcherError>,
 {
     let now = Timestamp::now().as_second();
+
+    let host = url
+        .host_str()
+        .ok_or(FetcherError::Ssrf(crate::fetcher::ssrf::SsrfError::NoHost))?;
+
+    // Robots gate (M5). Skipped when explicitly disabled or for ignore_domains.
+    let robots_skipped = !robots_cfg.respect
+        || opts.ignore_robots
+        || robots_cfg.ignore_domains.iter().any(|d| d == host);
+    let crawl_delay: Option<std::time::Duration> = if robots_skipped {
+        None
+    } else {
+        let entry = crate::fetcher::robots::ensure_entry(
+            db,
+            pacer,
+            client,
+            robots_cfg,
+            host,
+            opts.ssrf_level,
+            &opts.user_agent,
+            rate_cfg,
+        )
+        .await?;
+
+        let verdict = crate::fetcher::robots::evaluate(&entry, &opts.user_agent, url.path());
+        if matches!(verdict, crate::fetcher::robots::Verdict::Disallowed) {
+            return Err(FetcherError::RobotsDisallowed {
+                url: url.to_string(),
+                ua: opts.user_agent.clone(),
+            });
+        }
+        crate::fetcher::robots::crawl_delay(&entry, &opts.user_agent)
+    };
 
     // Step 1: cache lookup. Fresh hits short-circuit; stale entries are kept
     // for revalidation (conditional GET) and as a fallback on network error.
@@ -100,7 +142,17 @@ where
     };
 
     // Step 3: fetch (conditional if validators present).
-    let fetched = match fetch_url_conditional(client, url, opts.ssrf_level, &cond).await {
+    let fetched = match crate::fetcher::retry::with_retries(
+        pacer,
+        client,
+        url,
+        opts.ssrf_level,
+        &cond,
+        crawl_delay,
+        rate_cfg,
+    )
+    .await
+    {
         Ok(f) => f,
         Err(e) => {
             // Network failure with a stale entry available → return stale.
@@ -119,13 +171,12 @@ where
     // Step 4: 304 Not Modified — extend freshness on the stale row and serve it.
     if fetched.status == 304 {
         let stale = stale.expect("304 implies a stale entry was sent");
-        let host = url.host_str().unwrap_or("");
         let decision = compute_ttl(
             now,
             host,
             fetched.cache_control.as_deref().unwrap_or(""),
             fetched.expires.as_deref(),
-            cfg,
+            cache_cfg,
         );
         let expires_at = match decision {
             TtlDecision::Cache { expires_at } => Some(expires_at),
@@ -154,13 +205,12 @@ where
     let extracted = extract_fn(&fetched.body, &fetched.final_url)?;
 
     // Step 6: TTL from real Cache-Control / Expires headers.
-    let host = url.host_str().unwrap_or("");
     let decision = compute_ttl(
         now,
         host,
         fetched.cache_control.as_deref().unwrap_or(""),
         fetched.expires.as_deref(),
-        cfg,
+        cache_cfg,
     );
 
     let expires_at = match decision {
@@ -258,6 +308,8 @@ mod tests {
 
     #[tokio::test]
     async fn cache_hit_within_ttl() {
+        use crate::config::{RateLimitConfig, RobotsConfig};
+        use crate::fetcher::concurrency::Pacer;
         use crate::storage::Db;
         use std::time::Duration;
         use tempfile::tempdir;
@@ -280,7 +332,7 @@ mod tests {
         };
         pages::upsert(&db, page.clone()).await.unwrap();
 
-        let cfg = CacheConfig {
+        let cache_cfg = CacheConfig {
             default_ttl: Duration::from_secs(3600),
             min_ttl: Duration::from_secs(60),
             max_ttl: Duration::from_secs(86400),
@@ -288,15 +340,27 @@ mod tests {
             override_no_store_domains: vec![],
             store_raw_html: false,
         };
+        let rate_cfg = RateLimitConfig::default();
+        // avoid robots fetch in this unit test
+        let robots_cfg = RobotsConfig {
+            respect: false,
+            ..RobotsConfig::default()
+        };
+        let pacer = Pacer::new(&rate_cfg);
         let client = super::super::client::build_http_client("test/0.1", Duration::from_secs(5));
         let result = fetch_with_cache(
             &db,
             &client,
+            &pacer,
+            &rate_cfg,
+            &robots_cfg,
             &url,
-            &cfg,
+            &cache_cfg,
             FetchOptions {
                 force_refresh: false,
                 ssrf_level: SsrfLevel::Strict,
+                ignore_robots: false,
+                user_agent: "test/0.1".into(),
             },
             |_, _| {
                 panic!("extract_fn must not be called on cache hit");

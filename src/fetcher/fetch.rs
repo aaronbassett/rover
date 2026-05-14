@@ -47,6 +47,10 @@ pub struct FetchedPage {
 
     /// `Expires` response header (M2).
     pub expires: Option<String>,
+
+    /// `Retry-After` response header (M5). RFC 9110 allows seconds-as-int or
+    /// HTTP-date — parsing is in `fetcher::retry::parse_retry_after`.
+    pub retry_after: Option<String>,
 }
 
 /// Conditional GET validators for revalidating a stale cache entry.
@@ -133,6 +137,11 @@ pub async fn fetch_url_conditional(
         .get(reqwest::header::EXPIRES)
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
 
     let bytes = response.bytes().await?;
     let (body, charset) = decode_to_utf8(content_type.as_deref(), &bytes);
@@ -162,6 +171,7 @@ pub async fn fetch_url_conditional(
         last_modified,
         cache_control,
         expires,
+        retry_after,
     })
 }
 

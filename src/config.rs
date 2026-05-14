@@ -43,6 +43,12 @@ pub struct Config {
 
     #[serde(default)]
     pub output: OutputConfig,
+
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+
+    #[serde(default)]
+    pub robots: RobotsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -193,6 +199,118 @@ pub struct OutputConfig {
     pub dir: Option<std::path::PathBuf>,
 }
 
+/// Per-domain pacing knobs. All HTTP-bound code paths run through a single
+/// `Pacer` built from this struct at startup. See M5 design spec §3 and §4.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimitConfig {
+    #[serde(default = "default_rpm_per_domain")]
+    pub requests_per_minute_per_domain: u32,
+
+    #[serde(default = "default_per_domain_concurrency")]
+    pub per_domain_concurrency: u32,
+
+    #[serde(default = "default_global_concurrency")]
+    pub global_concurrency: u32,
+
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u8,
+
+    #[serde(default = "default_initial_backoff", with = "humantime_serde")]
+    pub initial_backoff: Duration,
+
+    #[serde(default = "default_max_backoff", with = "humantime_serde")]
+    pub max_backoff: Duration,
+
+    #[serde(default = "default_retry_after_ceiling", with = "humantime_serde")]
+    pub retry_after_ceiling: Duration,
+
+    /// Deterministic seed for the backoff jitter RNG. `None` (default) means
+    /// entropy; set in tests to make timing assertions reproducible.
+    #[serde(default)]
+    pub jitter_seed: Option<u64>,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_minute_per_domain: default_rpm_per_domain(),
+            per_domain_concurrency: default_per_domain_concurrency(),
+            global_concurrency: default_global_concurrency(),
+            max_retries: default_max_retries(),
+            initial_backoff: default_initial_backoff(),
+            max_backoff: default_max_backoff(),
+            retry_after_ceiling: default_retry_after_ceiling(),
+            jitter_seed: None,
+        }
+    }
+}
+
+fn default_rpm_per_domain() -> u32 {
+    60
+}
+fn default_per_domain_concurrency() -> u32 {
+    2
+}
+fn default_global_concurrency() -> u32 {
+    8
+}
+fn default_max_retries() -> u8 {
+    3
+}
+fn default_initial_backoff() -> Duration {
+    Duration::from_millis(500)
+}
+fn default_max_backoff() -> Duration {
+    Duration::from_secs(30)
+}
+fn default_retry_after_ceiling() -> Duration {
+    Duration::from_secs(300)
+}
+
+/// Robots.txt fetch + respect knobs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RobotsConfig {
+    #[serde(default = "default_respect")]
+    pub respect: bool,
+
+    /// Hosts for which robots.txt is not fetched and rules are not enforced.
+    /// Lowercased in-place by `validate`.
+    #[serde(default)]
+    pub ignore_domains: Vec<String>,
+
+    /// Used when the robots.txt HTTP response has no `Cache-Control: max-age`.
+    #[serde(default = "default_robots_ttl", with = "humantime_serde")]
+    pub default_ttl: Duration,
+
+    /// Used when robots.txt fetch failed with 5xx or transport error (fail-closed).
+    /// Short by design so a recovered server is picked up quickly.
+    #[serde(default = "default_robots_failure_ttl", with = "humantime_serde")]
+    pub failure_ttl: Duration,
+}
+
+impl Default for RobotsConfig {
+    fn default() -> Self {
+        Self {
+            respect: default_respect(),
+            ignore_domains: Vec::new(),
+            default_ttl: default_robots_ttl(),
+            failure_ttl: default_robots_failure_ttl(),
+        }
+    }
+}
+
+fn default_respect() -> bool {
+    true
+}
+fn default_robots_ttl() -> Duration {
+    Duration::from_secs(24 * 3600)
+}
+fn default_robots_failure_ttl() -> Duration {
+    Duration::from_secs(5 * 60)
+}
+
 /// Load config. If `path` is provided, the file must exist and parse cleanly.
 /// If `path` is None, return defaults.
 pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
@@ -240,6 +358,50 @@ fn validate(cfg: &mut Config) -> Result<(), String> {
     if cfg.mcp.reap_threshold.is_zero() {
         return Err("mcp.reap_threshold must be > 0".to_string());
     }
+
+    // RateLimitConfig
+    if cfg.rate_limit.requests_per_minute_per_domain == 0 {
+        return Err("rate_limit.requests_per_minute_per_domain must be > 0".to_string());
+    }
+    if cfg.rate_limit.requests_per_minute_per_domain > 6000 {
+        return Err(format!(
+            "rate_limit.requests_per_minute_per_domain ({}) exceeds sanity cap 6000 (100 req/s)",
+            cfg.rate_limit.requests_per_minute_per_domain
+        ));
+    }
+    if cfg.rate_limit.per_domain_concurrency == 0 {
+        return Err("rate_limit.per_domain_concurrency must be > 0".to_string());
+    }
+    if cfg.rate_limit.global_concurrency == 0 {
+        return Err("rate_limit.global_concurrency must be > 0".to_string());
+    }
+    if cfg.rate_limit.max_retries > 10 {
+        return Err(format!(
+            "rate_limit.max_retries ({}) exceeds sanity cap 10",
+            cfg.rate_limit.max_retries
+        ));
+    }
+    if cfg.rate_limit.initial_backoff > cfg.rate_limit.max_backoff {
+        return Err(format!(
+            "rate_limit.initial_backoff ({:?}) must be <= max_backoff ({:?})",
+            cfg.rate_limit.initial_backoff, cfg.rate_limit.max_backoff
+        ));
+    }
+    if cfg.rate_limit.retry_after_ceiling.is_zero() {
+        return Err("rate_limit.retry_after_ceiling must be > 0".to_string());
+    }
+
+    // RobotsConfig
+    for d in &mut cfg.robots.ignore_domains {
+        d.make_ascii_lowercase();
+    }
+    if cfg.robots.failure_ttl > cfg.robots.default_ttl {
+        return Err(format!(
+            "robots.failure_ttl ({:?}) must be <= robots.default_ttl ({:?})",
+            cfg.robots.failure_ttl, cfg.robots.default_ttl
+        ));
+    }
+
     Ok(())
 }
 
@@ -533,5 +695,158 @@ heartbeat_interval = "0s"
         .unwrap();
         let result = load(Some(file.path()));
         assert!(matches!(result, Err(ConfigError::Invalid { .. })));
+    }
+
+    #[test]
+    fn default_rate_limit_matches_prd() {
+        let cfg = Config::default();
+        assert_eq!(cfg.rate_limit.requests_per_minute_per_domain, 60);
+        assert_eq!(cfg.rate_limit.per_domain_concurrency, 2);
+        assert_eq!(cfg.rate_limit.global_concurrency, 8);
+        assert_eq!(cfg.rate_limit.max_retries, 3);
+    }
+
+    #[test]
+    fn default_robots_matches_prd() {
+        let cfg = Config::default();
+        assert!(cfg.robots.respect);
+        assert!(cfg.robots.ignore_domains.is_empty());
+        assert_eq!(cfg.robots.default_ttl, Duration::from_secs(24 * 3600));
+        assert_eq!(cfg.robots.failure_ttl, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn load_rate_limit_overrides() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[rate_limit]
+requests_per_minute_per_domain = 120
+per_domain_concurrency = 4
+global_concurrency = 16
+max_retries = 5
+initial_backoff = "250ms"
+max_backoff = "60s"
+retry_after_ceiling = "10m"
+jitter_seed = 42
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(file.path())).unwrap();
+        assert_eq!(cfg.rate_limit.requests_per_minute_per_domain, 120);
+        assert_eq!(cfg.rate_limit.max_retries, 5);
+        assert_eq!(cfg.rate_limit.jitter_seed, Some(42));
+    }
+
+    #[test]
+    fn load_robots_overrides() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[robots]
+respect = false
+ignore_domains = ["FOO.example.com", "bar.example.org"]
+default_ttl = "12h"
+failure_ttl = "2m"
+"#
+        )
+        .unwrap();
+        let cfg = load(Some(file.path())).unwrap();
+        assert!(!cfg.robots.respect);
+        assert_eq!(
+            cfg.robots.ignore_domains,
+            vec!["foo.example.com".to_string(), "bar.example.org".to_string()]
+        );
+        assert_eq!(cfg.robots.default_ttl, Duration::from_secs(12 * 3600));
+        assert_eq!(cfg.robots.failure_ttl, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn load_rejects_zero_rpm() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[rate_limit]
+requests_per_minute_per_domain = 0
+"#
+        )
+        .unwrap();
+        assert!(matches!(
+            load(Some(file.path())),
+            Err(ConfigError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn load_rejects_rpm_above_sanity_cap() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[rate_limit]
+requests_per_minute_per_domain = 100000
+"#
+        )
+        .unwrap();
+        assert!(matches!(
+            load(Some(file.path())),
+            Err(ConfigError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn load_rejects_max_retries_above_10() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[rate_limit]
+max_retries = 11
+"#
+        )
+        .unwrap();
+        assert!(matches!(
+            load(Some(file.path())),
+            Err(ConfigError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn load_rejects_backoff_inversion() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[rate_limit]
+initial_backoff = "10s"
+max_backoff = "5s"
+"#
+        )
+        .unwrap();
+        assert!(matches!(
+            load(Some(file.path())),
+            Err(ConfigError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn load_rejects_failure_ttl_above_default_ttl() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            r#"
+[robots]
+default_ttl = "1m"
+failure_ttl = "10m"
+"#
+        )
+        .unwrap();
+        assert!(matches!(
+            load(Some(file.path())),
+            Err(ConfigError::Invalid { .. })
+        ));
     }
 }

@@ -17,7 +17,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Start the MCP server (long-running). M3.
-    Mcp,
+    Mcp(McpArgs),
 
     /// One-shot fetch, prints markdown to stdout.
     Fetch(FetchArgs),
@@ -59,11 +59,55 @@ struct FetchArgs {
     #[arg(long)]
     force_refresh: bool,
 
+    /// Skip the robots.txt gate for this fetch. CLI-only escape hatch.
+    #[arg(long)]
+    ignore_robots: bool,
+
+    /// Override [rate_limit] requests_per_minute_per_domain.
+    #[arg(long)]
+    rate_limit_rpm: Option<u32>,
+
+    /// Override [rate_limit] per_domain_concurrency.
+    #[arg(long)]
+    per_host_concurrency: Option<u32>,
+
+    /// Override [rate_limit] global_concurrency.
+    #[arg(long)]
+    global_concurrency: Option<u32>,
+
+    /// Override [rate_limit] max_retries.
+    #[arg(long)]
+    max_retries: Option<u8>,
+
     /// **Test-only.** Allow loopback addresses to satisfy SSRF checks. Used by
     /// the integration test suite against wiremock; never used in production.
     #[cfg(any(test, feature = "test-loopback"))]
     #[arg(long, hide = true)]
     ssrf_test_loopback: bool,
+}
+
+#[derive(Debug, clap::Args)]
+struct McpArgs {
+    /// Disable the robots.txt gate for the lifetime of this server. All MCP
+    /// fetch tools will skip the robots check.
+    #[arg(long)]
+    ignore_robots: bool,
+
+    /// Override [rate_limit] requests_per_minute_per_domain.
+    #[arg(long)]
+    rate_limit_rpm: Option<u32>,
+
+    /// Override [rate_limit] per_domain_concurrency.
+    #[arg(long)]
+    per_host_concurrency: Option<u32>,
+
+    /// Override [rate_limit] global_concurrency.
+    #[arg(long)]
+    global_concurrency: Option<u32>,
+
+    /// Override [rate_limit] max_retries.
+    #[arg(long)]
+    max_retries: Option<u8>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -124,7 +168,9 @@ async fn dispatch(cli: Cli) -> ExitCode {
             let args = sub.into_runtime_args();
             rover::cli::cache::run(args, cli.config.as_deref()).await
         }
-        Command::Mcp => rover::cli::mcp::run(cli.config.as_deref()).await,
+        Command::Mcp(args) => {
+            rover::cli::mcp::run(args.into_runtime_args(), cli.config.as_deref()).await
+        }
         Command::Batch { .. } | Command::Task { .. } | Command::Doctor | Command::Config(_) => {
             eprintln!("not yet implemented (planned for a later milestone)");
             return ExitCode::from(2);
@@ -145,8 +191,25 @@ impl FetchArgs {
         rover::cli::fetch::Args {
             url: self.url,
             force_refresh: self.force_refresh,
+            ignore_robots: self.ignore_robots,
+            rate_limit_rpm: self.rate_limit_rpm,
+            per_host_concurrency: self.per_host_concurrency,
+            global_concurrency: self.global_concurrency,
+            max_retries: self.max_retries,
             #[cfg(any(test, feature = "test-loopback"))]
             ssrf_test_loopback: self.ssrf_test_loopback,
+        }
+    }
+}
+
+impl McpArgs {
+    fn into_runtime_args(self) -> rover::cli::mcp::Args {
+        rover::cli::mcp::Args {
+            ignore_robots: self.ignore_robots,
+            rate_limit_rpm: self.rate_limit_rpm,
+            per_host_concurrency: self.per_host_concurrency,
+            global_concurrency: self.global_concurrency,
+            max_retries: self.max_retries,
         }
     }
 }
