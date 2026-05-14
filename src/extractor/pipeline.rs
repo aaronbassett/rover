@@ -39,7 +39,6 @@ pub enum ExtractorError {
         source: std::io::Error,
     },
 
-    #[allow(dead_code)] // constructed in Task 10 (images download)
     #[error("could not download image at {url}: {source}")]
     ImageDownload {
         url: String,
@@ -47,12 +46,18 @@ pub enum ExtractorError {
         source: reqwest::Error,
     },
 
-    #[allow(dead_code)] // constructed in Task 10 (images download)
     #[error("could not write image at {path}: {source}")]
     ImageWrite {
         path: String,
         #[source]
         source: std::io::Error,
+    },
+
+    #[error("invalid image url {url}: {source}")]
+    ImageUrlInvalid {
+        url: String,
+        #[source]
+        source: url::ParseError,
     },
 }
 
