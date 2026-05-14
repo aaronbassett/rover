@@ -23,14 +23,16 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     if args.ignore_robots {
         cfg.robots.respect = false;
     }
+    // NOTE: overrides bypass config::validate; concurrency widths clamped to
+    // >=1 to avoid Semaphore::new(0) silently hanging on acquire.
     if let Some(v) = args.rate_limit_rpm {
         cfg.rate_limit.requests_per_minute_per_domain = v;
     }
     if let Some(v) = args.per_host_concurrency {
-        cfg.rate_limit.per_domain_concurrency = v;
+        cfg.rate_limit.per_domain_concurrency = v.max(1);
     }
     if let Some(v) = args.global_concurrency {
-        cfg.rate_limit.global_concurrency = v;
+        cfg.rate_limit.global_concurrency = v.max(1);
     }
     if let Some(v) = args.max_retries {
         cfg.rate_limit.max_retries = v;
