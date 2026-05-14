@@ -22,20 +22,32 @@ enum Command {
     /// One-shot fetch, prints markdown to stdout.
     Fetch(FetchArgs),
 
-    /// Long-running batch status (M6).
+    /// Inspect or monitor a batch_fetch task (alias for `rover task` with a kind check).
     Batch {
         id: String,
         #[arg(long)]
         monitor: bool,
+        #[arg(long)]
+        cancel: bool,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+        /// Stream events starting after this event id (use with --monitor).
+        #[arg(long)]
+        from_event: Option<i64>,
     },
 
-    /// Generic task status (M6).
+    /// Inspect or monitor a long-running task.
     Task {
         id: String,
         #[arg(long)]
         monitor: bool,
         #[arg(long)]
         cancel: bool,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Human)]
+        format: OutputFormat,
+        /// Stream events starting after this event id (use with --monitor).
+        #[arg(long)]
+        from_event: Option<i64>,
     },
 
     /// Cache operations (M2).
@@ -110,6 +122,21 @@ struct McpArgs {
     max_retries: Option<u8>,
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum OutputFormat {
+    Human,
+    Ndjson,
+}
+
+impl From<OutputFormat> for rover::cli::task::OutputFormat {
+    fn from(value: OutputFormat) -> Self {
+        match value {
+            OutputFormat::Human => rover::cli::task::OutputFormat::Human,
+            OutputFormat::Ndjson => rover::cli::task::OutputFormat::Ndjson,
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum CacheCmd {
     /// List cached URLs (most recent first).
@@ -171,7 +198,47 @@ async fn dispatch(cli: Cli) -> ExitCode {
         Command::Mcp(args) => {
             rover::cli::mcp::run(args.into_runtime_args(), cli.config.as_deref()).await
         }
-        Command::Batch { .. } | Command::Task { .. } | Command::Doctor | Command::Config(_) => {
+        Command::Task {
+            id,
+            monitor,
+            cancel,
+            format,
+            from_event,
+        } => {
+            rover::cli::task::run(
+                rover::cli::task::Args {
+                    id,
+                    monitor,
+                    cancel,
+                    format: format.into(),
+                    from_event,
+                    expect_kind: None,
+                },
+                cli.config.as_deref(),
+            )
+            .await
+        }
+        Command::Batch {
+            id,
+            monitor,
+            cancel,
+            format,
+            from_event,
+        } => {
+            rover::cli::batch::run(
+                rover::cli::task::Args {
+                    id,
+                    monitor,
+                    cancel,
+                    format: format.into(),
+                    from_event,
+                    expect_kind: Some("batch_fetch"),
+                },
+                cli.config.as_deref(),
+            )
+            .await
+        }
+        Command::Doctor | Command::Config(_) => {
             eprintln!("not yet implemented (planned for a later milestone)");
             return ExitCode::from(2);
         }

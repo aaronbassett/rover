@@ -77,6 +77,39 @@ impl FetchConfig {
     }
 }
 
+impl Config {
+    /// Apply CLI / MCP override flags onto an already-loaded config.
+    ///
+    /// Centralises the override logic shared by `rover fetch`, `rover mcp`, and
+    /// (M6) `rover batch`. Bypasses `config::validate`; concurrency widths are
+    /// clamped to >=1 to avoid `Semaphore::new(0)` silently hanging on acquire
+    /// (regression fix from M5 commit 02bd7e8).
+    pub fn apply_overrides(
+        &mut self,
+        rate_limit_rpm: Option<u32>,
+        per_host_concurrency: Option<u32>,
+        global_concurrency: Option<u32>,
+        max_retries: Option<u8>,
+        ignore_robots: bool,
+    ) {
+        if let Some(v) = rate_limit_rpm {
+            self.rate_limit.requests_per_minute_per_domain = v;
+        }
+        if let Some(v) = per_host_concurrency {
+            self.rate_limit.per_domain_concurrency = v.max(1);
+        }
+        if let Some(v) = global_concurrency {
+            self.rate_limit.global_concurrency = v.max(1);
+        }
+        if let Some(v) = max_retries {
+            self.rate_limit.max_retries = v;
+        }
+        if ignore_robots {
+            self.robots.respect = false;
+        }
+    }
+}
+
 fn default_user_agent() -> String {
     format!(
         "Rover/{} (+https://github.com/aaronbassett/rover)",
@@ -229,6 +262,12 @@ pub struct RateLimitConfig {
     /// entropy; set in tests to make timing assertions reproducible.
     #[serde(default)]
     pub jitter_seed: Option<u64>,
+
+    /// Threshold (seconds) above which a server-provided `Retry-After`
+    /// converts a synchronous fetch into a deferred `retry` task instead of
+    /// sleeping in-line. See M6 design §3.
+    #[serde(default = "default_deferred_threshold_secs")]
+    pub deferred_retry_threshold_secs: u64,
 }
 
 impl Default for RateLimitConfig {
@@ -242,6 +281,7 @@ impl Default for RateLimitConfig {
             max_backoff: default_max_backoff(),
             retry_after_ceiling: default_retry_after_ceiling(),
             jitter_seed: None,
+            deferred_retry_threshold_secs: default_deferred_threshold_secs(),
         }
     }
 }
@@ -266,6 +306,9 @@ fn default_max_backoff() -> Duration {
 }
 fn default_retry_after_ceiling() -> Duration {
     Duration::from_secs(300)
+}
+fn default_deferred_threshold_secs() -> u64 {
+    30
 }
 
 /// Robots.txt fetch + respect knobs.
@@ -409,6 +452,42 @@ fn validate(cfg: &mut Config) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn apply_overrides_clamps_concurrency_minimum() {
+        let mut cfg = Config::default();
+        cfg.apply_overrides(None, Some(0), Some(0), None, false);
+        assert_eq!(cfg.rate_limit.per_domain_concurrency, 1);
+        assert_eq!(cfg.rate_limit.global_concurrency, 1);
+    }
+
+    #[test]
+    fn apply_overrides_leaves_unset_fields_untouched() {
+        let mut cfg = Config::default();
+        let baseline_rpm = cfg.rate_limit.requests_per_minute_per_domain;
+        let baseline_retries = cfg.rate_limit.max_retries;
+        cfg.apply_overrides(None, None, None, None, false);
+        assert_eq!(cfg.rate_limit.requests_per_minute_per_domain, baseline_rpm);
+        assert_eq!(cfg.rate_limit.max_retries, baseline_retries);
+        assert!(cfg.robots.respect);
+    }
+
+    #[test]
+    fn apply_overrides_disables_robots_when_requested() {
+        let mut cfg = Config::default();
+        cfg.apply_overrides(None, None, None, None, true);
+        assert!(!cfg.robots.respect);
+    }
+
+    #[test]
+    fn apply_overrides_sets_explicit_values() {
+        let mut cfg = Config::default();
+        cfg.apply_overrides(Some(30), Some(4), Some(16), Some(5), false);
+        assert_eq!(cfg.rate_limit.requests_per_minute_per_domain, 30);
+        assert_eq!(cfg.rate_limit.per_domain_concurrency, 4);
+        assert_eq!(cfg.rate_limit.global_concurrency, 16);
+        assert_eq!(cfg.rate_limit.max_retries, 5);
+    }
 
     #[test]
     fn default_config_has_sensible_values() {

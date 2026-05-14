@@ -5,8 +5,9 @@ into clean, token-efficient Markdown for LLM agents.
 
 > **Status:** early development. Milestones M1 (single-URL fetch path),
 > M2 (caching & storage), M3 (MCP server mode), M4 (metadata, tables,
-> images, links), and M5 (rate limiting & robots) are complete. M6
-> (long-running tasks & batching) is next. See
+> images, links), M5 (rate limiting & robots), and M6 (long-running
+> tasks & batching — `batch_fetch`, `rover batch <id>`, `rover task <id>`)
+> are complete. M7 (summarization) is next. See
 > `docs/superpowers/prd/2026-05-07-rover-prd.md` for the product spec,
 > `docs/superpowers/specs/2026-05-07-rover-design.md` for architectural
 > decisions, and `docs/security.md` for known v1 security boundaries.
@@ -58,9 +59,22 @@ bypasses it.
 
 ## Subcommands
 
-`rover fetch <url>`, `rover cache ...`, and `rover mcp` are implemented in
-M1–M3. The remaining subcommand surface (`rover batch`, `rover task`,
-`rover doctor`, `rover config`) ships across milestones M6–M8 — see the PRD.
+`rover fetch <url>`, `rover cache ...`, `rover mcp`, `rover batch <id>`,
+and `rover task <id>` are implemented in M1–M6. The remaining subcommand
+surface (`rover doctor`, `rover config`) ships in M8 — see the PRD.
+
+## Background tasks
+
+`batch_fetch` (MCP tool) and `rover batch <id>` / `rover task <id>` (CLI)
+schedule long-running work and stream NDJSON event logs:
+
+```sh
+rover task <id>                # snapshot: progress, ETA, last event
+rover batch <id> --monitor     # stream task_started/item_done/.../task_completed
+rover task <id> --cancel       # request cooperative cancellation
+rover batch <id> --format=ndjson      # snapshot as a single JSON line
+rover task <id> --monitor --from-event <id>   # resume an interrupted stream
+```
 
 ## License
 

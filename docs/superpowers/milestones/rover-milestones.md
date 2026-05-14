@@ -337,6 +337,15 @@ tests/cli_batch_monitor.rs
 5. **Task timeout / max duration.** Should batches have an upper-bound runtime? PRD doesn't say. Default to no timeout in v1; document.
 6. **CLI snapshot output format.** PRD §9.2 shows a human-friendly format and a `--format=ndjson` mode. Both ship.
 
+**Status:** Complete (2026-05-14).
+
+**M6 follow-ups deferred to later milestones.**
+1. Orphan-reclaim integration test (graceless-kill subprocess pattern). Covered at the unit-test level by `src/tasks/scheduler.rs` (`race_two_schedulers_only_one_claims`) and `tests/tasks_*.rs` lifecycle suites; an end-to-end test requires a portable "non-graceful kill" helper that is non-trivial to write under rmcp's graceful-shutdown abstractions.
+2. Cross-process new-task notification. The orphan scan (default 10s, overridable via `ROVER_ORPHAN_SCAN_MS` under `--features test-loopback`) currently handles cross-process discovery. Pre-empt of newly inserted tasks from a second live server requires an explicit notify channel — likely SQLite's `update_hook` or a Unix socket — deferred to M8 / v2.
+3. Wallclock batch timeout. M6 relies on per-URL fetcher timeouts (M5) plus cooperative cancellation via `rover task <id> --cancel`.
+4. `--from-event` exposed to MCP clients. Currently CLI-only via the `rover batch/task <id> --monitor --from-event <id>` flag. An MCP-side equivalent could land alongside resumable subscriptions.
+5. SIGINT clean-exit integration test for `--monitor`. The CLI does trap SIGINT and exit cleanly (drop semantics on the write half of stdout), but a deterministic integration test is deferred.
+
 ---
 
 ## M7 — Summarization

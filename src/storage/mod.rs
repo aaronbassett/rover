@@ -8,22 +8,46 @@
 //! process safety via WAL mode + `busy_timeout`. Migrations applied on open.
 
 pub mod error;
+pub mod events;
 pub mod pages;
 pub mod robots;
 pub mod servers;
 pub mod system;
+pub mod tasks;
 
 pub use error::StorageError;
 
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio_rusqlite::Connection;
 
+/// Storage-layer "new task inserted" notifier. Uses `String` rather than the
+/// scheduler's `TaskId` newtype to keep `storage` free of any dependency on
+/// `crate::tasks`. The MCP server installs a small bridge that forwards
+/// each id into the scheduler's typed channel.
+pub type NewTaskNotify = tokio::sync::mpsc::UnboundedSender<String>;
+
 /// Async wrapper around a single SQLite connection.
+///
+/// Holds an optional notifier so that every task insert performed via
+/// `storage::tasks::insert` reaches the scheduler — not just inserts from
+/// the MCP tool layer. Without this, tasks inserted from background workers
+/// or fetcher paths would sit `running` forever in the inserting process,
+/// since the orphan scanner deliberately excludes live `servers.pid` rows.
 #[derive(Debug, Clone)]
 pub struct Db {
     pub(crate) conn: Connection,
+    pub(crate) new_task_tx: Arc<Mutex<Option<NewTaskNotify>>>,
+}
+
+impl Db {
+    /// Install the scheduler-bound new-task notifier. Called once, after the
+    /// scheduler channel exists, by `mcp::server::serve_stdio`.
+    pub fn set_new_task_sender(&self, tx: NewTaskNotify) {
+        *self.new_task_tx.lock().expect("new_task_tx mutex poisoned") = Some(tx);
+    }
 }
 
 /// Embedded migrations, applied in array order on every `open` whose
@@ -45,6 +69,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "003_robots_state.sql",
         include_str!("migrations/003_robots_state.sql"),
     ),
+    ("004_tasks.sql", include_str!("migrations/004_tasks.sql")),
 ];
 
 /// Per-migration outcome shuttled out of the actor closure so the failed
@@ -82,7 +107,10 @@ impl Db {
         })
         .await?;
 
-        let db = Self { conn };
+        let db = Self {
+            conn,
+            new_task_tx: Arc::new(Mutex::new(None)),
+        };
         db.run_migrations(migrations).await?;
         Ok(db)
     }
@@ -235,6 +263,6 @@ mod tests {
             .await
             .unwrap();
         assert!(cols.contains(&"state".to_string()), "cols = {cols:?}");
-        assert_eq!(db.schema_version().await.unwrap(), 3);
+        assert_eq!(db.schema_version().await.unwrap(), MIGRATIONS.len() as u32);
     }
 }

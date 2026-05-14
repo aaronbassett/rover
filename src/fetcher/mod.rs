@@ -60,10 +60,13 @@ pub enum FetcherError {
     #[error("robots.txt disallows {url} for user-agent {ua}")]
     RobotsDisallowed { url: String, ua: String },
 
-    #[error("robots.txt fetch failed for {host}")]
+    #[error("robots.txt fetch failed for {host}: {source}")]
     RobotsFetchFailed {
         host: String,
         #[source]
         source: Box<FetcherError>,
     },
+
+    #[error("fetch deferred to retry task {task_id}")]
+    Deferred { task_id: String },
 }

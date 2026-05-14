@@ -278,7 +278,19 @@ mod tests {
 
     #[test]
     fn evaluate_disallow_admin() {
-        let e = parsed_entry("User-agent: *\nDisallow: /admin\n");
+        let body = std::fs::read_to_string("tests/fixtures/m5/robots-disallow-admin.txt").unwrap();
+        let e = parsed_entry(&body);
+        assert_eq!(evaluate(&e, "Rover/0.1", "/articles/x"), Verdict::Allowed);
+        assert_eq!(
+            evaluate(&e, "Rover/0.1", "/admin/users"),
+            Verdict::Disallowed
+        );
+    }
+
+    #[test]
+    fn evaluate_allow_articles_with_disallow_admin() {
+        let body = std::fs::read_to_string("tests/fixtures/m5/robots-allow-articles.txt").unwrap();
+        let e = parsed_entry(&body);
         assert_eq!(evaluate(&e, "Rover/0.1", "/articles/x"), Verdict::Allowed);
         assert_eq!(
             evaluate(&e, "Rover/0.1", "/admin/users"),
@@ -288,21 +300,17 @@ mod tests {
 
     #[test]
     fn evaluate_ua_specific_rule_wins() {
-        let e = parsed_entry(
-            "User-agent: *\n\
-             Disallow: /admin\n\
-             \n\
-             User-agent: Rover\n\
-             Disallow:\n",
-        );
+        let body = std::fs::read_to_string("tests/fixtures/m5/wide-ua-rules.txt").unwrap();
+        let e = parsed_entry(&body);
         assert_eq!(evaluate(&e, "Rover", "/admin"), Verdict::Allowed);
         assert_eq!(evaluate(&e, "Other", "/admin"), Verdict::Disallowed);
     }
 
     #[test]
     fn crawl_delay_extraction() {
-        let e = parsed_entry("User-agent: *\nCrawl-Delay: 5\nAllow: /\n");
-        assert_eq!(crawl_delay(&e, "Rover"), Some(Duration::from_secs(5)));
+        let body = std::fs::read_to_string("tests/fixtures/m5/robots-with-crawldelay.txt").unwrap();
+        let e = parsed_entry(&body);
+        assert_eq!(crawl_delay(&e, "Rover"), Some(Duration::from_secs(2)));
     }
 
     #[test]

@@ -138,13 +138,16 @@ async fn cache_hit_then_force_refresh_and_purge() {
 }
 
 #[tokio::test]
-async fn revalidation_returns_304_and_serves_cache() {
+async fn stale_entry_serves_immediately_under_swr() {
+    // M6 SWR semantics: an expired cache row is served immediately and the
+    // CLI does not issue a conditional GET. The (Task 11) revalidate worker
+    // will hit the network later out-of-band; the CLI path observes one HTTP
+    // request total (the initial 200 that populated the cache).
     let server = MockServer::start().await;
     let etag = "\"abc-123\"";
 
-    // Conditional re-request (with If-None-Match) returns 304.
-    // Mount the more-specific (higher-priority) matcher first so it wins
-    // when both are eligible.
+    // Defensive: if anything sent a conditional GET we'd see this fire and
+    // bump the recorded-request count past 1.
     Mock::given(method("GET"))
         .and(path("/news"))
         .and(HasHeader("if-none-match"))
@@ -200,7 +203,8 @@ async fn revalidation_returns_304_and_serves_cache() {
     // Wait so the entry expires (max-age=1).
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // Second fetch -- stale, conditional GET, 304, served from cache.
+    // Second fetch -- under SWR this returns the stale row directly and
+    // enqueues a revalidate task; no synchronous network request is made.
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
         .args([
@@ -215,24 +219,19 @@ async fn revalidation_returns_304_and_serves_cache() {
         .success()
         .stdout(predicate::str::contains("How to do the thing"));
 
-    // Verify exactly two requests reached the server: the initial 200 and the
-    // conditional revalidation. If the second fetch had bypassed cache or
-    // failed to send If-None-Match, this would be wrong.
+    // Verify exactly one request reached the server: the initial 200. The
+    // second CLI fetch served stale-from-cache without touching the network.
     let received = server
         .received_requests()
         .await
         .expect("request recording is enabled by default");
     assert_eq!(
         received.len(),
-        2,
-        "expected exactly 2 requests (initial + conditional)"
+        1,
+        "expected exactly 1 request (initial); SWR serves stale without network"
     );
     assert!(
         received[0].headers.get("if-none-match").is_none(),
         "first request should not include If-None-Match"
-    );
-    assert!(
-        received[1].headers.get("if-none-match").is_some(),
-        "second request should include If-None-Match"
     );
 }

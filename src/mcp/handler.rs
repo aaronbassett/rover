@@ -17,6 +17,11 @@ use crate::mcp::tools::fetch::{FetchArgs, FetchOutput};
 use crate::storage::Db;
 
 /// State shared across all MCP tool invocations.
+///
+/// Note: this struct no longer carries its own scheduler `Sender`. Every
+/// `storage::tasks::insert` call notifies the scheduler via the `Db`-owned
+/// notifier installed by `mcp::server::serve_stdio`, so the MCP tool layer
+/// has no extra wiring to do — it just inserts.
 #[derive(Clone)]
 pub struct RoverHandler {
     pub(crate) db: Db,
@@ -106,6 +111,21 @@ impl RoverHandler {
             Err(e) => Err(into_error_data(e)),
         }
     }
+
+    /// Fetch multiple URLs concurrently in the background.
+    #[tool(
+        description = "Fetch multiple URLs concurrently. Returns a task_id immediately; \
+                          use rover batch <id> --monitor to stream progress."
+    )]
+    pub async fn batch_fetch_tool(
+        &self,
+        Parameters(args): Parameters<crate::mcp::tools::batch_fetch::BatchFetchArgs>,
+    ) -> Result<Json<crate::mcp::envelope::TaskCreatedResponse>, ErrorData> {
+        match self.batch_fetch_inner(args).await {
+            Ok(out) => Ok(Json(out)),
+            Err(e) => Err(into_error_data(e)),
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -117,14 +137,21 @@ impl ServerHandler for RoverHandler {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "Web fetch & prep for LLM agents. Tools: fetch, count_tokens, get_metadata.",
+                "Web fetch & prep for LLM agents. \
+                 Tools: fetch, count_tokens, get_metadata, batch_fetch.",
             )
     }
 }
 
 fn into_error_data(err: crate::mcp::error::McpError) -> ErrorData {
     use crate::mcp::error::McpError;
-    let is_user_error = matches!(&err, McpError::InvalidArgs(_) | McpError::InvalidUrl(_));
+    let is_user_error = matches!(
+        &err,
+        McpError::InvalidArgs(_)
+            | McpError::InvalidUrl(_)
+            | McpError::TooManyUrls { .. }
+            | McpError::EmptyUrlList,
+    );
     let r = crate::mcp::error::log_and_translate(err);
     let code = if is_user_error {
         rmcp::model::ErrorCode::INVALID_PARAMS

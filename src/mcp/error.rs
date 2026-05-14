@@ -31,6 +31,12 @@ pub enum McpError {
 
     #[error("max_tokens exceeded: {actual} > {max}")]
     MaxTokensExceeded { actual: usize, max: usize },
+
+    #[error("too many URLs ({count}, max {max})")]
+    TooManyUrls { count: usize, max: usize },
+
+    #[error("empty URL list")]
+    EmptyUrlList,
 }
 
 impl McpError {
@@ -46,6 +52,10 @@ impl McpError {
             }
             Self::InvalidArgs(m) => RoverError::new(RoverError::INVALID_ARGS, m.clone()),
             Self::InvalidUrl(m) => RoverError::new(RoverError::INVALID_URL, m.clone()),
+            Self::TooManyUrls { .. } => {
+                RoverError::new(RoverError::TOO_MANY_URLS, self.to_string())
+            }
+            Self::EmptyUrlList => RoverError::new(RoverError::EMPTY_URL_LIST, self.to_string()),
             Self::Tokenizer(e) => match e {
                 TokenizerError::UnknownFamily(name) => RoverError::new(
                     RoverError::INVALID_ARGS,
@@ -81,6 +91,9 @@ impl McpError {
                     }
                     F::RateLimited { .. } => {
                         RoverError::new(RoverError::RATE_LIMITED, e.to_string())
+                    }
+                    F::Deferred { task_id } => {
+                        RoverError::new(RoverError::DEFERRED, format!("deferred to task {task_id}"))
                     }
                     F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
                         RoverError::new(RoverError::FETCH_FAILED, e.to_string())
@@ -197,6 +210,22 @@ mod tests {
     }
 
     #[test]
+    fn robots_fetch_failed_translation_carries_source_message() {
+        use crate::fetcher::FetcherError;
+        let e = McpError::Fetcher(FetcherError::RobotsFetchFailed {
+            host: "example.com".to_string(),
+            source: Box::new(FetcherError::Decode),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::ROBOTS_FETCH_FAILED);
+        assert!(
+            r.message.contains("response decoding failed"),
+            "expected inner cause in {}",
+            r.message,
+        );
+    }
+
+    #[test]
     fn fetcher_retry_exhausted_routes_to_retry_exhausted() {
         let last = Box::new(crate::fetcher::FetcherError::Status {
             status: 503,
@@ -207,6 +236,16 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::RETRY_EXHAUSTED);
         assert!(r.message.contains("4 attempts"));
+    }
+
+    #[test]
+    fn deferred_translation_uses_stable_code() {
+        let e = McpError::Fetcher(crate::fetcher::FetcherError::Deferred {
+            task_id: "abc".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::DEFERRED);
+        assert!(r.message.contains("abc"));
     }
 
     #[test]
