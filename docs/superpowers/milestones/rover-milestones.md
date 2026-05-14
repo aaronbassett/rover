@@ -273,11 +273,16 @@ tests/fetcher_robots.rs
 
 **Deferred from M5.** Nothing structural — M5 is mostly self-contained.
 
-**Open questions before planning.**
-1. **`robotxt` vs `texting_robots`.** Audit both at planning time, pick the more recently maintained one. Per PRD §5.6, do not hand-roll.
-2. **Per-domain concurrency vs global concurrency.** PRD §4.2 has both (`concurrency` and `per_domain_concurrency`). Implement two layered semaphores: global `tokio::sync::Semaphore` + per-host semaphores.
-3. **5xx retry policy.** PRD §5.4 says "exponential backoff with jitter, max 3 retries within a single sync call (longer retries become deferred tasks)." Deferred-task scheduling depends on M6. Decide: implement up-to-3 in-line retries in M5, defer "longer retries become deferred tasks" to M6.
-4. **Rate limiter scope: per-process or per-server-instance?** With multi-instance servers, two concurrent `rover mcp` processes each have their own bucket. Acceptable for v1 — document this in the plan.
+**Decisions made during M5 brainstorming (2026-05-14):**
+1. `robotxt` over `texting_robots`.
+2. `governor` for the keyed token bucket.
+3. Per-host permit acquired before global permit.
+4. Retry covers 429, 503, other 5xx, transient network errors; max 3 retries.
+5. Retry layer lives in new `fetcher::retry`; pacer guard held across retries.
+6. Per-process rate limiter scope; documented in `docs/security.md`.
+7. Robots 4xx → allow-all (full TTL). 5xx/timeout → disallow-all (5min).
+8. Crawl-Delay enforced via separate `last_request_at` min-interval map.
+9. M4 follow-ups #1, #5, #2 bundled into M5; #3, #4, #6 deferred.
 
 ---
 
