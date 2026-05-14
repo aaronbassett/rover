@@ -48,6 +48,10 @@ csv = "1"
 rand = "0.9"
 rand_chacha = "0.9"
 mime_guess = "2"
+governor = "0.10"
+robotxt = { version = "0.6", default-features = false, features = ["parser"] }
+dashmap = "6"
+httpdate = "1"
 
 [dev-dependencies]
 wiremock = "0.6"

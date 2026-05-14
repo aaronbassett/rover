@@ -40,6 +40,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "002_servers.sql",
         include_str!("migrations/002_servers.sql"),
     ),
+    (
+        "003_robots_state.sql",
+        include_str!("migrations/003_robots_state.sql"),
+    ),
 ];
 
 /// Per-migration outcome shuttled out of the actor closure so the failed
@@ -208,5 +212,28 @@ mod tests {
             }
             other => panic!("expected StorageError::Migration, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn migration_003_adds_state_column_to_robots_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("rover.db");
+        let db = Db::open(&path).await.unwrap();
+
+        let cols: Vec<String> = db
+            .conn
+            .call(|c| {
+                let mut stmt = c.prepare("PRAGMA table_info(robots_cache)")?;
+                let mut rows = stmt.query([])?;
+                let mut out = Vec::new();
+                while let Some(r) = rows.next()? {
+                    out.push(r.get::<_, String>(1)?);
+                }
+                Ok::<_, rusqlite::Error>(out)
+            })
+            .await
+            .unwrap();
+        assert!(cols.contains(&"state".to_string()), "cols = {cols:?}");
+        assert_eq!(db.schema_version().await.unwrap(), 3);
     }
 }
