@@ -11,5 +11,6 @@ pub mod fetcher;
 pub mod mcp;
 pub mod paths;
 pub mod storage;
+pub mod tasks;
 pub mod telemetry;
 pub mod tokenizer;
