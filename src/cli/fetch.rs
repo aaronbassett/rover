@@ -83,7 +83,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     .await
     .context("fetching URL")?;
 
-    if matches!(result.cache_status, CacheStatus::Stale) {
+    if matches!(result.cache_status, CacheStatus::Stale { .. }) {
         tracing::warn!(
             target: "rover::cli::fetch",
             url = url.as_str(),

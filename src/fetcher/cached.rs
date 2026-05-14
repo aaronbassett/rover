@@ -23,10 +23,16 @@ use crate::storage::Db;
 use crate::storage::pages::{self, Page, url_hash};
 
 /// Outcome of a cache-aware fetch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Stale` carries the id of the `revalidate` task that was enqueued when
+/// the SWR fast-path (M6) returned the expired row. `None` means the row
+/// was served stale but the task insert failed (logged; not fatal).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheStatus {
     Hit,
-    Stale,
+    Stale {
+        revalidation_task_id: Option<String>,
+    },
     Miss,
 }
 
@@ -115,8 +121,16 @@ where
         crate::fetcher::robots::crawl_delay(&entry, &opts.user_agent)
     };
 
-    // Step 1: cache lookup. Fresh hits short-circuit; stale entries are kept
-    // for revalidation (conditional GET) and as a fallback on network error.
+    // Step 1: cache lookup.
+    //
+    // M6 SWR: fresh hits short-circuit; expired entries return *immediately*
+    // and a `revalidate` task is queued in the background. The caller surfaces
+    // the task id in the `revalidation` envelope on the wire.
+    //
+    // The only remaining path that runs Step 2+ in practice is `force_refresh`
+    // or a true cache miss. `stale` therefore stays `None` outside the early
+    // return — the network-failure fallback below is reachable only on
+    // `force_refresh = true` (kept for defense in depth).
     let stale: Option<Page> = if opts.force_refresh {
         None
     } else {
@@ -127,12 +141,25 @@ where
                     cache_status: CacheStatus::Hit,
                 });
             }
-            Some(p) => Some(p),
+            Some(p) => {
+                // SWR fast-path: queue a revalidate task, return stale now.
+                let task_id = insert_revalidate_task(db, url, &p).await;
+                return Ok(CachedFetch {
+                    page: p,
+                    cache_status: CacheStatus::Stale {
+                        revalidation_task_id: task_id,
+                    },
+                });
+            }
             None => None,
         }
     };
 
     // Step 2: build conditional validators from any stale entry.
+    // With the M6 SWR fast-path above, `stale` is always `None` here on the
+    // non-`force_refresh` branch, so this collapses to `ConditionalGet::default()`.
+    // The match is kept verbatim for the `force_refresh = true` edge case
+    // where a future change might surface validators differently.
     let cond = match &stale {
         Some(p) => ConditionalGet {
             if_none_match: p.etag.clone(),
@@ -156,13 +183,19 @@ where
     {
         Ok(f) => f,
         Err(e) => {
-            // Network failure with a stale entry available → return stale.
+            // Network failure with a stale entry available → return stale and
+            // queue a revalidate task (defense-in-depth; with SWR this only
+            // fires on `force_refresh = true`, since the no-force_refresh path
+            // returned stale eagerly above).
             if let Some(s) = stale {
                 tracing::warn!(target: "rover::fetcher::cached",
                     error = %e, url = url.as_str(), "fetch failed; serving stale");
+                let task_id = insert_revalidate_task(db, url, &s).await;
                 return Ok(CachedFetch {
                     page: s,
-                    cache_status: CacheStatus::Stale,
+                    cache_status: CacheStatus::Stale {
+                        revalidation_task_id: task_id,
+                    },
                 });
             }
             return Err(e);
@@ -170,6 +203,9 @@ where
     };
 
     // Step 4: 304 Not Modified — extend freshness on the stale row and serve it.
+    // With M6 SWR, conditional GETs are issued only when `force_refresh = true`
+    // *and* a stale row was somehow threaded through; the no-force_refresh path
+    // returns stale early. This block remains as a safety net.
     if fetched.status == 304 {
         let stale = stale.expect("304 implies a stale entry was sent");
         let decision = compute_ttl(
@@ -280,13 +316,55 @@ fn map_storage_err(e: crate::storage::StorageError) -> FetcherError {
     FetcherError::Storage(e)
 }
 
+/// Enqueue a `revalidate` task for an expired cache row. Returns the task id
+/// on success. Failures are logged and swallowed: a stale-served response is
+/// still a useful answer to the agent, and the worker will re-enqueue on the
+/// next miss.
+async fn insert_revalidate_task(db: &Db, url: &Url, stale: &Page) -> Option<String> {
+    use crate::storage::tasks::{TaskInsert, TaskKind, insert};
+    let params = serde_json::to_string(&crate::tasks::types::RevalidateParams {
+        url: url.to_string(),
+        etag_at_serve: stale.etag.clone(),
+        last_modified_at_serve: stale.last_modified.clone(),
+    })
+    .ok()?;
+    let id = uuid::Uuid::now_v7().to_string();
+    match insert(
+        db,
+        TaskInsert {
+            id: id.clone(),
+            kind: TaskKind::Revalidate,
+            params_json: params,
+            owner_pid: Some(std::process::id() as i64),
+        },
+    )
+    .await
+    {
+        Ok(()) => Some(id),
+        Err(e) => {
+            tracing::warn!(
+                target: "rover::fetcher::cached",
+                error = %e,
+                url = url.as_str(),
+                "failed to enqueue revalidate task; serving stale without revalidation",
+            );
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn cache_status_eq() {
-        assert_ne!(CacheStatus::Hit, CacheStatus::Stale);
+        assert_ne!(
+            CacheStatus::Hit,
+            CacheStatus::Stale {
+                revalidation_task_id: None
+            }
+        );
     }
 
     #[test]

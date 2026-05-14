@@ -25,7 +25,7 @@ impl From<crate::fetcher::cached::CacheStatus> for CacheStatus {
         match v {
             C::Hit => CacheStatus::Hit,
             C::Miss => CacheStatus::Miss,
-            C::Stale => CacheStatus::Stale,
+            C::Stale { .. } => CacheStatus::Stale,
         }
     }
 }
@@ -44,6 +44,11 @@ pub struct FetchResponse {
     pub markdown: String,
     pub frontmatter: String,
     pub cache_status: CacheStatus,
+
+    /// Present when `cache_status == "stale"` and a background revalidate
+    /// task was successfully queued. Agents can monitor or ignore.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revalidation: Option<StaleRevalidation>,
 }
 
 /// `count_tokens` or `fetch{count_only:true}` response.
@@ -156,6 +161,7 @@ mod tests {
             markdown: "x".into(),
             frontmatter: "f".into(),
             cache_status: CacheStatus::Hit,
+            revalidation: None,
         };
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"cache_status\":\"hit\""), "got: {s}");

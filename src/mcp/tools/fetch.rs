@@ -415,6 +415,20 @@ impl RoverHandler {
             });
         }
 
+        // Build the optional SWR envelope before lowering `cache_status` to the
+        // unit-variant wire enum.
+        let revalidation = match &result.cache_status {
+            crate::fetcher::cached::CacheStatus::Stale {
+                revalidation_task_id: Some(id),
+            } => Some(crate::mcp::envelope::StaleRevalidation {
+                task_id: id.clone(),
+                monitor_command: format!("rover task {id} --monitor"),
+                poll_command: format!("rover task {id}"),
+                hint: "Optional. Revalidation runs in the background regardless.".into(),
+            }),
+            _ => None,
+        };
+
         let cache_status: CacheStatus = result.cache_status.into();
 
         if args.count_only {
@@ -485,6 +499,7 @@ impl RoverHandler {
             markdown: body_md,
             frontmatter,
             cache_status,
+            revalidation,
         }))
     }
 }
