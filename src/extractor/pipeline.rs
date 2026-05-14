@@ -19,6 +19,43 @@ pub enum ExtractorError {
 
     #[error("readabilityrs returned no article")]
     NoArticle,
+
+    #[allow(dead_code)] // constructed in Task 3 (metadata walker)
+    #[error("metadata extraction failed: {0}")]
+    Metadata(String),
+
+    #[allow(dead_code)] // constructed in Task 8 (output paths)
+    #[error("output directory error at {path}: {source}")]
+    Output {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[allow(dead_code)] // constructed in Task 9 (tables csv)
+    #[error("could not write table {ordinal} to {path}: {source}")]
+    TableWrite {
+        ordinal: usize,
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[allow(dead_code)] // constructed in Task 10 (images download)
+    #[error("could not download image at {url}: {source}")]
+    ImageDownload {
+        url: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[allow(dead_code)] // constructed in Task 10 (images download)
+    #[error("could not write image at {path}: {source}")]
+    ImageWrite {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Successfully extracted article.

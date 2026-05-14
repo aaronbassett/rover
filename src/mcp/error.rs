@@ -132,4 +132,16 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::STORAGE_ERROR);
     }
+
+    #[test]
+    fn extractor_output_error_routes_to_extract_failed() {
+        use crate::extractor::ExtractorError;
+        let e = McpError::Extractor(ExtractorError::Output {
+            path: "/no/such".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "nope"),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::EXTRACT_FAILED);
+        assert!(r.message.contains("/no/such"));
+    }
 }
