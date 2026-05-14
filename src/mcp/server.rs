@@ -117,10 +117,28 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
         ssrf_level,
     };
     let spawner = default_spawner(batch_deps, retry_deps, revalidate_deps);
+    // The orphan scan interval is normally 10s, but integration tests need
+    // to observe orphan reclaim within a few seconds, so they override via
+    // `ROVER_ORPHAN_SCAN_MS` when the test-loopback build is active.
+    let orphan_scan_interval = {
+        #[cfg(feature = "test-loopback")]
+        {
+            std::env::var("ROVER_ORPHAN_SCAN_MS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(std::time::Duration::from_millis)
+                .unwrap_or_else(|| SchedulerConfig::default().orphan_scan_interval)
+        }
+        #[cfg(not(feature = "test-loopback"))]
+        {
+            SchedulerConfig::default().orphan_scan_interval
+        }
+    };
     let sched = Scheduler {
         db: db.clone(),
         cfg: SchedulerConfig {
             own_pid: pid,
+            orphan_scan_interval,
             ..SchedulerConfig::default()
         },
         cancel: cancel.clone(),
