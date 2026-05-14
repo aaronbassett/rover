@@ -31,7 +31,6 @@ pub enum ExtractorError {
         source: std::io::Error,
     },
 
-    #[allow(dead_code)] // constructed in Task 9 (tables csv)
     #[error("could not write table {ordinal} to {path}: {source}")]
     TableWrite {
         ordinal: usize,
