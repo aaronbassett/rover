@@ -191,6 +191,11 @@ The M1 `extractor::frontmatter::estimate_tokens(text: &str) -> usize` function g
 
 ## M4 — Metadata, Tables, Images, Links
 
+**Status:** plan executed; merged into `main` via #5 (TBD).
+
+**Plan:** [`docs/superpowers/plans/2026-05-14-rover-m4-extraction.md`](../plans/2026-05-14-rover-m4-extraction.md).
+**Spec:** [`docs/superpowers/specs/2026-05-14-rover-m4-extraction-design.md`](../specs/2026-05-14-rover-m4-extraction-design.md).
+
 **Scope.** Structured metadata extraction from JSON-LD, Open Graph, Twitter Cards, microdata. Metadata presets and field overrides. Tables transformation modes (Embed / Sample / Summarize / CsvFile / Drop). Images transformation modes (Keep / AltTextOnly / CaptionVlm / Download / Drop) — VLM mode is wired but the actual implementation is gated on the `vlm` feature (M9). Relative-to-absolute link rewriting. `get_metadata` MCP tool.
 
 **Prerequisites.** M3.
@@ -226,7 +231,8 @@ tests/extractor_links.rs
 - Tables Summarize mode → M7 (or stub in M4 with clear error).
 - Images CaptionVlm mode body → M9.
 
-**Open questions before planning.**
+**Open questions before planning.** *(All resolved during pre-plan brainstorming. Decisions are recorded in the M4 design spec.)*
+
 1. **Microdata crate.** PRD §6.6 suggests `microdata`. Audit the crate's freshness; if stale, fall back to manual `scraper`-based extraction.
 2. **`extraction_quality` heuristic.** Define a concrete formula. PRD §6.2 shows a value `0.87` but doesn't define it. Suggestion: function of `(extracted_text_length / raw_html_length)`, capped to [0, 1], with bonuses for presence of structured metadata. Decide in plan brainstorming.
 3. **JSON-LD walker depth.** JSON-LD can be deeply nested with `@graph`. Decide on a walker strategy (recurse with depth limit, or flatten).
