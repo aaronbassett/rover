@@ -31,6 +31,12 @@ pub enum McpError {
 
     #[error("max_tokens exceeded: {actual} > {max}")]
     MaxTokensExceeded { actual: usize, max: usize },
+
+    #[error("too many URLs ({count}, max {max})")]
+    TooManyUrls { count: usize, max: usize },
+
+    #[error("empty URL list")]
+    EmptyUrlList,
 }
 
 impl McpError {
@@ -46,6 +52,10 @@ impl McpError {
             }
             Self::InvalidArgs(m) => RoverError::new(RoverError::INVALID_ARGS, m.clone()),
             Self::InvalidUrl(m) => RoverError::new(RoverError::INVALID_URL, m.clone()),
+            Self::TooManyUrls { .. } => {
+                RoverError::new(RoverError::TOO_MANY_URLS, self.to_string())
+            }
+            Self::EmptyUrlList => RoverError::new(RoverError::EMPTY_URL_LIST, self.to_string()),
             Self::Tokenizer(e) => match e {
                 TokenizerError::UnknownFamily(name) => RoverError::new(
                     RoverError::INVALID_ARGS,

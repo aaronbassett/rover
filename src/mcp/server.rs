@@ -15,6 +15,11 @@ use crate::config::Config;
 use crate::fetcher::ssrf::SsrfLevel;
 use crate::mcp::handler::RoverHandler;
 use crate::storage::Db;
+use crate::tasks::batch_fetch::BatchDeps;
+use crate::tasks::default_spawner;
+use crate::tasks::retry::RetryDeps;
+use crate::tasks::revalidate::RevalidateDeps;
+use crate::tasks::scheduler::{Scheduler, SchedulerConfig};
 
 pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> anyhow::Result<()> {
     let pid = std::process::id() as i64;
@@ -80,7 +85,51 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
     let client =
         crate::fetcher::client::build_http_client(&config.fetch.user_agent, config.fetch.timeout());
     let pacer = Arc::new(crate::fetcher::concurrency::Pacer::new(&config.rate_limit));
-    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer);
+
+    // Build the in-process scheduler so MCP tools can hand off long-running
+    // work (batch_fetch, retry, revalidate) to background workers.
+    let (new_task_tx, new_task_rx) = Scheduler::channel();
+    let batch_deps = BatchDeps {
+        client: client.clone(),
+        pacer: pacer.clone(),
+        cache_cfg: config.cache.clone(),
+        rate_cfg: config.rate_limit.clone(),
+        robots_cfg: config.robots.clone(),
+        fetch_cfg: config.fetch.clone(),
+        ssrf_level,
+    };
+    let retry_deps = RetryDeps {
+        client: client.clone(),
+        pacer: pacer.clone(),
+        cache_cfg: config.cache.clone(),
+        rate_cfg: config.rate_limit.clone(),
+        robots_cfg: config.robots.clone(),
+        fetch_cfg: config.fetch.clone(),
+        ssrf_level,
+    };
+    let revalidate_deps = RevalidateDeps {
+        client: client.clone(),
+        pacer: pacer.clone(),
+        cache_cfg: config.cache.clone(),
+        rate_cfg: config.rate_limit.clone(),
+        robots_cfg: config.robots.clone(),
+        fetch_cfg: config.fetch.clone(),
+        ssrf_level,
+    };
+    let spawner = default_spawner(batch_deps, retry_deps, revalidate_deps);
+    let sched = Scheduler {
+        db: db.clone(),
+        cfg: SchedulerConfig {
+            own_pid: pid,
+            ..SchedulerConfig::default()
+        },
+        cancel: cancel.clone(),
+        new_task_rx,
+        spawner,
+    };
+    let sched_handle = tokio::spawn(sched.run());
+
+    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer, new_task_tx);
 
     let service = handler.serve(stdio()).await?;
 
@@ -109,6 +158,22 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
     // delete the row — otherwise the heartbeat can race and re-touch a
     // soon-to-be-deleted row.
     cancel.cancel();
+
+    // Await the scheduler with a short deadline so a wedged worker can't
+    // hang shutdown. The scheduler's own `shutdown_grace` already bounds the
+    // join-set wait inside `run()`.
+    match tokio::time::timeout(std::time::Duration::from_secs(5), sched_handle).await {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(e))) => {
+            tracing::warn!(target: "rover::mcp", error = ?e, "scheduler exited with error");
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(target: "rover::mcp", error = ?e, "scheduler task join error");
+        }
+        Err(_) => {
+            tracing::warn!(target: "rover::mcp", "scheduler shutdown timed out");
+        }
+    }
 
     db.delete_server_self(pid).await?;
     Ok(())
