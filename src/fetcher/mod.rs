@@ -12,6 +12,7 @@ pub mod ttl;
 pub mod concurrency;
 pub mod rate_limit;
 pub mod retry;
+pub mod robots;
 
 pub use cached::{CacheStatus, CachedFetch, ExtractResult, FetchOptions, fetch_with_cache};
 pub use fetch::FetchedPage;
