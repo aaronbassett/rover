@@ -66,4 +66,7 @@ pub enum FetcherError {
         #[source]
         source: Box<FetcherError>,
     },
+
+    #[error("fetch deferred to retry task {task_id}")]
+    Deferred { task_id: String },
 }

@@ -143,6 +143,7 @@ where
 
     // Step 3: fetch (conditional if validators present).
     let fetched = match crate::fetcher::retry::with_retries(
+        db,
         pacer,
         client,
         url,

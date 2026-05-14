@@ -113,6 +113,9 @@ impl RoverError {
     pub const ROBOTS_FETCH_FAILED: &'static str = "robots_fetch_failed";
     pub const RETRY_EXHAUSTED: &'static str = "retry_exhausted";
     pub const RATE_LIMITED: &'static str = "rate_limited";
+    pub const DEFERRED: &'static str = "deferred";
+    pub const TOO_MANY_URLS: &'static str = "too_many_urls";
+    pub const EMPTY_URL_LIST: &'static str = "empty_url_list";
 
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
@@ -120,6 +123,27 @@ impl RoverError {
             message: message.into(),
         }
     }
+}
+
+/// Returned by tools that schedule a background task.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskCreatedResponse {
+    pub task_id: String,
+    pub status: String,
+    pub kind: String,
+    pub monitor_command: String,
+    pub poll_command: String,
+    pub cancel_command: String,
+    pub hint: String,
+}
+
+/// Stale-served envelope on a `fetch` response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct StaleRevalidation {
+    pub task_id: String,
+    pub monitor_command: String,
+    pub poll_command: String,
+    pub hint: String,
 }
 
 #[cfg(test)]

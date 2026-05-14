@@ -152,6 +152,7 @@ mod tests {
             max_backoff: Duration::from_secs(30),
             retry_after_ceiling: Duration::from_secs(300),
             jitter_seed: Some(1),
+            deferred_retry_threshold_secs: 30,
         }
     }
 

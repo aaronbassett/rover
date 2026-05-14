@@ -262,6 +262,12 @@ pub struct RateLimitConfig {
     /// entropy; set in tests to make timing assertions reproducible.
     #[serde(default)]
     pub jitter_seed: Option<u64>,
+
+    /// Threshold (seconds) above which a server-provided `Retry-After`
+    /// converts a synchronous fetch into a deferred `retry` task instead of
+    /// sleeping in-line. See M6 design §3.
+    #[serde(default = "default_deferred_threshold_secs")]
+    pub deferred_retry_threshold_secs: u64,
 }
 
 impl Default for RateLimitConfig {
@@ -275,6 +281,7 @@ impl Default for RateLimitConfig {
             max_backoff: default_max_backoff(),
             retry_after_ceiling: default_retry_after_ceiling(),
             jitter_seed: None,
+            deferred_retry_threshold_secs: default_deferred_threshold_secs(),
         }
     }
 }
@@ -299,6 +306,9 @@ fn default_max_backoff() -> Duration {
 }
 fn default_retry_after_ceiling() -> Duration {
     Duration::from_secs(300)
+}
+fn default_deferred_threshold_secs() -> u64 {
+    30
 }
 
 /// Robots.txt fetch + respect knobs.

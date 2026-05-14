@@ -40,11 +40,10 @@ pub struct BatchDeps {
 }
 
 /// Classify a fetcher error as a "deferred" failure that warrants a follow-up
-/// retry task. Task 8 introduces `FetcherError::Deferred { .. }` and rewrites
-/// this to `matches!(e, FetcherError::Deferred { .. })`.
-// TODO(task8): match FetcherError::Deferred { .. }
-fn is_deferred_error(_e: &FetcherError) -> bool {
-    false
+/// retry task. `FetcherError::Deferred` is produced by `with_retries` when a
+/// long `Retry-After` is converted into an out-of-band retry task.
+fn is_deferred_error(e: &FetcherError) -> bool {
+    matches!(e, FetcherError::Deferred { .. })
 }
 
 /// Return the set of `index` values already represented as `item_done` or

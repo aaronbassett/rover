@@ -82,6 +82,9 @@ impl McpError {
                     F::RateLimited { .. } => {
                         RoverError::new(RoverError::RATE_LIMITED, e.to_string())
                     }
+                    F::Deferred { task_id } => {
+                        RoverError::new(RoverError::DEFERRED, format!("deferred to task {task_id}"))
+                    }
                     F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
                         RoverError::new(RoverError::FETCH_FAILED, e.to_string())
                     }
@@ -223,6 +226,16 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::RETRY_EXHAUSTED);
         assert!(r.message.contains("4 attempts"));
+    }
+
+    #[test]
+    fn deferred_translation_uses_stable_code() {
+        let e = McpError::Fetcher(crate::fetcher::FetcherError::Deferred {
+            task_id: "abc".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::DEFERRED);
+        assert!(r.message.contains("abc"));
     }
 
     #[test]

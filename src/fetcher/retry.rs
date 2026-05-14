@@ -37,7 +37,9 @@ enum Class {
 /// `crawl_delay` is forwarded to `Pacer::acquire` so the Crawl-Delay floor is
 /// applied once at the start; in-loop `Retry-After` sleeps consume the same
 /// guard, so we never double-pace.
+#[allow(clippy::too_many_arguments)]
 pub async fn with_retries(
+    db: &crate::storage::Db,
     pacer: &Pacer,
     client: &reqwest::Client,
     url: &Url,
@@ -76,6 +78,38 @@ pub async fn with_retries(
                 attempt += 1;
             }
             Class::RetryAfter(d, err) => {
+                if d.as_secs() > cfg.deferred_retry_threshold_secs {
+                    let task_id = uuid::Uuid::now_v7().to_string();
+                    let params = crate::tasks::types::RetryParams {
+                        url: url.to_string(),
+                        attempt: 1,
+                        wait_ms_initial: std::cmp::max(d.as_millis() as u64, 1_000),
+                        max_attempts: cfg.max_retries.max(1),
+                        parent_task_id: None,
+                    };
+                    let params_json = serde_json::to_string(&params)
+                        .expect("RetryParams serialization is infallible");
+                    crate::storage::tasks::insert(
+                        db,
+                        crate::storage::tasks::TaskInsert {
+                            id: task_id.clone(),
+                            kind: crate::storage::tasks::TaskKind::Retry,
+                            params_json,
+                            owner_pid: Some(std::process::id() as i64),
+                        },
+                    )
+                    .await?;
+                    tracing::info!(
+                        target: "rover::fetcher::retry",
+                        requested_secs = d.as_secs(),
+                        threshold_secs = cfg.deferred_retry_threshold_secs,
+                        task_id = %task_id,
+                        url = url.as_str(),
+                        "Retry-After exceeds deferral threshold; scheduling retry task"
+                    );
+                    let _ = err;
+                    return Err(FetcherError::Deferred { task_id });
+                }
                 if attempt >= cfg.max_retries {
                     return Err(FetcherError::RetryExhausted {
                         attempts: attempt + 1,
@@ -150,7 +184,8 @@ fn classify_err(e: FetcherError) -> Class {
         | FetcherError::RetryExhausted { .. }
         | FetcherError::RateLimited { .. }
         | FetcherError::RobotsDisallowed { .. }
-        | FetcherError::RobotsFetchFailed { .. } => Class::Fatal(e),
+        | FetcherError::RobotsFetchFailed { .. }
+        | FetcherError::Deferred { .. } => Class::Fatal(e),
     }
 }
 
@@ -218,6 +253,7 @@ mod tests {
             max_backoff: Duration::from_secs(1),
             retry_after_ceiling: Duration::from_secs(60),
             jitter_seed: Some(0),
+            deferred_retry_threshold_secs: 30,
         }
     }
 
@@ -313,6 +349,52 @@ mod tests {
             retry_after: None,
         };
         assert!(matches!(classify(Ok(page), &cfg()), Class::Backoff(_)));
+    }
+
+    #[cfg(any(test, feature = "test-loopback"))]
+    #[tokio::test]
+    async fn long_retry_after_produces_deferred_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "120"))
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let db = crate::storage::Db::open(tmp.path().join("rover.db"))
+            .await
+            .unwrap();
+        let url = Url::parse(&server.uri()).unwrap();
+        let cfg = RateLimitConfig {
+            deferred_retry_threshold_secs: 30,
+            max_retries: 3,
+            ..Default::default()
+        };
+        let pacer = Pacer::new(&cfg);
+        let client = reqwest::Client::new();
+        let cond = ConditionalGet::default();
+        let res = with_retries(
+            &db,
+            &pacer,
+            &client,
+            &url,
+            SsrfLevel::TestLoopback,
+            &cond,
+            None,
+            &cfg,
+        )
+        .await;
+        match res {
+            Err(FetcherError::Deferred { task_id }) => {
+                let row = crate::storage::tasks::get(&db, &task_id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(row.kind, crate::storage::tasks::TaskKind::Retry);
+            }
+            other => panic!("expected Deferred, got {other:?}"),
+        }
     }
 
     #[test]
