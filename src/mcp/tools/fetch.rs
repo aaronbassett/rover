@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::extractor::frontmatter::{PageMeta, render as render_frontmatter};
+use crate::extractor::options::{ImagesMode, SampleStrategy, TablesMode};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
 use crate::mcp::envelope::{CacheStatus, CountResponse, CountSource, FetchResponse};
@@ -14,10 +15,10 @@ use crate::tokenizer;
 
 /// Wire-side `fetch` tool arguments.
 ///
-/// Live in M3: `url`, `force_refresh`, `count_only`, `tokenizer`, `max_tokens`.
-/// Accept-no-op (schema-stable, body-deferred): `headless`, `tables`, `images`,
-/// `metadata`, `summarize`. Their values are accepted by the schema and
-/// emit one `tracing::debug` line each.
+/// Live in M3+M4: `url`, `force_refresh`, `count_only`, `tokenizer`,
+/// `max_tokens`, `tables`, `images`, `metadata`. Accept-no-op (schema-stable,
+/// body-deferred): `headless`, `summarize`. Their values are accepted by the
+/// schema and emit one `tracing::debug` line each.
 ///
 /// `tokenizer` is exposed as a string on the wire (rather than the
 /// [`Tokenizer`] enum) so the JSON schema doesn't have to mirror the
@@ -40,17 +41,265 @@ pub struct FetchArgs {
     #[serde(default)]
     pub max_tokens: Option<usize>,
 
+    #[serde(default)]
+    pub tables: Option<TablesArg>,
+
+    #[serde(default)]
+    pub images: Option<ImagesArg>,
+
+    #[serde(default)]
+    pub metadata: Option<MetadataArg>,
+
     // ---- accept-no-op until later milestones ----
     #[serde(default)]
     pub headless: Option<serde_json::Value>,
     #[serde(default)]
-    pub tables: Option<serde_json::Value>,
-    #[serde(default)]
-    pub images: Option<serde_json::Value>,
-    #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
-    #[serde(default)]
     pub summarize: Option<serde_json::Value>,
+}
+
+/// Wire shape for `tables`.
+///
+/// Serializes via a custom flat shape (`{mode, strategy?, head?, tail?, rows?, seed?}`)
+/// so that `deny_unknown_fields` semantics on the outer args still surface
+/// stray keys inside the tables arg — `#[serde(flatten)]` is incompatible
+/// with `deny_unknown_fields`, so we hand-roll the parser instead.
+#[derive(Debug, Clone)]
+pub enum TablesArg {
+    Embed,
+    Drop,
+    CsvFile,
+    Summarize,
+    Sample { strategy: SampleArg },
+}
+
+#[derive(Debug, Clone)]
+pub enum SampleArg {
+    HeadTail { head: usize, tail: usize },
+    RandomSeed { rows: usize, seed: u64 },
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+struct TablesArgWire {
+    mode: TablesModeWire,
+    #[serde(default)]
+    strategy: Option<SampleStrategyWire>,
+    #[serde(default)]
+    head: Option<usize>,
+    #[serde(default)]
+    tail: Option<usize>,
+    #[serde(default)]
+    rows: Option<usize>,
+    #[serde(default)]
+    seed: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum TablesModeWire {
+    Embed,
+    Drop,
+    CsvFile,
+    Summarize,
+    Sample,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum SampleStrategyWire {
+    HeadTail,
+    RandomSeed,
+}
+
+impl<'de> Deserialize<'de> for TablesArg {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let w = TablesArgWire::deserialize(deserializer)?;
+        match w.mode {
+            TablesModeWire::Embed => Ok(TablesArg::Embed),
+            TablesModeWire::Drop => Ok(TablesArg::Drop),
+            TablesModeWire::CsvFile => Ok(TablesArg::CsvFile),
+            TablesModeWire::Summarize => Ok(TablesArg::Summarize),
+            TablesModeWire::Sample => {
+                let strategy = w.strategy.unwrap_or(SampleStrategyWire::HeadTail);
+                let inner = match strategy {
+                    SampleStrategyWire::HeadTail => SampleArg::HeadTail {
+                        head: w.head.unwrap_or_else(default_head),
+                        tail: w.tail.unwrap_or_else(default_tail),
+                    },
+                    SampleStrategyWire::RandomSeed => SampleArg::RandomSeed {
+                        rows: w.rows.unwrap_or_else(default_random_rows),
+                        seed: w.seed.unwrap_or_else(default_random_seed),
+                    },
+                };
+                Ok(TablesArg::Sample { strategy: inner })
+            }
+        }
+    }
+}
+
+impl Serialize for TablesArg {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let w = match self {
+            TablesArg::Embed => TablesArgWire {
+                mode: TablesModeWire::Embed,
+                strategy: None,
+                head: None,
+                tail: None,
+                rows: None,
+                seed: None,
+            },
+            TablesArg::Drop => TablesArgWire {
+                mode: TablesModeWire::Drop,
+                strategy: None,
+                head: None,
+                tail: None,
+                rows: None,
+                seed: None,
+            },
+            TablesArg::CsvFile => TablesArgWire {
+                mode: TablesModeWire::CsvFile,
+                strategy: None,
+                head: None,
+                tail: None,
+                rows: None,
+                seed: None,
+            },
+            TablesArg::Summarize => TablesArgWire {
+                mode: TablesModeWire::Summarize,
+                strategy: None,
+                head: None,
+                tail: None,
+                rows: None,
+                seed: None,
+            },
+            TablesArg::Sample {
+                strategy: SampleArg::HeadTail { head, tail },
+            } => TablesArgWire {
+                mode: TablesModeWire::Sample,
+                strategy: Some(SampleStrategyWire::HeadTail),
+                head: Some(*head),
+                tail: Some(*tail),
+                rows: None,
+                seed: None,
+            },
+            TablesArg::Sample {
+                strategy: SampleArg::RandomSeed { rows, seed },
+            } => TablesArgWire {
+                mode: TablesModeWire::Sample,
+                strategy: Some(SampleStrategyWire::RandomSeed),
+                head: None,
+                tail: None,
+                rows: Some(*rows),
+                seed: Some(*seed),
+            },
+        };
+        w.serialize(serializer)
+    }
+}
+
+impl JsonSchema for TablesArg {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "TablesArg".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::TablesArg").into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <TablesArgWire as JsonSchema>::json_schema(generator)
+    }
+}
+
+fn default_head() -> usize {
+    5
+}
+fn default_tail() -> usize {
+    5
+}
+fn default_random_rows() -> usize {
+    10
+}
+fn default_random_seed() -> u64 {
+    42
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "mode")]
+pub enum ImagesArg {
+    Keep,
+    AltTextOnly,
+    Download,
+    Drop,
+    CaptionVlm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum MetadataArg {
+    Include,
+    Skip,
+}
+
+fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
+    Ok(match arg {
+        None | Some(TablesArg::Embed) => TablesMode::Embed,
+        Some(TablesArg::Drop) => TablesMode::Drop,
+        Some(TablesArg::CsvFile) => TablesMode::CsvFile,
+        Some(TablesArg::Sample { strategy }) => match strategy {
+            SampleArg::HeadTail { head, tail } => {
+                if *head == 0 || *tail == 0 {
+                    return Err(McpError::InvalidArgs(
+                        "tables.sample head/tail must be > 0".into(),
+                    ));
+                }
+                TablesMode::Sample(SampleStrategy::HeadTail {
+                    head: *head,
+                    tail: *tail,
+                })
+            }
+            SampleArg::RandomSeed { rows, seed } => {
+                if *rows == 0 {
+                    return Err(McpError::InvalidArgs(
+                        "tables.sample rows must be > 0".into(),
+                    ));
+                }
+                TablesMode::Sample(SampleStrategy::RandomSeed {
+                    rows: *rows,
+                    seed: *seed,
+                })
+            }
+        },
+        Some(TablesArg::Summarize) => {
+            return Err(McpError::Extractor(
+                crate::extractor::pipeline::ExtractorError::Metadata(
+                    "tables summarize mode is not available until M7".into(),
+                ),
+            ));
+        }
+    })
+}
+
+fn images_mode(arg: Option<&ImagesArg>) -> Result<ImagesMode, McpError> {
+    Ok(match arg {
+        None | Some(ImagesArg::AltTextOnly) => ImagesMode::AltTextOnly,
+        Some(ImagesArg::Keep) => ImagesMode::Keep,
+        Some(ImagesArg::Download) => ImagesMode::Download,
+        Some(ImagesArg::Drop) => ImagesMode::Drop,
+        Some(ImagesArg::CaptionVlm) => {
+            return Err(McpError::Extractor(
+                crate::extractor::pipeline::ExtractorError::Metadata(
+                    "images caption_vlm mode requires the vlm feature (M9)".into(),
+                ),
+            ));
+        }
+    })
 }
 
 /// One of the two response shapes the `fetch` tool can produce, depending
@@ -120,7 +369,37 @@ impl RoverHandler {
         .await?;
 
         tokenizer::ensure_loaded(family).await?;
-        let tokens = tokenizer::count(&result.page.extracted_md, family)?;
+
+        // Resolve per-request post-pass modes from the typed args.
+        let output_paths = std::sync::Arc::new(
+            crate::extractor::output::OutputPaths::resolve(self.config.output.dir.as_deref())
+                .map_err(McpError::Extractor)?,
+        );
+
+        let tables_mode_resolved = tables_mode(args.tables.as_ref())?;
+        let images_mode_resolved = images_mode(args.images.as_ref())?;
+
+        // Run the M4 post-passes against the cached (pre-pass) body. These
+        // always run, even on cache hits: the cached `extracted_md` carries
+        // links-absolutized but no tables/images transforms.
+        let body_md = result.page.extracted_md.clone();
+        let (body_md, tables_transformed) =
+            crate::extractor::tables::apply(&body_md, &tables_mode_resolved, &output_paths, &url)
+                .map_err(McpError::Extractor)?;
+
+        let images_result = crate::extractor::images::apply(
+            &body_md,
+            &images_mode_resolved,
+            &output_paths,
+            &self.client,
+        )
+        .await
+        .map_err(McpError::Extractor)?;
+        let body_md = images_result.markdown;
+
+        // Recompute tokens against the post-pass body; `max_tokens` constrains
+        // what the agent will actually see.
+        let tokens = tokenizer::count(&body_md, family)?;
 
         if let Some(max) = args.max_tokens
             && tokens > max
@@ -163,8 +442,8 @@ impl RoverHandler {
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_default();
         let quality = crate::extractor::quality::score(
-            &result.page.extracted_md,
-            result.page.extracted_md.chars().count().max(1),
+            &body_md,
+            body_md.chars().count().max(1),
             !metadata.is_empty(),
             result.page.title.is_some(),
         );
@@ -173,7 +452,7 @@ impl RoverHandler {
             canonical_url: &canonical,
             title: result.page.title.as_deref(),
             fetched_at: jiff::Timestamp::now(),
-            body: &result.page.extracted_md,
+            body: &body_md,
             tokens,
             tokenizer_name: family.as_str(),
             description: metadata.description.as_deref(),
@@ -185,14 +464,14 @@ impl RoverHandler {
             language: metadata.language.as_deref(),
             schema_types: &metadata.schema_types,
             extraction_quality: quality,
-            tables_transformed: &[],
-            images_seen: 0,
-            images_downloaded: 0,
-            images_failed: 0,
+            tables_transformed: &tables_transformed,
+            images_seen: images_result.images_seen,
+            images_downloaded: images_result.images_downloaded,
+            images_failed: images_result.images_failed,
         });
 
         Ok(FetchOutput::Full(FetchResponse {
-            markdown: result.page.extracted_md,
+            markdown: body_md,
             frontmatter,
             cache_status,
         }))
@@ -202,15 +481,6 @@ impl RoverHandler {
 fn log_deferred_args(args: &FetchArgs) {
     if let Some(v) = &args.headless {
         tracing::debug!(target: "rover::mcp", arg = "headless", value = ?v, "ignored until M9");
-    }
-    if let Some(v) = &args.tables {
-        tracing::debug!(target: "rover::mcp", arg = "tables", value = ?v, "ignored until M4");
-    }
-    if let Some(v) = &args.images {
-        tracing::debug!(target: "rover::mcp", arg = "images", value = ?v, "ignored until M4");
-    }
-    if let Some(v) = &args.metadata {
-        tracing::debug!(target: "rover::mcp", arg = "metadata", value = ?v, "ignored until M4");
     }
     if let Some(v) = &args.summarize {
         tracing::debug!(target: "rover::mcp", arg = "summarize", value = ?v, "ignored until M7");
@@ -240,15 +510,11 @@ mod tests {
             r#"{
                 "url":"https://example.com",
                 "headless":"auto",
-                "tables":{"mode":"Sample"},
-                "images":{"mode":"Drop"},
-                "metadata":{"preset":"default"},
                 "summarize":{"target_tokens":500}
             }"#,
         )
         .unwrap();
         assert!(v.headless.is_some());
-        assert!(v.tables.is_some());
         assert!(v.summarize.is_some());
     }
 
@@ -287,5 +553,36 @@ mod tests {
         ] {
             assert!(json.contains(field), "schema missing field: {field}");
         }
+    }
+
+    #[test]
+    fn typed_tables_sample_parses() {
+        let v: FetchArgs = serde_json::from_str(
+            r#"{"url":"https://x/","tables":{"mode":"sample","strategy":"head_tail","head":3,"tail":2}}"#,
+        )
+        .unwrap();
+        match v.tables.unwrap() {
+            TablesArg::Sample {
+                strategy: SampleArg::HeadTail { head, tail },
+            } => {
+                assert_eq!(head, 3);
+                assert_eq!(tail, 2);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn typed_tables_rejects_unknown_field() {
+        let r: Result<FetchArgs, _> =
+            serde_json::from_str(r#"{"url":"https://x/","tables":{"mode":"embed","bogus":1}}"#);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn typed_images_download_parses() {
+        let v: FetchArgs =
+            serde_json::from_str(r#"{"url":"https://x/","images":{"mode":"download"}}"#).unwrap();
+        assert!(matches!(v.images, Some(ImagesArg::Download)));
     }
 }

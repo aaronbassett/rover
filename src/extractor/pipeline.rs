@@ -20,7 +20,6 @@ pub enum ExtractorError {
     #[error("readabilityrs returned no article")]
     NoArticle,
 
-    #[allow(dead_code)] // constructed in Task 3 (metadata walker)
     #[error("metadata extraction failed: {0}")]
     Metadata(String),
 
