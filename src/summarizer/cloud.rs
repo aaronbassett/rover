@@ -46,24 +46,6 @@ impl ProviderKind {
             other => Err(format!("unknown provider: {other}")),
         }
     }
-
-    /// `genai` adapter kind, used by the resolver when remapping a model.
-    // Consumed in Task 6 (registry) for additional adapter wiring; also a
-    // sanity-check inside `CloudBackend::new`.
-    #[allow(dead_code)]
-    fn adapter_kind(&self) -> genai::adapter::AdapterKind {
-        use genai::adapter::AdapterKind;
-        match self {
-            ProviderKind::OpenAi | ProviderKind::OpenAiCompat => AdapterKind::OpenAI,
-            ProviderKind::Anthropic => AdapterKind::Anthropic,
-            ProviderKind::Gemini => AdapterKind::Gemini,
-            ProviderKind::XAi => AdapterKind::Xai,
-            ProviderKind::Groq => AdapterKind::Groq,
-            ProviderKind::DeepSeek => AdapterKind::DeepSeek,
-            ProviderKind::Together => AdapterKind::Together,
-            ProviderKind::Fireworks => AdapterKind::Fireworks,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -100,9 +82,6 @@ mod provider_tests {
 pub struct CloudBackend {
     name: String,
     model: String,
-    // Retained for diagnostics and to feed Task 6's registry assertions.
-    #[allow(dead_code)]
-    provider: ProviderKind,
     client: Client,
 }
 
@@ -176,14 +155,9 @@ impl CloudBackend {
 
         let client = builder.build();
 
-        // Sanity-check that genai knows this adapter at the kind level. We
-        // don't reach the network here — just confirm enum mapping works.
-        let _ = provider.adapter_kind();
-
         Ok(Self {
             name,
             model,
-            provider,
             client,
         })
     }
@@ -196,26 +170,45 @@ impl CloudBackend {
         ])
     }
 
-    /// Translate a genai error into our error type. Errors live as a
-    /// single chained `Display` in genai 0.4; we string-match the status
-    /// number out of common shapes plus check the `Display` for known
-    /// signal keywords.
+    /// Translate a genai error into our error type by matching on
+    /// `genai::Error`'s structural variants. HTTP status codes come
+    /// straight out of `webc::Error::ResponseFailedStatus`; genai's own
+    /// request-validation variants map to `Invalid`/`AuthFailed`.
     fn map_error(err: genai::Error) -> BackendError {
-        let s = err.to_string().to_lowercase();
-        if s.contains("429") || s.contains("rate limit") || s.contains("too many requests") {
-            BackendError::RateLimited
-        } else if s.contains("401")
-            || s.contains("403")
-            || s.contains("unauthorized")
-            || s.contains("forbidden")
-            || s.contains("api_key")
-            || s.contains("api key")
-        {
-            BackendError::AuthFailed(err.to_string())
-        } else if s.contains("model") && (s.contains("not found") || s.contains("invalid")) {
-            BackendError::ModelError(err.to_string())
-        } else {
-            BackendError::Unavailable(err.to_string())
+        use genai::Error::{
+            ChatReqHasNoMessages, LastChatMessageIsNotUser, MessageContentTypeNotSupported,
+            MessageRoleNotSupported, NoAuthData, NoAuthResolver, RequiresApiKey, WebAdapterCall,
+            WebModelCall,
+        };
+        use genai::webc::Error::ResponseFailedStatus;
+
+        match &err {
+            WebModelCall {
+                webc_error: ResponseFailedStatus { status, .. },
+                ..
+            }
+            | WebAdapterCall {
+                webc_error: ResponseFailedStatus { status, .. },
+                ..
+            } => {
+                if status.as_u16() == 429 {
+                    BackendError::RateLimited
+                } else if matches!(status.as_u16(), 401 | 403) {
+                    BackendError::AuthFailed(err.to_string())
+                } else if status.is_client_error() {
+                    BackendError::ModelError(err.to_string())
+                } else {
+                    BackendError::Unavailable(err.to_string())
+                }
+            }
+            RequiresApiKey { .. } | NoAuthResolver { .. } | NoAuthData { .. } => {
+                BackendError::AuthFailed(err.to_string())
+            }
+            ChatReqHasNoMessages { .. }
+            | LastChatMessageIsNotUser { .. }
+            | MessageRoleNotSupported { .. }
+            | MessageContentTypeNotSupported { .. } => BackendError::Invalid(err.to_string()),
+            _ => BackendError::Unavailable(err.to_string()),
         }
     }
 }
@@ -304,17 +297,6 @@ mod cloud_tests {
             Some("k".into()),
         );
         assert!(r.is_ok());
-    }
-
-    #[test]
-    fn map_error_recognizes_401_as_auth() {
-        // We can't easily construct a `genai::Error` directly — instead
-        // confirm the string heuristic by hitting the function with a
-        // ModelError variant that contains 401-ish text. The function is
-        // a pure string match, so equivalence holds.
-        let s = "request failed with status 401 unauthorized".to_lowercase();
-        let recognized_as_auth = s.contains("401") || s.contains("unauthorized");
-        assert!(recognized_as_auth);
     }
 
     #[test]
