@@ -8,6 +8,7 @@
 pub mod backend;
 pub mod error;
 pub mod extractive;
+pub mod prompts;
 
 pub use backend::{CompactMode, CompactOpts, PreserveSection, Style, SummarizerBackend};
 pub use error::{BackendError, SummarizerError};
