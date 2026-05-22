@@ -306,13 +306,7 @@ fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
                 })
             }
         },
-        Some(TablesArg::Summarize) => {
-            return Err(McpError::Extractor(
-                crate::extractor::pipeline::ExtractorError::Metadata(
-                    "tables summarize mode is not available until M7".into(),
-                ),
-            ));
-        }
+        Some(TablesArg::Summarize) => TablesMode::Summarize,
     })
 }
 
@@ -423,9 +417,52 @@ impl RoverHandler {
         // always run, even on cache hits: the cached `extracted_md` carries
         // links-absolutized but no tables/images transforms.
         let body_md = result.page.extracted_md.clone();
-        let (body_md, tables_transformed) =
-            crate::extractor::tables::apply(&body_md, &tables_mode_resolved, &output_paths, &url)
-                .map_err(McpError::Extractor)?;
+        let tables_hook: Option<crate::extractor::tables::TableSummarizeHook> =
+            if matches!(tables_mode_resolved, TablesMode::Summarize) {
+                let summarizer = self.summarizer.clone();
+                let config = self.config.clone();
+                Some(std::sync::Arc::new(move |table_text: &str| {
+                    let summarizer = summarizer.clone();
+                    let config = config.clone();
+                    let table_text = table_text.to_string();
+                    Box::pin(async move {
+                        let defaults =
+                            crate::summarizer::DefaultsHint::from_config(&config.summarization);
+                        let opts = crate::summarizer::backend::CompactOpts {
+                            mode: defaults.mode,
+                            style: crate::summarizer::backend::Style::Bullet,
+                            target_tokens: Some(150),
+                            focus: Some(
+                                "Describe what this table shows. Highlight any extreme \
+                                 values or notable rows."
+                                    .to_string(),
+                            ),
+                            preserve: vec![],
+                            backend_name: defaults.backend.clone(),
+                        };
+                        let content_hash = format!("sha256:{}", sha256_hex(table_text.as_bytes()));
+                        summarizer
+                            .compact(&content_hash, &table_text, &opts)
+                            .await
+                            .map(|r| r.summary_md)
+                            .map_err(|e| e.fallback_reason().to_string())
+                    })
+                        as std::pin::Pin<
+                            Box<dyn std::future::Future<Output = Result<String, String>> + Send>,
+                        >
+                }))
+            } else {
+                None
+            };
+        let (body_md, tables_transformed) = crate::extractor::tables::apply_with_summarizer(
+            &body_md,
+            &tables_mode_resolved,
+            &output_paths,
+            &url,
+            tables_hook.as_ref(),
+        )
+        .await
+        .map_err(McpError::Extractor)?;
 
         let images_result = crate::extractor::images::apply(
             &body_md,

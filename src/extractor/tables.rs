@@ -1,6 +1,9 @@
 //! Table transformation modes.
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
@@ -22,7 +25,27 @@ pub struct TableTransform {
     pub kept_rows: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated_rows: Option<usize>,
+    /// Per-table summary body emitted by `TablesMode::Summarize`. Absent
+    /// for every other mode and for tables where the summarizer hook
+    /// returned an error (see `fallback_reason`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary_md: Option<String>,
+    /// Reason the per-table summarizer hook failed for this table; the
+    /// original markdown is preserved verbatim in the body when this is
+    /// set. Mirrors `SummarizerError::fallback_reason()` strings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
 }
+
+/// Async hook the `TablesMode::Summarize` path invokes for each detected
+/// table. Receives the plaintext-rendered table block and returns either
+/// the summary string or an error reason (the string is recorded in
+/// `TableTransform.fallback_reason`).
+pub type TableSummarizeHook = Arc<
+    dyn for<'a> Fn(&'a str) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>
+        + Send
+        + Sync,
+>;
 
 /// Returns the transformed markdown plus per-table records.
 pub fn apply(
@@ -67,6 +90,87 @@ pub fn apply(
     Ok((out, records))
 }
 
+/// Async-aware variant of [`apply`] that routes `TablesMode::Summarize`
+/// through `hook`. All other modes delegate to the sync `apply` path.
+///
+/// For each detected pipe-table the hook is invoked with the table's
+/// raw markdown block; on `Ok(summary)` the block is replaced with the
+/// summary text and `TableTransform.summary_md` is populated. On
+/// `Err(reason)` the original table is preserved verbatim and
+/// `fallback_reason` records `reason`.
+pub async fn apply_with_summarizer(
+    markdown: &str,
+    mode: &TablesMode,
+    output_paths: &OutputPaths,
+    base_url: &Url,
+    hook: Option<&TableSummarizeHook>,
+) -> Result<(String, Vec<TableTransform>), ExtractorError> {
+    if !matches!(mode, TablesMode::Summarize) {
+        return apply(markdown, mode, output_paths, base_url);
+    }
+    let Some(hook) = hook else {
+        return Err(ExtractorError::Metadata(
+            "internal: apply_with_summarizer requires a hook for TablesMode::Summarize".into(),
+        ));
+    };
+
+    let mut out = String::with_capacity(markdown.len());
+    let mut records = Vec::new();
+    let mut ordinal: usize = 0;
+    let mut iter = markdown.lines().peekable();
+
+    while let Some(line) = iter.next() {
+        if is_pipe_table_start(line, iter.peek().copied()) {
+            let mut rows: Vec<String> = vec![line.to_string()];
+            while let Some(next) = iter.peek().copied() {
+                if next.trim_start().starts_with('|') {
+                    rows.push(next.to_string());
+                    iter.next();
+                } else {
+                    break;
+                }
+            }
+            let table_text = rows.join("\n");
+            match hook(&table_text).await {
+                Ok(summary) => {
+                    out.push_str(&summary);
+                    out.push('\n');
+                    records.push(TableTransform {
+                        ordinal,
+                        mode: "summarize".into(),
+                        path: None,
+                        kept_rows: None,
+                        truncated_rows: None,
+                        summary_md: Some(summary),
+                        fallback_reason: None,
+                    });
+                }
+                Err(reason) => {
+                    out.push_str(&table_text);
+                    out.push('\n');
+                    records.push(TableTransform {
+                        ordinal,
+                        mode: "summarize".into(),
+                        path: None,
+                        kept_rows: None,
+                        truncated_rows: None,
+                        summary_md: None,
+                        fallback_reason: Some(reason),
+                    });
+                }
+            }
+            ordinal += 1;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !markdown.ends_with('\n') && out.ends_with('\n') {
+        out.pop();
+    }
+    Ok((out, records))
+}
+
 fn is_pipe_table_start(line: &str, next: Option<&str>) -> bool {
     if !line.trim_start().starts_with('|') {
         return false;
@@ -95,6 +199,8 @@ fn transform_table(
                 path: None,
                 kept_rows: None,
                 truncated_rows: None,
+                summary_md: None,
+                fallback_reason: None,
             }),
         )),
         TablesMode::Drop => Ok((
@@ -105,6 +211,8 @@ fn transform_table(
                 path: None,
                 kept_rows: None,
                 truncated_rows: None,
+                summary_md: None,
+                fallback_reason: None,
             }),
         )),
         TablesMode::Sample(strategy) => {
@@ -131,6 +239,8 @@ fn transform_table(
                     path: None,
                     kept_rows: Some(kept.len()),
                     truncated_rows: Some(truncated),
+                    summary_md: None,
+                    fallback_reason: None,
                 }),
             ))
         }
@@ -153,9 +263,14 @@ fn transform_table(
                     path: Some(abs),
                     kept_rows: None,
                     truncated_rows: None,
+                    summary_md: None,
+                    fallback_reason: None,
                 }),
             ))
         }
+        TablesMode::Summarize => Err(ExtractorError::Metadata(
+            "internal: TablesMode::Summarize must go through apply_with_summarizer".into(),
+        )),
     }
 }
 
@@ -301,6 +416,67 @@ mod tests {
         assert!(csv.contains("A,B"));
         assert!(csv.contains("1,2"));
         assert!(csv.contains("5,6"));
+    }
+
+    #[tokio::test]
+    async fn summarize_mode_invokes_hook_per_table() {
+        // `paths()` sets `ROVER_OUTPUT_DIR`; serialize against other tests
+        // in this module. Drop the guard before awaiting.
+        let paths = {
+            let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            paths()
+        };
+        let md = "Intro.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nMiddle.\n\n| X | Y |\n|---|---|\n| 9 | 8 |\n";
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+        let hook: TableSummarizeHook = std::sync::Arc::new(move |_text: &str| {
+            let counter_clone = counter_clone.clone();
+            Box::pin(async move {
+                counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok::<String, String>("(summary)".to_string())
+            })
+        });
+        let (out, recs) =
+            apply_with_summarizer(md, &TablesMode::Summarize, &paths, &url(), Some(&hook))
+                .await
+                .unwrap();
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(recs.len(), 2);
+        assert!(recs.iter().all(|r| r.mode == "summarize"));
+        assert!(
+            recs.iter()
+                .all(|r| r.summary_md.as_deref() == Some("(summary)"))
+        );
+        assert!(recs.iter().all(|r| r.fallback_reason.is_none()));
+        assert!(out.contains("(summary)"));
+        assert!(!out.contains("| 1 | 2 |"));
+        assert!(!out.contains("| 9 | 8 |"));
+    }
+
+    #[tokio::test]
+    async fn summarize_mode_records_fallback_when_hook_fails() {
+        let paths = {
+            let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            paths()
+        };
+        let hook: TableSummarizeHook = std::sync::Arc::new(|_text: &str| {
+            Box::pin(async move { Err::<String, String>("auth_failed".to_string()) })
+        });
+        let (out, recs) = apply_with_summarizer(
+            TABLE_3ROWS,
+            &TablesMode::Summarize,
+            &paths,
+            &url(),
+            Some(&hook),
+        )
+        .await
+        .unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].mode, "summarize");
+        assert!(recs[0].summary_md.is_none());
+        assert_eq!(recs[0].fallback_reason.as_deref(), Some("auth_failed"));
+        assert!(out.contains("| 1 | 2 |"));
+        assert!(out.contains("| 5 | 6 |"));
     }
 
     #[test]

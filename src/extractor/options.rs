@@ -26,6 +26,7 @@ pub enum TablesMode {
     Sample(SampleStrategy),
     CsvFile,
     Drop,
+    Summarize,
 }
 
 #[derive(Debug, Clone)]
