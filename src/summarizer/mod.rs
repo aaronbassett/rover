@@ -520,6 +520,65 @@ mod service_tests {
     }
 
     #[tokio::test]
+    async fn fallback_backend_failure_surfaces_with_fallback_name() {
+        let (db, _tmp) = make_db().await;
+        let reg = registry_with(
+            vec![
+                (
+                    "fast",
+                    "gpt-4o-mini",
+                    Some(BackendError::AuthFailed("401".into())),
+                ),
+                (
+                    "default",
+                    "",
+                    Some(BackendError::Invalid("empty fallback content".into())),
+                ),
+            ],
+            "default",
+        );
+        let svc = SummarizerService::new(db, reg, true);
+        let o = opts("fast", CompactMode::Abstractive);
+
+        let r = svc.compact("h1", "hello world.", &o).await;
+        // The original ("fast") failed with auth_failed → fallback dispatched
+        // to ("default") → that also failed with Invalid → user must see
+        // the fallback backend's error, not the original.
+        match r {
+            Err(SummarizerError::InvalidRequest { ref name, .. }) => {
+                assert_eq!(
+                    name, "default",
+                    "error should carry fallback's name, not 'fast'"
+                );
+            }
+            other => panic!("expected InvalidRequest from fallback, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_fallback_attempted_when_failing_backend_is_extractive_fallback() {
+        let (db, _tmp) = make_db().await;
+        // Single extractive backend named "default" that's also the fallback target.
+        // When it errors, the service must NOT try to fall back to itself.
+        let reg = registry_with(
+            vec![("default", "", Some(BackendError::Invalid("empty".into())))],
+            "default",
+        );
+        let svc = SummarizerService::new(db, reg, true);
+        let o = opts("default", CompactMode::Extractive);
+
+        let r = svc.compact("h1", "anything.", &o).await;
+        // Should return the original error (translated) with name = "default".
+        // No fallback dispatch should happen.
+        match r {
+            Err(SummarizerError::InvalidRequest { ref name, .. }) => {
+                assert_eq!(name, "default");
+            }
+            other => panic!("expected InvalidRequest, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn backend_failure_propagates_when_fallback_disabled() {
         let (db, _tmp) = make_db().await;
         let reg = registry_with(

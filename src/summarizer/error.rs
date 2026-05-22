@@ -84,6 +84,11 @@ impl SummarizerError {
     }
 
     /// Short, stable reason string for `summarizer_fallback.reason` metadata.
+    ///
+    /// Only meaningful for variants produced by [`Self::from_backend`]
+    /// (i.e. the five mapped from [`BackendError`]). Storage/Tokenizer/
+    /// NoSuchBackend/NoExtractiveBackendForFallback errors don't flow
+    /// through the fallback path and should never reach this method.
     pub fn fallback_reason(&self) -> &'static str {
         match self {
             SummarizerError::BackendUnavailable { .. } => "backend_unavailable",
@@ -91,7 +96,13 @@ impl SummarizerError {
             SummarizerError::RateLimited { .. } => "rate_limited",
             SummarizerError::AuthFailed { .. } => "auth_failed",
             SummarizerError::ModelError { .. } => "model_error",
-            _ => "other",
+            other => {
+                debug_assert!(
+                    false,
+                    "fallback_reason called on non-fallback-path variant: {other}",
+                );
+                "other"
+            }
         }
     }
 }
