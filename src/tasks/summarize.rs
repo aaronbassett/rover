@@ -1,8 +1,12 @@
-//! `summarize` stub worker.
+//! `summarize` stub worker — schema-only.
 //!
-//! Always fails with `summarization_not_yet_implemented`. The real
-//! summarizer lands in M7. The stub exists so the `tasks.kind` schema is
-//! final in M6 and the scheduler has a concrete worker to dispatch.
+//! M7 implements all summarization synchronously through the
+//! `SummarizerService`. No new task rows of `kind = "summarize"` are
+//! ever inserted by M7. The worker remains because the M6 schema's
+//! `tasks.kind` CHECK constraint includes "summarize" and removing it
+//! would require a migration; the worker safely errors any pre-M7
+//! row that somehow gets reclaimed with
+//! `summarize_no_longer_a_task_kind` (defense-in-depth).
 
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -23,8 +27,8 @@ pub async fn run(db: Db, task_id: TaskId, _cancel: CancellationToken) {
     )
     .await;
     let payload = json!({
-        "error": "summarization_not_yet_implemented",
-        "message": "Summarization will be implemented in M7.",
+        "error": "summarize_no_longer_a_task_kind",
+        "message": "summarize is no longer a task kind in M7; all summarization is synchronous via the SummarizerService.",
         "duration_ms": 0,
     });
     let _ = append(
@@ -41,7 +45,7 @@ pub async fn run(db: Db, task_id: TaskId, _cancel: CancellationToken) {
         task_id.as_str(),
         TaskStatus::Failed,
         None,
-        Some("summarization_not_yet_implemented".into()),
+        Some("summarize_no_longer_a_task_kind".into()),
     )
     .await;
 }

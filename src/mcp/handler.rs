@@ -29,6 +29,7 @@ pub struct RoverHandler {
     pub(crate) client: reqwest::Client,
     pub(crate) ssrf_level: SsrfLevel,
     pub(crate) pacer: Arc<Pacer>,
+    pub(crate) summarizer: Arc<crate::summarizer::SummarizerService>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -39,6 +40,7 @@ impl RoverHandler {
         client: reqwest::Client,
         ssrf_level: SsrfLevel,
         pacer: Arc<Pacer>,
+        summarizer: Arc<crate::summarizer::SummarizerService>,
     ) -> Self {
         Self {
             db,
@@ -46,6 +48,7 @@ impl RoverHandler {
             client,
             ssrf_level,
             pacer,
+            summarizer,
             tool_router: Self::tool_router(),
         }
     }
@@ -84,10 +87,11 @@ impl RoverHandler {
     }
 
     /// Count tokens in either an inline `text` or a fetched `url`.
-    #[tool(
-        description = "Count tokens in either an inline text string or a URL's \
-                       extracted Markdown. Exactly one of text/url is required."
-    )]
+    #[tool(description = "Count tokens for a URL or inline text. \
+                       mode=\"single\" (default) returns one token count. \
+                       mode=\"estimates\" returns four counts: raw_html, \
+                       extracted_md, summary_short (~250 tokens), summary_medium (~750 tokens). \
+                       Estimates mode requires url and uses the extractive backend.")]
     pub async fn count_tokens_tool(
         &self,
         Parameters(args): Parameters<CountTokensArgs>,
@@ -107,6 +111,23 @@ impl RoverHandler {
         Parameters(args): Parameters<crate::mcp::tools::get_metadata::GetMetadataArgs>,
     ) -> Result<Json<crate::mcp::envelope::MetadataResponse>, ErrorData> {
         match self.get_metadata_inner(args).await {
+            Ok(out) => Ok(Json(out)),
+            Err(e) => Err(into_error_data(e)),
+        }
+    }
+
+    /// Apply summarization to a URL's cached or freshly-fetched markdown.
+    #[tool(
+        description = "Apply summarization to a URL. If the URL isn't cached, \
+                       Rover fetches it with default options first. Returns the \
+                       summary_md plus metadata including cache status, the \
+                       effective backend, and (when applicable) fallback details."
+    )]
+    pub async fn summarize_tool(
+        &self,
+        Parameters(args): Parameters<crate::mcp::tools::summarize::SummarizeArgs>,
+    ) -> Result<Json<crate::mcp::envelope::SummarizeResponse>, ErrorData> {
+        match self.summarize_inner(args).await {
             Ok(out) => Ok(Json(out)),
             Err(e) => Err(into_error_data(e)),
         }
@@ -138,7 +159,7 @@ impl ServerHandler for RoverHandler {
             ))
             .with_instructions(
                 "Web fetch & prep for LLM agents. \
-                 Tools: fetch, count_tokens, get_metadata, batch_fetch.",
+                 Tools: fetch, summarize, count_tokens, get_metadata, batch_fetch.",
             )
     }
 }
@@ -150,7 +171,11 @@ fn into_error_data(err: crate::mcp::error::McpError) -> ErrorData {
         McpError::InvalidArgs(_)
             | McpError::InvalidUrl(_)
             | McpError::TooManyUrls { .. }
-            | McpError::EmptyUrlList,
+            | McpError::EmptyUrlList
+            | McpError::Summarizer(
+                crate::summarizer::SummarizerError::NoSuchBackend { .. }
+                    | crate::summarizer::SummarizerError::InvalidRequest { .. }
+            ),
     );
     let r = crate::mcp::error::log_and_translate(err);
     let code = if is_user_error {

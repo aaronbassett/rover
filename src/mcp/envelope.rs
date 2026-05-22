@@ -49,11 +49,29 @@ pub struct FetchResponse {
     /// task was successfully queued. Agents can monitor or ignore.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revalidation: Option<StaleRevalidation>,
+
+    /// `true` when the agent supplied an explicit `summarize` arg and the
+    /// returned `markdown` is the summary, not the extracted body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summarized: Option<bool>,
+
+    /// `true` when the extracted body exceeded `max_tokens` and Rover
+    /// auto-summarized to bring it within budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_summarized: Option<bool>,
+
+    /// Populated when whichever summarize path ran (`summarize` arg or the
+    /// auto path on `max_tokens`) fell back to an extractive backend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summarizer_fallback: Option<SummarizerFallbackInfo>,
 }
 
-/// `count_tokens` or `fetch{count_only:true}` response.
+/// Single-count `count_tokens` or `fetch{count_only:true}` response.
+///
+/// This is the historical M2/M3 shape: one tokenization result over either
+/// inline text or a fetched URL's extracted markdown.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CountResponse {
+pub struct CountSingleResponse {
     pub tokens: usize,
     pub tokenizer: String,
     pub source: CountSource,
@@ -66,6 +84,61 @@ pub struct CountResponse {
     pub fetched_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_status: Option<CacheStatus>,
+}
+
+/// Four token-count estimates returned in `mode = "estimates"`.
+///
+/// `raw_html` is `None` when `[cache] store_raw_html = false` (the default)
+/// or when the cached row has no `raw_html_zstd` blob.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CountEstimates {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_html: Option<usize>,
+    pub extracted_md: usize,
+    pub summary_short: usize,
+    pub summary_medium: usize,
+}
+
+/// `count_tokens { mode: "estimates" }` response shape.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CountEstimatesResponse {
+    pub url: String,
+    pub tokenizer: String,
+    pub estimates: CountEstimates,
+}
+
+/// `count_tokens` / `fetch{count_only:true}` response. Untagged so the
+/// historical single-count shape (still the default) remains
+/// wire-compatible; agents that opt into `mode = "estimates"` see the
+/// `CountEstimatesResponse` variant instead.
+///
+/// `JsonSchema` is implemented manually so the generated schema is rooted
+/// at `type: "object"` with a `oneOf` of the two variants — matching the
+/// pattern used by `FetchOutput` in `src/mcp/tools/fetch.rs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CountResponse {
+    Single(CountSingleResponse),
+    Estimates(CountEstimatesResponse),
+}
+
+impl JsonSchema for CountResponse {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CountResponse".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::CountResponse").into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let single = generator.subschema_for::<CountSingleResponse>();
+        let estimates = generator.subschema_for::<CountEstimatesResponse>();
+        schemars::json_schema!({
+            "type": "object",
+            "oneOf": [single, estimates],
+        })
+    }
 }
 
 /// `get_metadata` response — structured metadata only, no markdown body.
@@ -121,6 +194,14 @@ impl RoverError {
     pub const DEFERRED: &'static str = "deferred";
     pub const TOO_MANY_URLS: &'static str = "too_many_urls";
     pub const EMPTY_URL_LIST: &'static str = "empty_url_list";
+    pub const SUMMARIZER_NO_SUCH_BACKEND: &'static str = "summarizer_no_such_backend";
+    pub const SUMMARIZER_NO_EXTRACTIVE_FOR_FALLBACK: &'static str =
+        "summarizer_no_extractive_backend_for_fallback";
+    pub const SUMMARIZER_BACKEND_UNAVAILABLE: &'static str = "summarizer_backend_unavailable";
+    pub const SUMMARIZER_RATE_LIMITED: &'static str = "summarizer_rate_limited";
+    pub const SUMMARIZER_AUTH_FAILED: &'static str = "summarizer_auth_failed";
+    pub const SUMMARIZER_MODEL_ERROR: &'static str = "summarizer_model_error";
+    pub const SUMMARIZER_INVALID_REQUEST: &'static str = "summarizer_invalid_request";
 
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
@@ -151,6 +232,49 @@ pub struct StaleRevalidation {
     pub hint: String,
 }
 
+/// `summarize` tool response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SummarizeResponse {
+    pub summary_md: String,
+    pub metadata: SummarizeMetadata,
+}
+
+/// Wire-side metadata for a `summarize` response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SummarizeMetadata {
+    pub backend: String,
+    pub mode: String,
+    pub style: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_tokens: Option<usize>,
+    pub estimated_tokens: usize,
+    pub cache_status: SummaryCacheStatusWire,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summarizer_fallback: Option<SummarizerFallbackInfo>,
+    pub source_url: String,
+    pub source_fetched_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    pub preserve: Vec<String>,
+}
+
+/// Cache-status wire enum for the summary cache (distinct from the page
+/// cache's `CacheStatus` because the summary cache has no `Stale` variant).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryCacheStatusWire {
+    Hit,
+    Miss,
+}
+
+/// Carried on the response when the requested backend failed and an
+/// extractive backend was used in its place.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SummarizerFallbackInfo {
+    pub from: String,
+    pub reason: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,6 +286,9 @@ mod tests {
             frontmatter: "f".into(),
             cache_status: CacheStatus::Hit,
             revalidation: None,
+            summarized: None,
+            auto_summarized: None,
+            summarizer_fallback: None,
         };
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"cache_status\":\"hit\""), "got: {s}");
@@ -169,7 +296,7 @@ mod tests {
 
     #[test]
     fn count_response_omits_optional_fields() {
-        let v = CountResponse {
+        let v = CountResponse::Single(CountSingleResponse {
             tokens: 7,
             tokenizer: "o200k".into(),
             source: CountSource::Text,
@@ -177,11 +304,31 @@ mod tests {
             content_hash: None,
             fetched_at: None,
             cache_status: None,
-        };
+        });
         let s = serde_json::to_string(&v).unwrap();
         assert!(!s.contains("url"));
         assert!(!s.contains("content_hash"));
         assert!(!s.contains("cache_status"));
+    }
+
+    #[test]
+    fn count_response_estimates_serialises_as_estimates_shape() {
+        let v = CountResponse::Estimates(CountEstimatesResponse {
+            url: "https://example.com/p".into(),
+            tokenizer: "o200k".into(),
+            estimates: CountEstimates {
+                raw_html: None,
+                extracted_md: 123,
+                summary_short: 45,
+                summary_medium: 78,
+            },
+        });
+        let s = serde_json::to_string(&v).unwrap();
+        // Untagged: top-level keys are the inner struct's fields.
+        assert!(s.contains("\"estimates\""), "got: {s}");
+        assert!(s.contains("\"extracted_md\":123"), "got: {s}");
+        // raw_html=None is omitted by skip_serializing_if.
+        assert!(!s.contains("raw_html"), "got: {s}");
     }
 
     #[test]

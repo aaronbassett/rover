@@ -12,6 +12,7 @@ pub mod events;
 pub mod pages;
 pub mod robots;
 pub mod servers;
+pub mod summaries;
 pub mod system;
 pub mod tasks;
 
@@ -70,6 +71,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("migrations/003_robots_state.sql"),
     ),
     ("004_tasks.sql", include_str!("migrations/004_tasks.sql")),
+    (
+        "005_summary_cache.sql",
+        include_str!("migrations/005_summary_cache.sql"),
+    ),
 ];
 
 /// Per-migration outcome shuttled out of the actor closure so the failed
@@ -263,6 +268,26 @@ mod tests {
             .await
             .unwrap();
         assert!(cols.contains(&"state".to_string()), "cols = {cols:?}");
+        assert_eq!(db.schema_version().await.unwrap(), MIGRATIONS.len() as u32);
+    }
+
+    #[tokio::test]
+    async fn migration_005_adds_summary_cache_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("rover.db");
+        let db = Db::open(&path).await.unwrap();
+
+        let count: i64 = db
+            .conn
+            .call(|c| {
+                let n: i64 = c.query_row("SELECT COUNT(*) FROM summary_cache", [], |r| {
+                    r.get::<_, i64>(0)
+                })?;
+                Ok::<_, rusqlite::Error>(n)
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
         assert_eq!(db.schema_version().await.unwrap(), MIGRATIONS.len() as u32);
     }
 }

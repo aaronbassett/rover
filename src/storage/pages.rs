@@ -14,8 +14,10 @@ use super::{Db, StorageError};
 
 /// A row in the `pages` table.
 ///
-/// Mirrors the schema from `001_initial.sql` minus `raw_html_zstd`, which is
-/// reserved for a later milestone and always written as NULL today.
+/// Mirrors the schema from `001_initial.sql`. The `raw_html_zstd` column is
+/// populated from the `raw_html` field when `[cache] store_raw_html` is on;
+/// readers normally don't decode the blob unless they ask via
+/// [`raw_html_bytes`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Page {
     pub url_hash: String,
@@ -29,6 +31,11 @@ pub struct Page {
     pub content_hash: String,
     pub extracted_md: String,
     pub metadata_json: Option<String>,
+    /// Uncompressed raw HTML bytes. When `Some(...)`, `upsert` zstd-compresses
+    /// (level 3) and writes to the `raw_html_zstd` column. `None` keeps the
+    /// column NULL. M2 declared the column but never populated it; M7 wires
+    /// the write path behind `[cache] store_raw_html`.
+    pub raw_html: Option<Vec<u8>>,
 }
 
 /// Aggregate stats for `rover cache stats`.
@@ -84,6 +91,9 @@ fn row_to_page(row: &rusqlite::Row<'_>) -> rusqlite::Result<Page> {
         content_hash: row.get(8)?,
         extracted_md: row.get(9)?,
         metadata_json: row.get(10)?,
+        // `SELECT_COLUMNS` deliberately omits `raw_html_zstd`; readers fetch
+        // it on demand via `raw_html_bytes` to avoid paying the decode cost.
+        raw_html: None,
     })
 }
 
@@ -127,13 +137,26 @@ pub async fn get_by_url(db: &Db, url: &str) -> Result<Option<Page>, StorageError
 
 /// Insert or replace a page row.
 pub async fn upsert(db: &Db, page: Page) -> Result<(), StorageError> {
+    // Compress raw HTML outside the actor closure (the closure is sync; this
+    // can be expensive on big bodies, so we'd rather block the calling task
+    // briefly than the actor). Level 3 = the zstd default sweet spot.
+    let raw_zstd: Option<Vec<u8>> = match page.raw_html.as_ref() {
+        Some(bytes) => Some(zstd::stream::encode_all(bytes.as_slice(), 3).map_err(|e| {
+            // No dedicated `Compression` variant on `StorageError`; route the
+            // io::Error through `rusqlite::Error::ToSqlConversionFailure`,
+            // which then converts into `StorageError::Backend` via the
+            // existing `From<rusqlite::Error>` impl.
+            StorageError::from(rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+        })?),
+        None => None,
+    };
     db.conn
         .call(move |c| {
             c.execute(
                 "INSERT INTO pages (url_hash, url, canonical_url, title, fetched_at, \
                                     expires_at, etag, last_modified, content_hash, \
-                                    extracted_md, metadata_json) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+                                    extracted_md, metadata_json, raw_html_zstd) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
                  ON CONFLICT(url_hash) DO UPDATE SET \
                     url = excluded.url, \
                     canonical_url = excluded.canonical_url, \
@@ -144,7 +167,8 @@ pub async fn upsert(db: &Db, page: Page) -> Result<(), StorageError> {
                     last_modified = excluded.last_modified, \
                     content_hash = excluded.content_hash, \
                     extracted_md = excluded.extracted_md, \
-                    metadata_json = excluded.metadata_json",
+                    metadata_json = excluded.metadata_json, \
+                    raw_html_zstd = excluded.raw_html_zstd",
                 params![
                     page.url_hash,
                     page.url,
@@ -157,12 +181,39 @@ pub async fn upsert(db: &Db, page: Page) -> Result<(), StorageError> {
                     page.content_hash,
                     page.extracted_md,
                     page.metadata_json,
+                    raw_zstd,
                 ],
             )?;
             Ok(())
         })
         .await?;
     Ok(())
+}
+
+/// Read back the compressed raw HTML for a URL, if stored.
+///
+/// Returns `Ok(None)` when the row exists but `raw_html_zstd IS NULL`
+/// (e.g., the row was written when `[cache] store_raw_html = false`)
+/// or when the row doesn't exist at all. Callers are responsible for
+/// decompressing via `zstd::stream::decode_all`.
+pub async fn raw_html_bytes(db: &Db, url_hash: &str) -> Result<Option<Vec<u8>>, StorageError> {
+    let uh = url_hash.to_string();
+    let blob = db
+        .conn
+        .call(move |c| {
+            let r: rusqlite::Result<Option<Vec<u8>>> = c.query_row(
+                "SELECT raw_html_zstd FROM pages WHERE url_hash = ?1",
+                rusqlite::params![uh],
+                |row| row.get::<_, Option<Vec<u8>>>(0),
+            );
+            match r {
+                Ok(v) => Ok(v),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(e) => Err(e),
+            }
+        })
+        .await?;
+    Ok(blob)
 }
 
 /// Bump `fetched_at` (and optionally `expires_at`) on an existing row.
@@ -284,6 +335,7 @@ mod tests {
             content_hash: "sha256:deadbeef".to_owned(),
             extracted_md: "# Hello\n\nbody".to_owned(),
             metadata_json: None,
+            raw_html: None,
         }
     }
 
@@ -380,6 +432,32 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].url, "https://b/");
         assert_eq!(rows[1].url, "https://a/");
+    }
+
+    #[tokio::test]
+    async fn upsert_writes_raw_html_when_provided() {
+        let db = fresh_db().await;
+        let raw = b"<html>body</html>".to_vec();
+        let mut page = sample("uhash", "https://example.com/p");
+        page.raw_html = Some(raw.clone());
+        upsert(&db, page).await.unwrap();
+
+        let blob = raw_html_bytes(&db, "uhash")
+            .await
+            .unwrap()
+            .expect("blob written");
+        assert!(!blob.is_empty());
+        let decoded = zstd::stream::decode_all(blob.as_slice()).unwrap();
+        assert_eq!(decoded, raw);
+    }
+
+    #[tokio::test]
+    async fn upsert_leaves_raw_html_null_when_none() {
+        let db = fresh_db().await;
+        let page = sample("uhash", "https://example.com/p");
+        upsert(&db, page).await.unwrap();
+
+        assert!(raw_html_bytes(&db, "uhash").await.unwrap().is_none());
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
@@ -91,6 +92,19 @@ struct FetchArgs {
     #[arg(long)]
     max_retries: Option<u8>,
 
+    /// Auto-summarize when extracted markdown exceeds N tokens. **v1
+    /// note:** the canonical auto-summarize path is the MCP `fetch` tool;
+    /// the CLI parses and validates this flag but does not yet apply
+    /// summarization here.
+    #[arg(long)]
+    max_tokens: Option<usize>,
+
+    /// JSON `SummarizeOpts` blob (same shape as the MCP `summarize` args
+    /// without `url`). **v1 note:** validated but not yet applied in the
+    /// CLI path; use the MCP `summarize` tool for the canonical surface.
+    #[arg(long, value_name = "JSON")]
+    summarize: Option<String>,
+
     /// **Test-only.** Allow loopback addresses to satisfy SSRF checks. Used by
     /// the integration test suite against wiremock; never used in production.
     #[cfg(any(test, feature = "test-loopback"))]
@@ -174,6 +188,29 @@ impl CacheCmd {
 enum ConfigCmd {
     Show,
     Set { key: String, value: String },
+}
+
+/// Build a `SummarizerService` for CLI subcommands that need it.
+///
+/// The MCP server builds its own service inside `serve_stdio`; this helper
+/// exists for CLI paths (e.g. a future `rover fetch --summarize`) so the
+/// construction stays in one place. Currently unused outside the MCP path —
+/// `#[allow(dead_code)]` keeps `warnings = deny` happy until M7's CLI
+/// summarize wiring lands.
+#[allow(dead_code)]
+async fn build_summarizer_service(
+    db: rover::storage::Db,
+    config: &rover::config::Config,
+) -> anyhow::Result<Arc<rover::summarizer::SummarizerService>> {
+    let registry = Arc::new(
+        rover::summarizer::registry::build(config, config.tokenizer.default)
+            .map_err(anyhow::Error::from)?,
+    );
+    Ok(Arc::new(rover::summarizer::SummarizerService::new(
+        db,
+        registry,
+        config.summarization.fallback_to_extractive,
+    )))
 }
 
 fn main() -> ExitCode {
@@ -263,6 +300,8 @@ impl FetchArgs {
             per_host_concurrency: self.per_host_concurrency,
             global_concurrency: self.global_concurrency,
             max_retries: self.max_retries,
+            max_tokens: self.max_tokens,
+            summarize: self.summarize,
             #[cfg(any(test, feature = "test-loopback"))]
             ssrf_test_loopback: self.ssrf_test_loopback,
         }

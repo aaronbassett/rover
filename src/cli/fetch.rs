@@ -29,6 +29,23 @@ pub struct Args {
     pub global_concurrency: Option<u32>,
     pub max_retries: Option<u8>,
 
+    /// Auto-summarize when extracted markdown exceeds N tokens.
+    ///
+    /// **v1 note:** the canonical auto-summarize path is the MCP `fetch`
+    /// tool. The CLI `fetch` subcommand accepts this flag for
+    /// forward-compatibility but does not yet apply summarization in this
+    /// milestone — the flag is parsed and validated only.
+    pub max_tokens: Option<usize>,
+
+    /// JSON `SummarizeOpts` blob. Same shape as the MCP `summarize` tool
+    /// args minus the `url` field, e.g.
+    /// `--summarize '{"mode":"abstractive","target_tokens":500}'`.
+    ///
+    /// **v1 note:** as with `--max-tokens`, the canonical summarization
+    /// path is the MCP `fetch` / `summarize` tools. The CLI accepts and
+    /// validates this JSON but does not invoke the summarizer in v1.
+    pub summarize: Option<String>,
+
     #[cfg(any(test, feature = "test-loopback"))]
     pub ssrf_test_loopback: bool,
 }
@@ -44,6 +61,19 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     );
     let url = Url::parse(&args.url).context("parsing URL argument")?;
     let level = ssrf_level_for_args(&args);
+
+    // Validate the optional --summarize JSON blob up front so the user
+    // gets a clean error before any network or storage I/O. The CLI does
+    // not yet thread these through to the summarizer (the canonical path
+    // is the MCP `fetch` / `summarize` tools); validating still catches
+    // typos and surfaces the flag in `--help`.
+    if let Some(s) = args.summarize.as_deref() {
+        let _: crate::mcp::tools::fetch::InlineSummarizeArgs =
+            serde_json::from_str(s).context("parsing --summarize JSON")?;
+    }
+    if matches!(args.max_tokens, Some(0)) {
+        anyhow::bail!("--max-tokens must be greater than 0");
+    }
 
     let data_dir = crate::paths::data_dir();
     std::fs::create_dir_all(&data_dir).context("creating data dir")?;
