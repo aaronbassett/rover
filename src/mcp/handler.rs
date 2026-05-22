@@ -151,6 +151,8 @@ impl ServerHandler for RoverHandler {
 
 fn into_error_data(err: crate::mcp::error::McpError) -> ErrorData {
     use crate::mcp::error::McpError;
+    // TODO(task 9): classify summarizer InvalidRequest / NoSuchBackend as user errors
+    // (INVALID_PARAMS) once the summarize tool surfaces user-driven argument errors.
     let is_user_error = matches!(
         &err,
         McpError::InvalidArgs(_)

@@ -339,6 +339,55 @@ mod tests {
     }
 
     #[test]
+    fn summarizer_backend_unavailable_translates() {
+        let e = McpError::Summarizer(crate::summarizer::SummarizerError::BackendUnavailable {
+            name: "fast".into(),
+            reason: "network timeout".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::SUMMARIZER_BACKEND_UNAVAILABLE);
+    }
+
+    #[test]
+    fn summarizer_model_error_translates() {
+        let e = McpError::Summarizer(crate::summarizer::SummarizerError::ModelError {
+            name: "fast".into(),
+            reason: "model not found".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::SUMMARIZER_MODEL_ERROR);
+    }
+
+    #[test]
+    fn summarizer_invalid_request_translates() {
+        let e = McpError::Summarizer(crate::summarizer::SummarizerError::InvalidRequest {
+            name: "default".into(),
+            reason: "empty content".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::SUMMARIZER_INVALID_REQUEST);
+    }
+
+    #[test]
+    fn summarizer_no_extractive_for_fallback_translates() {
+        let e = McpError::Summarizer(
+            crate::summarizer::SummarizerError::NoExtractiveBackendForFallback,
+        );
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::SUMMARIZER_NO_EXTRACTIVE_FOR_FALLBACK);
+    }
+
+    #[test]
+    fn summarizer_storage_inner_translates_to_storage_error_family() {
+        // The inlined inner-Storage arm should produce the same code constant
+        // as the outer McpError::Storage arm.
+        let inner = crate::storage::StorageError::Backend(tokio_rusqlite::Error::ConnectionClosed);
+        let e = McpError::Summarizer(crate::summarizer::SummarizerError::Storage(inner));
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::STORAGE_ERROR);
+    }
+
+    #[test]
     fn fetcher_rate_limited_routes_to_rate_limited() {
         let e = McpError::Fetcher(crate::fetcher::FetcherError::RateLimited {
             retry_after_secs: 60,
