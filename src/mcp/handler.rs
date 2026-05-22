@@ -29,9 +29,6 @@ pub struct RoverHandler {
     pub(crate) client: reqwest::Client,
     pub(crate) ssrf_level: SsrfLevel,
     pub(crate) pacer: Arc<Pacer>,
-    // Consumed by the `summarize` MCP tool (Task 9) and onwards. Held now
-    // so the wiring lands in one place; the field is read by future tools.
-    #[allow(dead_code)]
     pub(crate) summarizer: Arc<crate::summarizer::SummarizerService>,
     tool_router: ToolRouter<Self>,
 }
@@ -118,6 +115,23 @@ impl RoverHandler {
         }
     }
 
+    /// Apply summarization to a URL's cached or freshly-fetched markdown.
+    #[tool(
+        description = "Apply summarization to a URL. If the URL isn't cached, \
+                       Rover fetches it with default options first. Returns the \
+                       summary_md plus metadata including cache status, the \
+                       effective backend, and (when applicable) fallback details."
+    )]
+    pub async fn summarize_tool(
+        &self,
+        Parameters(args): Parameters<crate::mcp::tools::summarize::SummarizeArgs>,
+    ) -> Result<Json<crate::mcp::envelope::SummarizeResponse>, ErrorData> {
+        match self.summarize_inner(args).await {
+            Ok(out) => Ok(Json(out)),
+            Err(e) => Err(into_error_data(e)),
+        }
+    }
+
     /// Fetch multiple URLs concurrently in the background.
     #[tool(
         description = "Fetch multiple URLs concurrently. Returns a task_id immediately; \
@@ -144,7 +158,7 @@ impl ServerHandler for RoverHandler {
             ))
             .with_instructions(
                 "Web fetch & prep for LLM agents. \
-                 Tools: fetch, count_tokens, get_metadata, batch_fetch.",
+                 Tools: fetch, summarize, count_tokens, get_metadata, batch_fetch.",
             )
     }
 }

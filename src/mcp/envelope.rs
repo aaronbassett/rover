@@ -159,6 +159,49 @@ pub struct StaleRevalidation {
     pub hint: String,
 }
 
+/// `summarize` tool response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SummarizeResponse {
+    pub summary_md: String,
+    pub metadata: SummarizeMetadata,
+}
+
+/// Wire-side metadata for a `summarize` response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SummarizeMetadata {
+    pub backend: String,
+    pub mode: String,
+    pub style: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_tokens: Option<usize>,
+    pub estimated_tokens: usize,
+    pub cache_status: SummaryCacheStatusWire,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summarizer_fallback: Option<SummarizerFallbackInfo>,
+    pub source_url: String,
+    pub source_fetched_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    pub preserve: Vec<String>,
+}
+
+/// Cache-status wire enum for the summary cache (distinct from the page
+/// cache's `CacheStatus` because the summary cache has no `Stale` variant).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryCacheStatusWire {
+    Hit,
+    Miss,
+}
+
+/// Carried on the response when the requested backend failed and an
+/// extractive backend was used in its place.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SummarizerFallbackInfo {
+    pub from: String,
+    pub reason: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
