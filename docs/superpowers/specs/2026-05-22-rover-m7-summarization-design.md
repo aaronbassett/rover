@@ -23,18 +23,19 @@ M7 ships the summarization subsystem and finishes the MCP tool surface that earl
 
 **MCP tools that ship here**
 5. `summarize` — the headline tool (PRD §4.3). Synchronous in v1. On cache miss, runs the full fetch path then summarizes.
-6. `count_tokens` — full envelope per PRD §4.5, including `summary_short` and `summary_medium` estimates computed by running the extractive backend at fixed target token budgets.
-7. `get_metadata` — pure cache read of the existing `pages.metadata_json` (PRD §4.4); no summarizer involvement, but it lives in M7 to clear the PRD §4 tool list.
+6. `count_tokens` — extended in-place. Today's tool returns a single token count for a `text` or `url` input. M7 adds an opt-in `mode: "estimates"` arg that returns the four-estimate envelope from PRD §4.5 (`raw_html`, `extracted_md`, `summary_short`, `summary_medium`). Default (`mode: "single"`) keeps today's shape — non-breaking. Estimates mode requires URL input.
+
+> **Already shipped, not in M7 scope:** `get_metadata` (PRD §4.4). The tool already exists in `src/mcp/tools/get_metadata.rs` and is registered in the handler. It does exactly what an M7 design would have specified: cache-or-fetch, return parsed metadata with quality score. No M7 changes.
 
 **Existing stubs/error paths wired through**
-8. `fetch.summarize: SummarizeOpts | null` — currently accept-no-op; M7 wires it to run summarization after extraction.
-9. `fetch.max_tokens: int | null` — currently returns `MaxTokensExceeded`; M7 turns the over-budget branch into auto-summarization using the default backend.
-10. `TablesMode::Summarize` — currently errors `"tables summarize mode is not available until M7"`; M7 implements per-table summarization with extractive fallback.
+7. `fetch.summarize: SummarizeOpts | null` — currently accept-no-op; M7 wires it to run summarization after extraction.
+8. `fetch.max_tokens: int | null` — currently returns `MaxTokensExceeded`; M7 turns the over-budget branch into auto-summarization using the default backend.
+9. `TablesMode::Summarize` — currently errors `"tables summarize mode is not available until M7"`; M7 implements per-table summarization with extractive fallback.
 
 **Schema**
-11. Migration `005_summary_cache.sql` adds the `summary_cache` table (PRD §8.1).
+10. Migration `005_summary_cache.sql` adds the `summary_cache` table (PRD §8.1).
 
-**Acceptance (PRD §14, M7).** All three summarization modes work; cloud and extractive backends both produce non-empty summaries against representative inputs; the cache deduplicates repeat calls; `fetch` honors `max_tokens` by summarizing rather than erroring; `count_tokens` returns four estimates; `get_metadata` returns metadata for a cached URL without re-fetching.
+**Acceptance (PRD §14, M7).** All three summarization modes work; cloud and extractive backends both produce non-empty summaries against representative inputs; the cache deduplicates repeat calls; `fetch` honors `max_tokens` by summarizing rather than erroring; `count_tokens { mode: "estimates" }` returns the four-estimate envelope while `count_tokens { mode: "single" }` (and the no-mode default) returns today's single-count shape.
 
 **M6 follow-ups inherited.** M7 does *not* take the cross-process new-task notify deferral (manifest item #1) — the synchronous decision in §2 removes the dependency. Other M6 follow-ups (M7-irrelevant) stay open for M8: `--from-event` over MCP, wallclock batch timeout, SIGINT integration test for `--monitor`, orphan-reclaim integration test, `tasks/mod.rs` re-export visibility cleanup, CLI `--help` doc-comment polish, `item_failed { retry_in_s }` field reconciliation.
 
@@ -57,7 +58,7 @@ M7 ships the summarization subsystem and finishes the MCP tool surface that earl
 | Summarize worker stub | Worker stays in `src/tasks/summarize.rs` but its body changes to error with `summarize_no_longer_a_task_kind` if a stale row exists. Schema is final; no new migration. |
 | Summarization defaults | New `[summarization]` keys: `default_backend`, `default_mode`, `default_style`, `fallback_to_extractive`. |
 | Cloud provider scope | All `genai` built-in providers (OpenAI, Anthropic, Gemini, xAI, Groq, DeepSeek, Together, Fireworks) plus a `openai_compat` kind that uses `ServiceTargetResolver` for `base_url`. Free-form `provider` string in config; rover delegates parsing to `genai`. |
-| Other tool scope | `count_tokens` and `get_metadata` both ship in M7 alongside `summarize`. |
+| Other tool scope | `count_tokens` is extended in-place with an opt-in `mode: "estimates"` arg returning the four-estimate envelope; default mode preserves today's single-count shape. `get_metadata` already ships from a previous milestone — no M7 changes. |
 | Cache-miss path | `summarize` and the new MCP tools dispatch through the existing fetcher (full pipeline, cache write enabled), then summarize. |
 | Migration | `005_summary_cache.sql`. |
 | Backend registry shape | Built once at startup; shared via `Arc<SummarizerRegistry>`; injected into the MCP `Server` state and CLI commands the same way `Fetcher` is. |
@@ -88,17 +89,16 @@ src/
     migrations/005_summary_cache.sql
   mcp/
     tools/
-      summarize.rs          # MCP `summarize`
-      count_tokens.rs       # MCP `count_tokens`
-      get_metadata.rs       # MCP `get_metadata`
+      summarize.rs          # MCP `summarize`              (new)
+      count_tokens.rs       # MCP `count_tokens`           (extended in place — adds `mode: "estimates"`)
+      # get_metadata.rs                                    (already ships; not touched)
     state.rs                # extended with Arc<SummarizerService>
 tests/
   summarizer_extractive.rs
-  summarizer_cloud.rs       # wiremock-backed openai_compat backend
+  summarizer_cloud.rs              # wiremock-backed openai_compat backend
   summary_cache_lifecycle.rs
   mcp_summarize.rs
-  mcp_count_tokens.rs
-  mcp_get_metadata.rs
+  mcp_count_tokens_estimates.rs    # the new `mode: "estimates"` branch
   fetch_max_tokens_auto_summarize.rs
   fetch_summarize_arg.rs
   tables_summarize_mode.rs
@@ -114,12 +114,12 @@ Crate stays single-binary. The summarizer is not promoted to a workspace member;
                               │  (rover mcp / rmcp stdio)│
                               └────┬─────────┬───────┬───┘
                                    │         │       │
-              ┌────────────────────┴──┐  ┌───┴────┐ ┌┴───────────────┐
-              │  fetch tool            │  │ count_ │ │ summarize tool  │
-              │   - summarize arg      │  │ tokens │ │  - cache lookup │
-              │   - max_tokens overflow│  │ tool   │ │  - cache-miss   │
-              │   - tables.Summarize   │  └───┬────┘ │     fetch path  │
-              └──┬─────────────────────┘      │      └─────┬───────────┘
+              ┌────────────────────┴──┐  ┌───┴────────┐ ┌┴───────────────┐
+              │  fetch tool            │  │ count_     │ │ summarize tool  │
+              │   - summarize arg      │  │ tokens     │ │  - cache lookup │
+              │   - max_tokens overflow│  │ mode=      │ │  - cache-miss   │
+              │   - tables.Summarize   │  │  estimates │ │     fetch path  │
+              └──┬─────────────────────┘  └───┬────────┘ └─────┬───────────┘
                  │                            │            │
                  │   ┌────────────────────────┴────────────┴────────┐
                  │   │           SummarizerService                  │
@@ -351,13 +351,39 @@ When `TablesMode::Summarize` is selected, each `<table>` block in the post-extra
 
 This integrates with the existing `extractor::tables::apply` dispatch (§3.10 in M6 design): the `Summarize` arm dispatches through `SummarizerService`. The fetch tool reuses its existing `Arc<SummarizerService>` from MCP state; for `rover fetch` CLI, the binary constructs one at startup.
 
-### 3.11 `count_tokens` MCP tool
+### 3.11 `count_tokens` MCP tool (extension)
 
-Returns four estimates (PRD §4.5):
+Today's tool (already shipped) returns a single token count and accepts either `text` or `url`. M7 adds a `mode` arg, default `"single"` (today's behavior), opt-in `"estimates"` (the PRD §4.5 four-estimate envelope). The response is an untagged enum over the two response shapes — the existing `FetchOutput { Full | Count }` pattern.
 
-```json
+Argument shape:
+
+```jsonc
 {
-  "url": "...",
+  "url":       "https://example.com/article",    // required for mode=estimates
+  "text":      null,                              // mode=single only
+  "tokenizer": "cl100k",                          // optional
+  "mode":      "single" | "estimates"             // default: "single"
+}
+```
+
+Response shapes (selected by `mode`):
+
+```jsonc
+// mode = "single" (default, today's shape)
+{
+  "tokens":        2891,
+  "tokenizer":     "cl100k",
+  "source":        "url",
+  "url":           "https://example.com/article",
+  "content_hash":  "sha256:...",
+  "fetched_at":    "2026-05-22T10:00:00Z",
+  "cache_status":  "hit"
+}
+
+// mode = "estimates"
+{
+  "url": "https://example.com/article",
+  "tokenizer": "cl100k",
   "estimates": {
     "raw_html":       14823,
     "extracted_md":   2891,
@@ -367,7 +393,11 @@ Returns four estimates (PRD §4.5):
 }
 ```
 
-Behavior:
+Validation rules:
+- `mode == "estimates"` requires `url`; `text` must be absent. Violation → `invalid_args` with a clear message.
+- `mode == "single"` keeps today's exact-one-of `text|url` rule.
+
+Behavior for `mode == "estimates"`:
 - `raw_html`: tokenize the raw HTML bytes (UTF-8-decoded) with the configured tokenizer. Today no code path populates `pages.raw_html_zstd` even when `[cache] store_raw_html = true` (M2 left it NULL on purpose). In M7 we wire the fetcher to actually store the compressed raw HTML when the config flag is true; if `store_raw_html` is false (default) or the cached row predates the change, `raw_html` is returned as `null`. Document this in the tool docstring.
 - `extracted_md`: tokenize `pages.extracted_md`.
 - `summary_short`: run `SummarizerService.compact` with `mode = Extractive, target_tokens = Some(250), style = Bullet, backend = "<default-extractive-backend>"`, then tokenize. Always uses the extractive backend (never cloud) regardless of `default_backend`.
@@ -375,15 +405,9 @@ Behavior:
 
 The two summary estimates are cached in `summary_cache` like any other summary, so the `count_tokens` cost is paid once per `(content_hash, params_hash)`.
 
-### 3.12 `get_metadata` MCP tool
+### 3.12 `get_metadata` MCP tool (already ships)
 
-Pure cache read:
-
-1. Look up `pages` by `url_hash`. On miss: fall through to the same fetch-with-defaults path that `summarize` uses, then read.
-2. Parse `metadata_json`.
-3. Return `{ url, metadata }`.
-
-Lives in `src/mcp/tools/get_metadata.rs`. ~70 lines.
+`src/mcp/tools/get_metadata.rs` already implements cache-or-fetch + metadata return. M7 makes no changes. Listed here so a reader of the design doesn't expect it as a new feature.
 
 ### 3.13 Configuration
 
@@ -548,31 +572,24 @@ Output:
 
 Docstring (visible to MCP clients) spells out the cache-miss-fetch behavior per design §2.7.
 
-### 5.2 `count_tokens`
+### 5.2 `count_tokens` (extended)
 
-Input:
+Input adds `mode`:
 
-```json
+```jsonc
 {
-  "url": "https://example.com/article",
-  "tokenizer": "cl100k"
+  "url":       "https://example.com/article",
+  "text":      null,
+  "tokenizer": "cl100k",
+  "mode":      "single" | "estimates"   // default: "single"
 }
 ```
 
-Output: as PRD §4.5 (above).
+Output: untagged enum (Single | Estimates) — see §3.11 for both shapes. Schema rooted at `type: "object"` with `oneOf`, mirroring the existing `FetchOutput` pattern (`schema_for_output` requires a typed root).
 
-### 5.3 `get_metadata`
+### 5.3 `get_metadata` (already ships)
 
-Input:
-
-```json
-{
-  "url": "https://example.com/article",
-  "metadata": { ... MetadataOpts ... }
-}
-```
-
-Output: parsed metadata object (same as the `metadata` field on `fetch`'s output).
+No M7 change. Shape lives in `src/mcp/tools/get_metadata.rs` and is documented there.
 
 ---
 
@@ -652,11 +669,10 @@ All codes documented in `docs/mcp-tools.md` during M8 polish.
 3. A second `summarize` call with identical params returns `cache_status: "hit"` and skips the backend.
 4. `fetch { url, max_tokens: 100 }` against a document that extracts to >100 tokens returns a summarized body and `metadata.auto_summarized = true` (rather than `MaxTokensExceeded`).
 5. `fetch { url, tables: { mode: "summarize" } }` against a document containing tables returns markdown with each table replaced by a summary.
-6. `count_tokens { url }` returns four numeric estimates; `summary_short` and `summary_medium` are present even when the URL was previously fetched without summaries.
-7. `get_metadata { url }` returns the metadata object without re-fetching when the URL is cached; fetches with defaults when it isn't.
-8. Removing a backend's API-key env var causes the next `summarize { backend: "<that one>" }` to fall back to extractive (with `summarizer_fallback: { reason: "auth_failed" }`) and return a non-empty summary.
-9. Setting `fallback_to_extractive = false` in the same scenario returns `summarizer_auth_failed`.
-10. All 322 existing tests still pass; new test suite adds at least 18 new test cases (10 unit + 8 integration).
+6. `count_tokens { url, mode: "estimates" }` returns the four-estimate envelope; `summary_short` and `summary_medium` are populated; subsequent calls hit `summary_cache`. `count_tokens { url }` (no `mode`) returns today's single-count shape unchanged.
+7. Removing a backend's API-key env var causes the next `summarize { backend: "<that one>" }` to fall back to extractive (with `summarizer_fallback: { reason: "auth_failed" }`) and return a non-empty summary.
+8. Setting `fallback_to_extractive = false` in the same scenario returns `summarizer_auth_failed`.
+9. All 322 existing tests still pass under `cargo test --features test-loopback`; new test suite adds at least 18 new test cases.
 
 ---
 
@@ -670,7 +686,7 @@ None of these block the design; they're plan-level details that can be settled w
 4. **Heading-tree extraction in Headlines mode.** Re-use existing metadata extraction if it surfaces a heading list; otherwise add a tiny ATX/setext walker in `extractive.rs`. Pin the choice once the existing extractor's outputs are inspected.
 5. **`genai` chat-message shape.** Two messages (system + user) vs. one merged message — depends on provider behavior. Default: two messages.
 6. **Table content hashing.** Confirm post-extraction tables have a stable text rendering — if `readabilityrs` produces nondeterministic table markdown (column padding etc.), normalize whitespace before hashing.
-7. **`get_metadata` argument shape.** `metadata: MetadataOpts` mirrors `fetch`'s; double-check the structurally compatible Rust type lives in one place.
+7. **`count_tokens` response enum naming.** The new untagged enum can be `CountResponse { Single(CountSingleResponse), Estimates(CountEstimatesResponse) }` — pick exact names at plan time so the manual `JsonSchema` impl stays compact.
 
 ---
 
@@ -684,7 +700,7 @@ None of these block the design; they're plan-level details that can be settled w
 | 4 | Fallback-to-extractive default `true` | Robust agent flows. Strict mode is one config line away. |
 | 5 | `params_hash` includes backend identity (not just model) | Two backends with the same model may differ in prompts/sampling. Mirrors design §3.5. |
 | 6 | `count_tokens` runs real extractive summarization for short/medium estimates | Honest numbers worth the few-ms cost; results cached. Heuristic ratios were considered and rejected. |
-| 7 | `get_metadata` ships in M7 alongside `count_tokens` | Closes the PRD §4 tool list. Trivial code change once the cache-miss-fetch utility exists. |
+| 7 | `count_tokens` extended in place with opt-in `mode: "estimates"`; `get_metadata` already ships | Discovered during plan writing that both tools already exist in the codebase. `count_tokens` shape differs from PRD §4.5; we add the four-estimate envelope behind a non-breaking mode arg. `get_metadata` already does what M7 would have specified. |
 | 8 | `Headlines` mode = heading + top-1 sentence per section | Tightest useful definition given that the source markdown carries headings already. |
 | 9 | Single-shot `max_tokens` auto-summarize, no recursion | Bounded cost, clear failure mode. Recursion has degenerate cases. |
 | 10 | Cloud streaming deferred | MCP isn't streaming-aware; defer until a streaming consumer exists. |
