@@ -44,6 +44,10 @@ fn preserve_description(p: &[PreserveSection]) -> String {
 /// Sections (`focus`, `preserve`, `target_tokens`) are conditionally included
 /// — empty inputs produce no leading blank lines.
 pub fn render_abstractive(opts: &CompactOpts, content: &str) -> PromptParts {
+    debug_assert!(
+        !content.is_empty(),
+        "render_abstractive called with empty content; caller must validate",
+    );
     let mut sys = String::with_capacity(512);
     sys.push_str(
         "You are a precise summarizer. Reply with only the summary — no preamble, no postamble, no meta-commentary. Output valid Markdown.\n\n",
@@ -76,7 +80,9 @@ pub fn render_abstractive(opts: &CompactOpts, content: &str) -> PromptParts {
     sys.push_str(
         "- Do not include section titles or headers that the source does not have, unless the chosen style explicitly produces them.\n",
     );
-    sys.push_str("- If the source is already shorter than the target, return it unchanged.\n");
+    if opts.target_tokens.is_some() {
+        sys.push_str("- If the source is already shorter than the target, return it unchanged.\n");
+    }
 
     PromptParts {
         system: sys,
@@ -124,6 +130,16 @@ mod tests {
     }
 
     #[test]
+    fn return_unchanged_rule_omitted_when_no_target() {
+        // Without a target, the "return unchanged if shorter than the target"
+        // rule has no well-defined meaning and should be omitted.
+        let no_target = render_abstractive(&opts(Style::Prose, vec![], None, None), "x");
+        let with_target = render_abstractive(&opts(Style::Prose, vec![], Some(500), None), "x");
+        assert!(!no_target.system.contains("return it unchanged"));
+        assert!(with_target.system.contains("return it unchanged"));
+    }
+
+    #[test]
     fn focus_skipped_when_empty_or_whitespace() {
         let p = render_abstractive(&opts(Style::Prose, vec![], None, Some("   ")), "x");
         assert!(!p.system.contains("Focus on"));
@@ -159,8 +175,21 @@ mod tests {
         let c = render_abstractive(&opts(Style::Executive, vec![], None, None), "x");
         assert_ne!(a.system, b.system);
         assert_ne!(b.system, c.system);
-        assert!(a.system.contains("bullet"));
-        assert!(b.system.contains("paragraph"));
-        assert!(c.system.contains("headline"));
+        // Substrings unique to each style description.
+        assert!(
+            a.system.contains("bullet list"),
+            "bullet system: {}",
+            a.system
+        );
+        assert!(
+            b.system.contains("short paragraphs"),
+            "prose system: {}",
+            b.system
+        );
+        assert!(
+            c.system.contains("headline"),
+            "executive system: {}",
+            c.system
+        );
     }
 }
