@@ -138,17 +138,30 @@ async fn count_only_returns_count_envelope() {
 
 #[tokio::test]
 async fn max_tokens_exceeded_is_structured_error() {
-    let server = start_server().await;
+    // Custom server with a single sentence that still exceeds a 1-token
+    // budget even after auto-summarize. `max_tokens: 0` is no longer a
+    // valid trick (it now returns InvalidArgs), so we ensure the body
+    // itself is meaningfully over-budget.
+    let server = MockServer::start().await;
+    let html = "<html><head><title>Over</title></head><body><article>\
+                <p>This sentence alone clearly contains many more than five \
+                tokens worth of content for our test budget.</p></article></body></html>";
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/html; charset=utf-8")
+                .set_body_string(html),
+        )
+        .mount(&server)
+        .await;
     let tmp = tempfile::tempdir().unwrap();
     seed_default_tokenizer(tmp.path());
     let client = spawn_client(tmp.path()).await;
 
-    // `max_tokens: 0` guarantees the limit is exceeded for any non-empty
-    // extracted markdown regardless of the (fixture) tokenizer's vocabulary.
     let result = call_tool_any(
         &client,
         "fetch_tool",
-        json!({"url": server.uri(), "max_tokens": 0}),
+        json!({"url": server.uri(), "max_tokens": 1}),
     )
     .await;
     let err = result.expect_err("expected MaxTokensExceeded JSON-RPC error");

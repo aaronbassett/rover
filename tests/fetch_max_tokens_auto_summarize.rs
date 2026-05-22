@@ -121,3 +121,50 @@ async fn fetch_max_tokens_returns_error_when_summary_still_overshoots() {
     client.cancel().await.unwrap();
     drop(server);
 }
+
+#[tokio::test]
+async fn fetch_returns_max_tokens_error_when_explicit_summarize_overshoots() {
+    // Agent passes a summarize arg with a LARGE target_tokens AND a tight
+    // max_tokens. The summary should still overshoot max_tokens because
+    // the agent's chosen target was bigger. We should surface the failure
+    // honestly without trying auto-summarize-again.
+    let server = MockServer::start().await;
+    let html = "<html><head><title>Explicit</title></head><body><article>\
+                <p>This sentence alone clearly contains many more than five \
+                tokens worth of content for our test budget.</p></article></body></html>";
+    Mock::given(method("GET"))
+        .and(path("/p"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/html; charset=utf-8")
+                .set_body_string(html),
+        )
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    seed_default_tokenizer(tmp.path());
+    let client = spawn_client(tmp.path()).await;
+
+    let url = format!("{}/p", server.uri());
+    let result = call_tool_any(
+        &client,
+        "fetch_tool",
+        json!({
+            "url": url,
+            "max_tokens": 5,
+            // explicit summarize with target_tokens > max_tokens
+            "summarize": { "mode": "extractive", "target_tokens": 100 }
+        }),
+    )
+    .await;
+    let err = result.expect_err("expected MaxTokensExceeded JSON-RPC error");
+    let blob = serde_json::to_string(&err).unwrap();
+    assert!(
+        blob.contains("max_tokens_exceeded"),
+        "expected stable code in payload: {blob}"
+    );
+
+    client.cancel().await.unwrap();
+    drop(server);
+}

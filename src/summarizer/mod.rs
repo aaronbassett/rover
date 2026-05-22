@@ -215,7 +215,7 @@ impl SummarizerService {
     /// unset fields. Returns the opts plus the resolved backend name
     /// (in case the caller wants to log it).
     // Consumed in Task 9 (compact_content MCP tool).
-    #[allow(dead_code, clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve_defaults(
         &self,
         mode: Option<CompactMode>,

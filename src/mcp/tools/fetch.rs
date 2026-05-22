@@ -373,6 +373,11 @@ impl RoverHandler {
         log_deferred_args(&args);
 
         let url = Url::parse(&args.url).map_err(|e| McpError::InvalidUrl(e.to_string()))?;
+        if matches!(args.max_tokens, Some(0)) {
+            return Err(McpError::InvalidArgs(
+                "max_tokens must be greater than 0".into(),
+            ));
+        }
         let family = resolve_tokenizer(args.tokenizer.as_deref(), &self.config)?;
 
         let result = fetch_with_cache(
@@ -485,6 +490,12 @@ impl RoverHandler {
                     actual: tokens,
                     max,
                 });
+            } else if args.count_only {
+                // count_only is a probe: tell the agent the real size
+                // without auto-correction. Don't summarize — fall through
+                // to the count_only short-circuit which reports the real
+                // (over-budget) token count.
+                (body_md, tokens, None)
             } else {
                 let defaults =
                     crate::summarizer::DefaultsHint::from_config(&self.config.summarization);
