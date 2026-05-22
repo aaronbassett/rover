@@ -98,6 +98,10 @@ pub fn build(config: &Config, tokenizer: Tokenizer) -> Result<SummarizerRegistry
     let mut backends: HashMap<String, Arc<dyn SummarizerBackend>> = HashMap::new();
 
     if config.backends.is_empty() {
+        tracing::info!(
+            target: "rover::summarizer",
+            "no [backends.*] configured; installing implicit extractive backend \"default\""
+        );
         backends.insert(
             "default".to_string(),
             Arc::new(ExtractiveBackend::new("default", tokenizer)),
@@ -159,7 +163,8 @@ fn build_one(
             let api_key = cfg
                 .api_key_env
                 .as_deref()
-                .and_then(|var| std::env::var(var).ok());
+                .and_then(|var| std::env::var(var).ok())
+                .filter(|v| !v.is_empty());
             let be = CloudBackend::new(name, provider_kind, model, cfg.base_url.clone(), api_key)
                 .map_err(|e| SummarizerError::BackendUnavailable {
                 name: name.to_string(),
@@ -177,22 +182,19 @@ fn build_one(
 fn find_extractive_fallback(
     backends: &HashMap<String, Arc<dyn SummarizerBackend>>,
 ) -> Option<String> {
-    // Prefer "default" if it's an extractive backend; otherwise the first
-    // extractive backend by name lex order for determinism.
+    // Prefer "default" if it's extractive (model_id == "" is the convention).
+    if let Some(b) = backends.get("default")
+        && b.model_id().is_empty()
+    {
+        return Some("default".to_string());
+    }
+    // Otherwise pick the first extractive backend by lex order for determinism.
     let mut names: Vec<&String> = backends.keys().collect();
     names.sort();
-    for n in &names {
-        // model_id == "" is the convention for extractive backends.
-        if backends[*n].model_id().is_empty() && *n == "default" {
-            return Some((*n).clone());
-        }
-    }
-    for n in names {
-        if backends[n].model_id().is_empty() {
-            return Some(n.clone());
-        }
-    }
-    None
+    names
+        .into_iter()
+        .find(|n| backends[*n].model_id().is_empty())
+        .cloned()
 }
 
 #[cfg(test)]
@@ -261,6 +263,96 @@ mod tests {
         )]);
         let r = build(&cfg, Tokenizer::O200k);
         assert!(matches!(r, Err(SummarizerError::BackendUnavailable { .. })));
+    }
+
+    #[test]
+    fn cloud_backend_requires_model() {
+        let cfg = cfg_with_backends(&[(
+            "default",
+            BackendConfig {
+                kind: "cloud".into(),
+                provider: Some("openai".into()),
+                model: None,
+                base_url: None,
+                api_key_env: None,
+            },
+        )]);
+        let r = build(&cfg, Tokenizer::O200k);
+        assert!(
+            matches!(
+                r,
+                Err(SummarizerError::BackendUnavailable { ref reason, .. }) if reason.contains("model")
+            ),
+            "expected model-requirement error, got {r:?}",
+        );
+    }
+
+    #[test]
+    fn openai_compat_without_base_url_errors_at_registry() {
+        let cfg = {
+            let mut c = cfg_with_backends(&[(
+                "lm",
+                BackendConfig {
+                    kind: "cloud".into(),
+                    provider: Some("openai_compat".into()),
+                    model: Some("lm-test".into()),
+                    base_url: None,
+                    api_key_env: None,
+                },
+            )]);
+            c.summarization.default_backend = "lm".into();
+            c.summarization.fallback_to_extractive = false;
+            c
+        };
+        let r = build(&cfg, Tokenizer::O200k);
+        // CloudBackend::new returns BackendError::Invalid; build_one wraps as
+        // SummarizerError::BackendUnavailable.
+        assert!(
+            matches!(
+                r,
+                Err(SummarizerError::BackendUnavailable { ref reason, .. })
+                    if reason.contains("base_url") || reason.contains("openai_compat")
+            ),
+            "expected base_url-requirement error, got {r:?}",
+        );
+    }
+
+    #[test]
+    fn fallback_picks_lex_first_extractive_when_default_is_cloud() {
+        let mut cfg = cfg_with_backends(&[
+            (
+                "alpha_ext",
+                BackendConfig {
+                    kind: "extractive".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                "zzz_ext",
+                BackendConfig {
+                    kind: "extractive".into(),
+                    ..Default::default()
+                },
+            ),
+            (
+                "cloud_default",
+                BackendConfig {
+                    kind: "cloud".into(),
+                    provider: Some("openai".into()),
+                    model: Some("gpt-4o-mini".into()),
+                    base_url: None,
+                    api_key_env: None,
+                },
+            ),
+        ]);
+        cfg.summarization.default_backend = "cloud_default".into();
+        cfg.summarization.fallback_to_extractive = true;
+        let reg = build(&cfg, Tokenizer::O200k).unwrap();
+        assert_eq!(
+            reg.extractive_fallback_name(),
+            Some("alpha_ext"),
+            "should prefer lex-first extractive when 'default' isn't extractive",
+        );
     }
 
     #[test]
