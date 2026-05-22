@@ -8,10 +8,10 @@
 use crate::storage::Db;
 use crate::storage::error::StorageError;
 use jiff::Timestamp;
-use serde::{Deserialize, Serialize};
+use rusqlite::OptionalExtension;
 
 /// One `summary_cache` row.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryRow {
     pub content_hash: String,
     pub params_hash: String,
@@ -28,27 +28,27 @@ pub async fn lookup(
 ) -> Result<Option<SummaryRow>, StorageError> {
     let ch = content_hash.to_string();
     let ph = params_hash.to_string();
-    db.conn
+    let row = db
+        .conn
         .call(move |c| {
-            let mut stmt = c.prepare(
+            c.query_row(
                 "SELECT content_hash, params_hash, summary_md, created_at \
                    FROM summary_cache \
                   WHERE content_hash = ?1 AND params_hash = ?2",
-            )?;
-            let mut rows = stmt.query(rusqlite::params![ch, ph])?;
-            if let Some(r) = rows.next()? {
-                Ok::<_, rusqlite::Error>(Some(SummaryRow {
-                    content_hash: r.get(0)?,
-                    params_hash: r.get(1)?,
-                    summary_md: r.get(2)?,
-                    created_at: r.get(3)?,
-                }))
-            } else {
-                Ok(None)
-            }
+                rusqlite::params![ch, ph],
+                |r| {
+                    Ok(SummaryRow {
+                        content_hash: r.get(0)?,
+                        params_hash: r.get(1)?,
+                        summary_md: r.get(2)?,
+                        created_at: r.get(3)?,
+                    })
+                },
+            )
+            .optional()
         })
-        .await
-        .map_err(Into::into)
+        .await?;
+    Ok(row)
 }
 
 /// Insert a new summary. On unique-conflict, the existing row wins and

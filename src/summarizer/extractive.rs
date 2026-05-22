@@ -294,7 +294,7 @@ pub(super) fn pagerank(vectors: &[HashMap<usize, f32>]) -> Vec<f32> {
     for _ in 0..PAGERANK_MAX_ITER {
         let mut next = vec![teleport; n];
         for j in 0..n {
-            if row_sums[j] == 0.0 {
+            if row_sums[j] < f32::EPSILON {
                 // Dangling: distribute uniformly.
                 let share = PAGERANK_DAMPING * score[j] * inv_n;
                 for slot in next.iter_mut() {

@@ -41,8 +41,11 @@ fn preserve_description(p: &[PreserveSection]) -> String {
 
 /// Render the system + user prompt for an abstractive summarization call.
 ///
-/// Sections (`focus`, `preserve`, `target_tokens`) are conditionally included
-/// — empty inputs produce no leading blank lines.
+/// Sections (`focus`, `preserve`, `target_tokens`) are conditionally
+/// included so absent fields don't emit empty lines. Empty `content` is
+/// guarded by `debug_assert!` — debug builds panic to catch caller bugs;
+/// release builds still render a sensible prompt with an empty user
+/// message.
 pub fn render_abstractive(opts: &CompactOpts, content: &str) -> PromptParts {
     debug_assert!(
         !content.is_empty(),
@@ -93,7 +96,7 @@ pub fn render_abstractive(opts: &CompactOpts, content: &str) -> PromptParts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::summarizer::backend::{CompactMode, Style};
+    use crate::summarizer::backend::CompactMode;
 
     fn opts(
         style: Style,

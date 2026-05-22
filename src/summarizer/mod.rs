@@ -286,7 +286,6 @@ impl DefaultsHint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::summarizer::backend::{CompactMode, PreserveSection, Style};
 
     fn baseline() -> CompactOpts {
         CompactOpts {
@@ -338,8 +337,6 @@ mod tests {
     fn hash_treats_target_none_as_null_string() {
         let mut o = baseline();
         o.target_tokens = None;
-        let _ = params_hash(&o, "m");
-        // Implicit: no panic; the difference vs Some(500) is exercised below.
         let h_none = params_hash(&o, "m");
         o.target_tokens = Some(500);
         let h_some = params_hash(&o, "m");
@@ -387,8 +384,6 @@ mod tests {
 #[cfg(test)]
 mod service_tests {
     use super::*;
-    use crate::summarizer::backend::{CompactMode, Style, SummarizerBackend};
-    use crate::summarizer::error::BackendError;
     use crate::summarizer::registry::SummarizerRegistry;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};

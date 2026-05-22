@@ -52,9 +52,12 @@ Devnet, testnet, and mainnet are all supported.\n";
         .compact(content, &opts(CompactMode::Headlines, None))
         .await
         .unwrap();
-    // Three top-level headings → three '#' headers in output.
-    let hash_count = out.matches('#').count();
-    assert!(hash_count >= 3, "expected ≥3 '#' chars in {out}");
+    // Three top-level headings → three line-start '# ' markers in output.
+    // Prepending a newline lets us match the first heading the same way as
+    // the rest, and is robust to heading text containing '#' (e.g. "C#").
+    let probe = format!("\n{out}");
+    let heading_count = probe.matches("\n# ").count();
+    assert!(heading_count >= 3, "expected ≥3 '\\n# ' headings in {out}");
     assert!(out.contains("Overview"));
     assert!(out.contains("Tokens"));
     assert!(out.contains("Networks"));

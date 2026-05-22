@@ -70,6 +70,13 @@ impl PreserveSection {
 /// `target_tokens` counts via the configured tokenizer family on the
 /// service side; backends treat it as advisory text in the prompt
 /// (Abstractive) or as a hard greedy cap (Extractive/Headlines).
+///
+/// Note: the derived `PartialEq`/`Eq` is order-sensitive on `preserve`
+/// (it's a `Vec`), but the `params_hash` cache key is order-invariant —
+/// it sorts and dedups `preserve` before hashing. Two `CompactOpts` that
+/// compare non-equal under `==` may still produce the same cache key.
+/// Keep this divergence in mind if you ever switch the cache key to
+/// derive from the struct directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactOpts {
     pub mode: CompactMode,
@@ -90,7 +97,10 @@ pub trait SummarizerBackend: Send + Sync {
     /// Config-key name (e.g. "default", "fast").
     fn name(&self) -> &str;
 
-    /// Resolved model identifier for `params_hash`. `""` for extractive.
+    /// Resolved model identifier for `params_hash`. The default `""` is
+    /// intended only for the extractive backend (which has no model). All
+    /// cloud / network-backed backends MUST override this with their
+    /// resolved model id so the cache key partitions across model versions.
     fn model_id(&self) -> &str {
         ""
     }

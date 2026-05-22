@@ -59,7 +59,7 @@ pub enum SummarizerError {
 impl SummarizerError {
     /// Convert a `BackendError` into a `SummarizerError` carrying the
     /// originating backend's name.
-    pub(crate) fn from_backend(name: &str, e: BackendError) -> Self {
+    pub fn from_backend(name: &str, e: BackendError) -> Self {
         match e {
             BackendError::Unavailable(r) => SummarizerError::BackendUnavailable {
                 name: name.to_string(),
