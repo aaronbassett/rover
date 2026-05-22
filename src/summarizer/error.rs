@@ -17,8 +17,10 @@ pub enum BackendError {
     #[error("model error: {0}")]
     ModelError(String),
 
-    /// Programmer-visible misuse (e.g. empty content) — distinct from
-    /// network errors so the service doesn't retry through extractive.
+    /// Invalid request or misuse — both startup-time (e.g. missing
+    /// `base_url` in `CloudBackend::new`) and compact-time (e.g. empty
+    /// content). Distinct from network errors so the service doesn't
+    /// retry through extractive.
     #[error("invalid request: {0}")]
     Invalid(String),
 }

@@ -6,6 +6,7 @@
 
 use rover::summarizer::backend::{CompactMode, CompactOpts, Style, SummarizerBackend};
 use rover::summarizer::cloud::{CloudBackend, ProviderKind};
+use rover::summarizer::error::BackendError;
 use serde_json::json;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -59,7 +60,9 @@ async fn cloud_round_trips_against_openai_compat_endpoint() {
         .compact("Please summarize this text.", &opts(None))
         .await
         .expect("summarization succeeds");
-    assert!(out.contains("hello world"), "got {out:?}");
+    // Asserts the FULL mocked content is returned untouched (modulo
+    // trailing whitespace some providers append).
+    assert_eq!(out.trim(), "Summary: hello world.");
 }
 
 #[tokio::test]
@@ -84,8 +87,7 @@ async fn cloud_maps_401_to_auth_failed() {
     .unwrap();
 
     let err = be.compact("hi.", &opts(None)).await.unwrap_err();
-    let s = format!("{err}");
-    assert!(s.contains("auth") || s.contains("401"), "got {s}");
+    assert!(matches!(err, BackendError::AuthFailed(_)), "got {err:?}");
 }
 
 #[tokio::test]
@@ -110,6 +112,50 @@ async fn cloud_maps_429_to_rate_limited() {
     .unwrap();
 
     let err = be.compact("hi.", &opts(None)).await.unwrap_err();
-    let s = format!("{err}");
-    assert!(s.contains("rate"), "got {s}");
+    assert!(matches!(err, BackendError::RateLimited), "got {err:?}");
+}
+
+/// Regression guard for the resolver's `adapter_kind = AdapterKind::OpenAI`
+/// override. We use a model id (`llama3.2`) that genai would natively route
+/// to its Ollama adapter (which uses a different endpoint path and wire
+/// shape). If the resolver fails to force `AdapterKind::OpenAI`, the
+/// request will not land on `/v1/chat/completions` and the mock won't
+/// match, producing a non-200 response. A passing 200 round-trip proves
+/// the OpenAI adapter (and its `/v1/chat/completions` path) was used.
+#[tokio::test]
+async fn cloud_openai_compat_forces_openai_adapter_for_non_openai_model_name() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(header("authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-1",
+            "object": "chat.completion",
+            "created": 1_700_000_000_i64,
+            "model": "llama3.2",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "ok" },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+        })))
+        .mount(&server)
+        .await;
+
+    let be = CloudBackend::new(
+        "lm",
+        ProviderKind::OpenAiCompat,
+        "llama3.2",
+        Some(format!("{}/v1/", server.uri())),
+        Some("test-key".into()),
+    )
+    .unwrap();
+
+    let out = be
+        .compact("Please summarize this text.", &opts(None))
+        .await
+        .expect("openai_compat resolver should force OpenAI adapter regardless of model name");
+    assert_eq!(out.trim(), "ok");
 }
