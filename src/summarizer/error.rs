@@ -46,6 +46,9 @@ pub enum SummarizerError {
     #[error("backend {name} model error: {reason}")]
     ModelError { name: String, reason: String },
 
+    #[error("invalid request to backend {name}: {reason}")]
+    InvalidRequest { name: String, reason: String },
+
     #[error("storage error: {0}")]
     Storage(#[from] crate::storage::StorageError),
 
@@ -60,12 +63,14 @@ impl SummarizerError {
     #[allow(dead_code)]
     pub(crate) fn from_backend(name: &str, e: BackendError) -> Self {
         match e {
-            BackendError::Unavailable(r) | BackendError::Invalid(r) => {
-                SummarizerError::BackendUnavailable {
-                    name: name.to_string(),
-                    reason: r,
-                }
-            }
+            BackendError::Unavailable(r) => SummarizerError::BackendUnavailable {
+                name: name.to_string(),
+                reason: r,
+            },
+            BackendError::Invalid(r) => SummarizerError::InvalidRequest {
+                name: name.to_string(),
+                reason: r,
+            },
             BackendError::RateLimited => SummarizerError::RateLimited {
                 name: name.to_string(),
             },
@@ -84,6 +89,7 @@ impl SummarizerError {
     pub fn fallback_reason(&self) -> &'static str {
         match self {
             SummarizerError::BackendUnavailable { .. } => "backend_unavailable",
+            SummarizerError::InvalidRequest { .. } => "invalid_request",
             SummarizerError::RateLimited { .. } => "rate_limited",
             SummarizerError::AuthFailed { .. } => "auth_failed",
             SummarizerError::ModelError { .. } => "model_error",
@@ -106,11 +112,28 @@ mod tests {
             (BackendError::RateLimited, "rate_limited"),
             (BackendError::AuthFailed("401".into()), "auth_failed"),
             (BackendError::ModelError("bad".into()), "model_error"),
-            (BackendError::Invalid("empty".into()), "backend_unavailable"),
+            (BackendError::Invalid("empty".into()), "invalid_request"),
         ];
         for (be, expected_reason) in cases {
             let e = SummarizerError::from_backend("fast", be);
             assert_eq!(e.fallback_reason(), expected_reason, "for {e}");
         }
+    }
+
+    #[test]
+    fn storage_error_converts_via_from() {
+        // The exact StorageError variant doesn't matter — just that the
+        // From impl is wired up.
+        let storage_err =
+            crate::storage::StorageError::Backend(tokio_rusqlite::Error::ConnectionClosed);
+        let e: SummarizerError = storage_err.into();
+        assert!(matches!(e, SummarizerError::Storage(_)));
+    }
+
+    #[test]
+    fn tokenizer_error_converts_via_from() {
+        let tok_err = crate::tokenizer::TokenizerError::UnknownFamily("test".to_string());
+        let e: SummarizerError = tok_err.into();
+        assert!(matches!(e, SummarizerError::Tokenizer(_)));
     }
 }

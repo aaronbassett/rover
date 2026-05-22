@@ -13,12 +13,11 @@ pub use error::{BackendError, SummarizerError};
 
 use sha2::{Digest, Sha256};
 
-/// Record separator used to disambiguate hash inputs.
-const RS: char = '\u{1E}';
-
 /// Deterministic params_hash for `summary_cache` lookups. Inputs are
 /// serialized as plain strings — never via serde — so reorderings or
-/// crate version changes can't shift the hash.
+/// crate version changes can't shift the hash. Length-prefix framing
+/// (`{byte_len}:{content}`) makes the format unambiguous regardless of
+/// whether any field contains delimiter-like bytes.
 pub fn params_hash(opts: &CompactOpts, model_id: &str) -> String {
     let target = opts
         .target_tokens
@@ -35,26 +34,28 @@ pub fn params_hash(opts: &CompactOpts, model_id: &str) -> String {
     preserve_sorted.dedup();
     let preserve_csv = preserve_sorted.join(",");
 
-    let serialized = format!(
-        "{name}{RS}{model}{RS}{mode}{RS}{target}{RS}{focus}{RS}{preserve}{RS}{style}",
-        name = opts.backend_name,
-        model = model_id,
-        mode = opts.mode.as_str(),
-        target = target,
-        focus = focus,
-        preserve = preserve_csv,
-        style = opts.style.as_str(),
-    );
+    let mut serialized = String::new();
+    for s in [
+        opts.backend_name.as_str(),
+        model_id,
+        opts.mode.as_str(),
+        target.as_str(),
+        focus.as_str(),
+        preserve_csv.as_str(),
+        opts.style.as_str(),
+    ] {
+        serialized.push_str(&format!("{}:{}", s.len(), s));
+    }
 
     let mut h = Sha256::new();
     h.update(serialized.as_bytes());
-    let out = h.finalize();
-    let mut s = String::with_capacity(out.len() * 2);
-    for b in out {
+    let bytes = h.finalize();
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
         use std::fmt::Write as _;
-        write!(s, "{b:02x}").expect("write to String never fails");
+        write!(hex, "{b:02x}").expect("write to string never fails");
     }
-    s
+    hex
 }
 
 #[cfg(test)]
@@ -129,5 +130,31 @@ mod tests {
         let a = params_hash(&a_opts, "m");
         let b = params_hash(&b_opts, "m");
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn hash_resists_focus_delimiter_injection() {
+        // Two distinct inputs must NOT collide even if focus contains
+        // characters that resemble the framing.
+        let mut a_opts = baseline();
+        a_opts.focus = Some("a:b".to_string());
+        a_opts.preserve = vec![];
+        let mut b_opts = baseline();
+        b_opts.focus = Some("a".to_string());
+        b_opts.preserve = vec![PreserveSection::Code]; // arbitrary distinct value
+        let a = params_hash(&a_opts, "m");
+        let b = params_hash(&b_opts, "m");
+        assert_ne!(a, b);
+
+        // And U+001E specifically (the old separator) must not collide either.
+        let mut c_opts = baseline();
+        c_opts.focus = Some("a\u{1E}b".to_string());
+        c_opts.preserve = vec![];
+        let mut d_opts = baseline();
+        d_opts.focus = Some("a".to_string());
+        d_opts.preserve = vec![];
+        let c = params_hash(&c_opts, "m");
+        let d = params_hash(&d_opts, "m");
+        assert_ne!(c, d);
     }
 }
