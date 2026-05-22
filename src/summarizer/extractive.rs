@@ -22,8 +22,6 @@ use crate::summarizer::backend::{CompactMode, CompactOpts, Style, SummarizerBack
 use crate::summarizer::error::BackendError;
 use crate::tokenizer::{self, Tokenizer};
 
-const NAME: &str = "extractive";
-
 /// PageRank tuning. Pinned to design §2 §5.
 const PAGERANK_DAMPING: f32 = 0.85;
 const PAGERANK_MAX_ITER: usize = 50;
@@ -886,10 +884,6 @@ impl SummarizerBackend for ExtractiveBackend {
         &self.name
     }
 }
-
-// constructed in Task 6 (registry)
-#[allow(dead_code)]
-pub(crate) const EXTRACTIVE_BACKEND_KIND: &str = NAME;
 
 #[cfg(test)]
 mod trait_tests {

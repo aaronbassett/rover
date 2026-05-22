@@ -31,7 +31,6 @@ pub enum ProviderKind {
 
 impl ProviderKind {
     // Consumed in Task 6 (registry) when mapping `[backends.<name>] provider = "..."`.
-    #[allow(dead_code)]
     pub fn parse(s: &str) -> Result<Self, String> {
         match s {
             "openai" => Ok(ProviderKind::OpenAi),
@@ -97,7 +96,6 @@ impl CloudBackend {
     ///   `None`, genai's default env-var resolution applies (OPENAI_API_KEY,
     ///   ANTHROPIC_API_KEY, etc.).
     // Consumed in Task 6 (registry) when constructing backends from config.
-    #[allow(dead_code)]
     pub fn new(
         name: impl Into<String>,
         provider: ProviderKind,

@@ -76,7 +76,7 @@ async fn summarize_stub_runs_through_scheduler() {
     assert_eq!(row.status, TaskStatus::Failed);
     assert_eq!(
         row.error.as_deref(),
-        Some("summarization_not_yet_implemented")
+        Some("summarize_no_longer_a_task_kind")
     );
     let evs = events::range_since(&db, "t1", 0, 100).await.unwrap();
     let kinds: Vec<&str> = evs.iter().map(|e| e.kind.as_str()).collect();

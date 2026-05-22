@@ -111,7 +111,6 @@ impl SummarizerService {
     }
 
     // Consumed in Task 8 (MCP wiring) and beyond.
-    #[allow(dead_code)]
     pub fn registry(&self) -> &SummarizerRegistry {
         &self.registry
     }
@@ -122,7 +121,6 @@ impl SummarizerService {
     /// the registry's `default_backend_name()` *before* calling — the
     /// service trusts whatever name is in the opts.
     // Consumed in Task 8 (MCP wiring) and beyond. Tests exercise it.
-    #[allow(dead_code)]
     pub async fn compact(
         &self,
         content_hash: &str,
@@ -250,7 +248,6 @@ impl DefaultsHint {
     /// Parse string-typed values from `SummarizationConfig`. Unknown
     /// strings fall back to `Abstractive`/`Prose` with a warning logged.
     // Consumed in Task 9 (compact_content MCP tool).
-    #[allow(dead_code)]
     pub fn from_config(c: &crate::config::SummarizationConfig) -> Self {
         let mode = match c.default_mode.as_str() {
             "extractive" => CompactMode::Extractive,

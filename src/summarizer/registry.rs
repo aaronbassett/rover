@@ -91,7 +91,6 @@ impl SummarizerRegistry {
 /// silently inject — once a user adds any `[backends.*]` block, the
 /// validation rules apply strictly.
 // Consumed in Task 8 (server.rs / main.rs wiring).
-#[allow(dead_code)]
 pub fn build(config: &Config, tokenizer: Tokenizer) -> Result<SummarizerRegistry, SummarizerError> {
     let mut backends: HashMap<String, Arc<dyn SummarizerBackend>> = HashMap::new();
 
