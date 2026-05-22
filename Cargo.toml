@@ -54,6 +54,7 @@ governor = "0.10"
 robotxt = { version = "0.6", default-features = false, features = ["parser"] }
 httpdate = "1"
 unicode-segmentation = "1"
+genai = "0.4"
 
 [dev-dependencies]
 wiremock = "0.6"

@@ -6,6 +6,7 @@
 //! (Task 6) plus the storage handle and owns the cache hot path.
 
 pub mod backend;
+pub mod cloud;
 pub mod error;
 pub mod extractive;
 pub mod prompts;
