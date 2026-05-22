@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
@@ -174,6 +175,29 @@ impl CacheCmd {
 enum ConfigCmd {
     Show,
     Set { key: String, value: String },
+}
+
+/// Build a `SummarizerService` for CLI subcommands that need it.
+///
+/// The MCP server builds its own service inside `serve_stdio`; this helper
+/// exists for CLI paths (e.g. a future `rover fetch --summarize`) so the
+/// construction stays in one place. Currently unused outside the MCP path —
+/// `#[allow(dead_code)]` keeps `warnings = deny` happy until M7's CLI
+/// summarize wiring lands.
+#[allow(dead_code)]
+async fn build_summarizer_service(
+    db: rover::storage::Db,
+    config: &rover::config::Config,
+) -> anyhow::Result<Arc<rover::summarizer::SummarizerService>> {
+    let registry = Arc::new(
+        rover::summarizer::registry::build(config, config.tokenizer.default)
+            .map_err(anyhow::Error::from)?,
+    );
+    Ok(Arc::new(rover::summarizer::SummarizerService::new(
+        db,
+        registry,
+        config.summarization.fallback_to_extractive,
+    )))
 }
 
 fn main() -> ExitCode {

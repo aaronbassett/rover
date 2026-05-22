@@ -37,6 +37,9 @@ pub enum McpError {
 
     #[error("empty URL list")]
     EmptyUrlList,
+
+    #[error("summarizer error: {0}")]
+    Summarizer(#[from] crate::summarizer::SummarizerError),
 }
 
 impl McpError {
@@ -102,6 +105,61 @@ impl McpError {
             }
             Self::Extractor(e) => RoverError::new(RoverError::EXTRACT_FAILED, e.to_string()),
             Self::Storage(e) => RoverError::new(RoverError::STORAGE_ERROR, e.to_string()),
+            Self::Summarizer(e) => {
+                use crate::summarizer::SummarizerError as S;
+                match e {
+                    S::NoSuchBackend { name } => RoverError::new(
+                        RoverError::SUMMARIZER_NO_SUCH_BACKEND,
+                        format!("no such summarizer backend: {name}"),
+                    ),
+                    S::NoExtractiveBackendForFallback => RoverError::new(
+                        RoverError::SUMMARIZER_NO_EXTRACTIVE_FOR_FALLBACK,
+                        "no extractive backend configured for fallback",
+                    ),
+                    S::BackendUnavailable { name, reason } => RoverError::new(
+                        RoverError::SUMMARIZER_BACKEND_UNAVAILABLE,
+                        format!("backend {name} unavailable: {reason}"),
+                    ),
+                    S::RateLimited { name } => RoverError::new(
+                        RoverError::SUMMARIZER_RATE_LIMITED,
+                        format!("backend {name} rate limited"),
+                    ),
+                    S::AuthFailed { name, reason } => RoverError::new(
+                        RoverError::SUMMARIZER_AUTH_FAILED,
+                        format!("backend {name} auth failed: {reason}"),
+                    ),
+                    S::ModelError { name, reason } => RoverError::new(
+                        RoverError::SUMMARIZER_MODEL_ERROR,
+                        format!("backend {name} model error: {reason}"),
+                    ),
+                    S::InvalidRequest { name, reason } => RoverError::new(
+                        RoverError::SUMMARIZER_INVALID_REQUEST,
+                        format!("invalid request to backend {name}: {reason}"),
+                    ),
+                    // Borrowed inner errors — route through the same code
+                    // each outer variant produces.
+                    S::Storage(inner) => {
+                        RoverError::new(RoverError::STORAGE_ERROR, inner.to_string())
+                    }
+                    S::Tokenizer(inner) => match inner {
+                        TokenizerError::UnknownFamily(name) => RoverError::new(
+                            RoverError::INVALID_ARGS,
+                            format!("unknown tokenizer family: {name}"),
+                        ),
+                        TokenizerError::Download { family, .. } => RoverError::new(
+                            RoverError::TOKENIZER_UNAVAILABLE,
+                            format!("could not fetch tokenizer for {family}: {inner}"),
+                        ),
+                        TokenizerError::Parse { family, .. } => RoverError::new(
+                            RoverError::TOKENIZER_UNAVAILABLE,
+                            format!("tokenizer file for {family} is corrupt: {inner}"),
+                        ),
+                        TokenizerError::Io { .. } | TokenizerError::NotLoaded(_) => {
+                            RoverError::new(RoverError::TOKENIZER_UNAVAILABLE, inner.to_string())
+                        }
+                    },
+                }
+            }
         }
     }
 }
@@ -246,6 +304,38 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::DEFERRED);
         assert!(r.message.contains("abc"));
+    }
+
+    #[test]
+    fn summarizer_no_such_backend_translates() {
+        let e = McpError::Summarizer(crate::summarizer::SummarizerError::NoSuchBackend {
+            name: "missing".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::SUMMARIZER_NO_SUCH_BACKEND);
+        assert!(r.message.contains("missing"));
+    }
+
+    #[test]
+    fn summarizer_rate_limited_translates() {
+        let e = McpError::Summarizer(crate::summarizer::SummarizerError::RateLimited {
+            name: "fast".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::SUMMARIZER_RATE_LIMITED);
+        assert!(r.message.contains("fast"));
+    }
+
+    #[test]
+    fn summarizer_auth_failed_translates() {
+        let e = McpError::Summarizer(crate::summarizer::SummarizerError::AuthFailed {
+            name: "fast".into(),
+            reason: "401".into(),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::SUMMARIZER_AUTH_FAILED);
+        assert!(r.message.contains("fast"));
+        assert!(r.message.contains("401"));
     }
 
     #[test]

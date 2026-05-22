@@ -121,6 +121,14 @@ impl RoverError {
     pub const DEFERRED: &'static str = "deferred";
     pub const TOO_MANY_URLS: &'static str = "too_many_urls";
     pub const EMPTY_URL_LIST: &'static str = "empty_url_list";
+    pub const SUMMARIZER_NO_SUCH_BACKEND: &'static str = "summarizer_no_such_backend";
+    pub const SUMMARIZER_NO_EXTRACTIVE_FOR_FALLBACK: &'static str =
+        "summarizer_no_extractive_backend_for_fallback";
+    pub const SUMMARIZER_BACKEND_UNAVAILABLE: &'static str = "summarizer_backend_unavailable";
+    pub const SUMMARIZER_RATE_LIMITED: &'static str = "summarizer_rate_limited";
+    pub const SUMMARIZER_AUTH_FAILED: &'static str = "summarizer_auth_failed";
+    pub const SUMMARIZER_MODEL_ERROR: &'static str = "summarizer_model_error";
+    pub const SUMMARIZER_INVALID_REQUEST: &'static str = "summarizer_invalid_request";
 
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {

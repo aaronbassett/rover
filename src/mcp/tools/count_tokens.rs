@@ -133,6 +133,31 @@ mod tests {
         let path = tmp.path().join("rover.db");
         let db = crate::storage::Db::open(&path).await.unwrap();
         let pacer = std::sync::Arc::new(crate::fetcher::concurrency::Pacer::new(&cfg.rate_limit));
+        let summarizer = {
+            let mut map: std::collections::HashMap<
+                String,
+                std::sync::Arc<dyn crate::summarizer::backend::SummarizerBackend>,
+            > = Default::default();
+            map.insert(
+                "default".into(),
+                std::sync::Arc::new(crate::summarizer::extractive::ExtractiveBackend::new(
+                    "default",
+                    crate::tokenizer::Tokenizer::O200k,
+                )),
+            );
+            let reg = std::sync::Arc::new(
+                crate::summarizer::registry::SummarizerRegistry::__test_construct(
+                    map,
+                    "default".into(),
+                    Some("default".into()),
+                ),
+            );
+            std::sync::Arc::new(crate::summarizer::SummarizerService::new(
+                db.clone(),
+                reg,
+                true,
+            ))
+        };
         (
             RoverHandler::new(
                 db,
@@ -140,6 +165,7 @@ mod tests {
                 client,
                 crate::fetcher::ssrf::SsrfLevel::Strict,
                 pacer,
+                summarizer,
             ),
             tmp,
         )

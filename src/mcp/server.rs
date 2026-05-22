@@ -145,7 +145,20 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
     // `sched_task_tx` is kept alive by the bridge spawn above; the handler
     // no longer holds its own sender (single source of truth: storage layer).
     let _ = sched_task_tx;
-    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer);
+
+    // Build the summarizer service before the handler so the MCP tools
+    // share a single registry/cache for the server's lifetime.
+    let registry = Arc::new(
+        crate::summarizer::registry::build(&config, config.tokenizer.default)
+            .map_err(anyhow::Error::from)?,
+    );
+    let summarizer = Arc::new(crate::summarizer::SummarizerService::new(
+        db.clone(),
+        registry,
+        config.summarization.fallback_to_extractive,
+    ));
+
+    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer, summarizer);
 
     let service = handler.serve(stdio()).await?;
 

@@ -35,6 +35,37 @@ pub fn bin_path() -> std::path::PathBuf {
 /// Writes a `rover.toml` to the data dir that disables `robots.respect`,
 /// since the wiremock servers used by tests don't speak HTTPS and would
 /// otherwise produce robots fetch failures → DisallowAll.
+/// Build a minimal in-process `SummarizerService` for tests that construct
+/// a `RoverHandler` directly. Uses a single offline extractive backend so
+/// no network I/O happens.
+pub async fn make_summarizer_service(
+    db: &rover::storage::Db,
+) -> std::sync::Arc<rover::summarizer::SummarizerService> {
+    let mut map: std::collections::HashMap<
+        String,
+        std::sync::Arc<dyn rover::summarizer::backend::SummarizerBackend>,
+    > = Default::default();
+    map.insert(
+        "default".into(),
+        std::sync::Arc::new(rover::summarizer::extractive::ExtractiveBackend::new(
+            "default",
+            rover::tokenizer::Tokenizer::O200k,
+        )),
+    );
+    let reg = std::sync::Arc::new(
+        rover::summarizer::registry::SummarizerRegistry::__test_construct(
+            map,
+            "default".into(),
+            Some("default".into()),
+        ),
+    );
+    std::sync::Arc::new(rover::summarizer::SummarizerService::new(
+        db.clone(),
+        reg,
+        true,
+    ))
+}
+
 pub async fn spawn_client(data_dir: &Path) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
     let cfg_path = data_dir.join("rover.toml");
     if !cfg_path.exists() {

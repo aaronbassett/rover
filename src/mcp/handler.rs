@@ -29,6 +29,10 @@ pub struct RoverHandler {
     pub(crate) client: reqwest::Client,
     pub(crate) ssrf_level: SsrfLevel,
     pub(crate) pacer: Arc<Pacer>,
+    // Consumed by the `summarize` MCP tool (Task 9) and onwards. Held now
+    // so the wiring lands in one place; the field is read by future tools.
+    #[allow(dead_code)]
+    pub(crate) summarizer: Arc<crate::summarizer::SummarizerService>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -39,6 +43,7 @@ impl RoverHandler {
         client: reqwest::Client,
         ssrf_level: SsrfLevel,
         pacer: Arc<Pacer>,
+        summarizer: Arc<crate::summarizer::SummarizerService>,
     ) -> Self {
         Self {
             db,
@@ -46,6 +51,7 @@ impl RoverHandler {
             client,
             ssrf_level,
             pacer,
+            summarizer,
             tool_router: Self::tool_router(),
         }
     }

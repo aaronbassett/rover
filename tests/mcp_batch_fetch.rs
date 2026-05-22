@@ -13,6 +13,8 @@ use rover::mcp::tools::batch_fetch::BatchFetchArgs;
 use rover::storage::Db;
 use tempfile::tempdir;
 
+mod common;
+
 async fn fixture_handler() -> (RoverHandler, Db) {
     let tmp = tempdir().unwrap();
     let db = Db::open(tmp.path().join("rover.db")).await.unwrap();
@@ -22,7 +24,15 @@ async fn fixture_handler() -> (RoverHandler, Db) {
     let cfg = Arc::new(Config::default());
     let client = build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout());
     let pacer = Arc::new(Pacer::new(&cfg.rate_limit));
-    let h = RoverHandler::new(db.clone(), cfg, client, SsrfLevel::TestLoopback, pacer);
+    let summarizer = common::make_summarizer_service(&db).await;
+    let h = RoverHandler::new(
+        db.clone(),
+        cfg,
+        client,
+        SsrfLevel::TestLoopback,
+        pacer,
+        summarizer,
+    );
     (h, db)
 }
 
