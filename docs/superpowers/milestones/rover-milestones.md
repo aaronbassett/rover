@@ -298,7 +298,7 @@ tests/fetcher_robots.rs
 
 **Files / modules introduced.**
 ```
-src/storage/migrations/003_tasks.sql      # tasks, task_events tables, owner_pid column
+src/storage/migrations/004_tasks.sql      # tasks, task_events tables, owner_pid column
 src/storage/tasks.rs                      # async API for tasks + events
 src/storage/events.rs
 src/tasks/mod.rs                          # task scheduler / claim loop

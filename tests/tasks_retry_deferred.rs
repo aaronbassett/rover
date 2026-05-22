@@ -15,7 +15,8 @@ use rover::fetcher::concurrency::Pacer;
 use rover::fetcher::ssrf::SsrfLevel;
 use rover::storage::Db;
 use rover::storage::tasks::{TaskKind, TaskStatus, get};
-use rover::tasks::retry::{RetryDeps, run as retry_run};
+use rover::tasks::WorkerDeps;
+use rover::tasks::retry::run as retry_run;
 use rover::tasks::types::{RetryParams, TaskId};
 
 // Readability needs a meaningful article body; a bare `<body>ok</body>` makes
@@ -41,7 +42,7 @@ async fn retry_succeeds_on_second_attempt() {
         .await;
     let mut cfg = Config::default();
     cfg.robots.respect = false;
-    let deps = RetryDeps {
+    let deps = WorkerDeps {
         client: build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout()),
         pacer: Arc::new(Pacer::new(&cfg.rate_limit)),
         cache_cfg: cfg.cache.clone(),
@@ -95,7 +96,7 @@ async fn retry_max_attempts_exhausted_terminal_failure() {
         .await;
     let mut cfg = Config::default();
     cfg.robots.respect = false;
-    let deps = RetryDeps {
+    let deps = WorkerDeps {
         client: build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout()),
         pacer: Arc::new(Pacer::new(&cfg.rate_limit)),
         cache_cfg: cfg.cache.clone(),

@@ -105,7 +105,8 @@ async fn revalidate_marks_completed_after_fresh_fetch() {
     use rover::storage::Db;
     use rover::storage::events;
     use rover::storage::tasks::{TaskInsert, TaskKind, TaskStatus, get, insert};
-    use rover::tasks::revalidate::{RevalidateDeps, run as revalidate_run};
+    use rover::tasks::WorkerDeps;
+    use rover::tasks::revalidate::run as revalidate_run;
     use rover::tasks::types::{RevalidateParams, TaskId};
     use tempfile::tempdir;
 
@@ -118,7 +119,7 @@ async fn revalidate_marks_completed_after_fresh_fetch() {
         .await;
     let mut cfg = Config::default();
     cfg.robots.respect = false;
-    let deps = RevalidateDeps {
+    let deps = WorkerDeps {
         client: build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout()),
         pacer: Arc::new(Pacer::new(&cfg.rate_limit)),
         cache_cfg: cfg.cache.clone(),

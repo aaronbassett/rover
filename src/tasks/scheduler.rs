@@ -11,7 +11,7 @@ use crate::storage::events::{EventInsert, append};
 use crate::storage::tasks::{TaskKind, TaskStatus, set_status};
 use crate::storage::{self, Db};
 use crate::tasks::error::TasksError;
-use crate::tasks::types::TaskId;
+use crate::tasks::types::{CoreEvent, TaskId};
 
 pub type NewTaskSender = mpsc::UnboundedSender<TaskId>;
 pub type NewTaskReceiver = mpsc::UnboundedReceiver<TaskId>;
@@ -121,7 +121,7 @@ impl Scheduler {
                         &self.db,
                         EventInsert {
                             task_id: orphan.id.clone(),
-                            kind: "task_failed".into(),
+                            kind: CoreEvent::TaskFailed.as_str().into(),
                             payload_json: r#"{"error":"owner_died","message":"original owner pid disappeared and task kind is not resumable"}"#.into(),
                         },
                     )

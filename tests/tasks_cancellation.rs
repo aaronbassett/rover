@@ -19,7 +19,8 @@ use rover::storage::events;
 use rover::storage::tasks::{
     TaskInsert, TaskKind, TaskStatus, get, insert, set_cancellation_requested,
 };
-use rover::tasks::batch_fetch::{BatchDeps, run as batch_run};
+use rover::tasks::WorkerDeps;
+use rover::tasks::batch_fetch::run as batch_run;
 use rover::tasks::types::{BatchFetchParams, TaskId};
 
 #[tokio::test]
@@ -50,7 +51,7 @@ async fn cancellation_between_items_stops_loop() {
     // budget; the test gates cancellation on item completion timing, not
     // throughput.
     cfg.rate_limit.requests_per_minute_per_domain = 6000;
-    let deps = BatchDeps {
+    let deps = WorkerDeps {
         client: build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout()),
         pacer: Arc::new(Pacer::new(&cfg.rate_limit)),
         cache_cfg: cfg.cache.clone(),

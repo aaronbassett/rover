@@ -10,14 +10,14 @@ use tokio_util::sync::CancellationToken;
 use crate::storage::Db;
 use crate::storage::events::{EventInsert, append};
 use crate::storage::tasks::{TaskStatus, set_status};
-use crate::tasks::types::TaskId;
+use crate::tasks::types::{CoreEvent, TaskId};
 
 pub async fn run(db: Db, task_id: TaskId, _cancel: CancellationToken) {
     let _ = append(
         &db,
         EventInsert {
             task_id: task_id.as_str().to_string(),
-            kind: "task_started".into(),
+            kind: CoreEvent::TaskStarted.as_str().into(),
             payload_json: json!({"kind":"summarize"}).to_string(),
         },
     )
@@ -31,7 +31,7 @@ pub async fn run(db: Db, task_id: TaskId, _cancel: CancellationToken) {
         &db,
         EventInsert {
             task_id: task_id.as_str().to_string(),
-            kind: "task_failed".into(),
+            kind: CoreEvent::TaskFailed.as_str().into(),
             payload_json: payload.to_string(),
         },
     )

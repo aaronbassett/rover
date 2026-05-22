@@ -15,10 +15,8 @@ use crate::config::Config;
 use crate::fetcher::ssrf::SsrfLevel;
 use crate::mcp::handler::RoverHandler;
 use crate::storage::Db;
-use crate::tasks::batch_fetch::BatchDeps;
+use crate::tasks::WorkerDeps;
 use crate::tasks::default_spawner;
-use crate::tasks::retry::RetryDeps;
-use crate::tasks::revalidate::RevalidateDeps;
 use crate::tasks::scheduler::{Scheduler, SchedulerConfig};
 
 pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> anyhow::Result<()> {
@@ -104,7 +102,7 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
             }
         }
     });
-    let batch_deps = BatchDeps {
+    let worker_deps = WorkerDeps {
         client: client.clone(),
         pacer: pacer.clone(),
         cache_cfg: config.cache.clone(),
@@ -113,25 +111,7 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
         fetch_cfg: config.fetch.clone(),
         ssrf_level,
     };
-    let retry_deps = RetryDeps {
-        client: client.clone(),
-        pacer: pacer.clone(),
-        cache_cfg: config.cache.clone(),
-        rate_cfg: config.rate_limit.clone(),
-        robots_cfg: config.robots.clone(),
-        fetch_cfg: config.fetch.clone(),
-        ssrf_level,
-    };
-    let revalidate_deps = RevalidateDeps {
-        client: client.clone(),
-        pacer: pacer.clone(),
-        cache_cfg: config.cache.clone(),
-        rate_cfg: config.rate_limit.clone(),
-        robots_cfg: config.robots.clone(),
-        fetch_cfg: config.fetch.clone(),
-        ssrf_level,
-    };
-    let spawner = default_spawner(batch_deps, retry_deps, revalidate_deps);
+    let spawner = default_spawner(worker_deps);
     // The orphan scan interval is normally 10s, but integration tests need
     // to observe orphan reclaim within a few seconds, so they override via
     // `ROVER_ORPHAN_SCAN_MS` when the test-loopback build is active.
