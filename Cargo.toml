@@ -55,6 +55,7 @@ robotxt = { version = "0.6", default-features = false, features = ["parser"] }
 httpdate = "1"
 unicode-segmentation = "1"
 genai = "0.4"
+zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 wiremock = "0.6"

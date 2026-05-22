@@ -257,6 +257,14 @@ where
 
     let new_hash = url_hash(fetched.canonical_url.as_str());
     let metadata_json = serde_json::to_string(&extracted.metadata).ok();
+    // Only retain the raw body when the operator opted in via `[cache]
+    // store_raw_html`. We clone the decoded UTF-8 body's bytes: the cost is
+    // proportional to the page size, but only paid on the fresh-fetch path.
+    let raw_html = if cache_cfg.store_raw_html {
+        Some(fetched.body.as_bytes().to_vec())
+    } else {
+        None
+    };
     let page = Page {
         url_hash: new_hash,
         url: url.as_str().to_owned(),
@@ -269,6 +277,7 @@ where
         content_hash: extracted.content_hash.clone(),
         extracted_md: extracted.body_md.clone(),
         metadata_json,
+        raw_html,
     };
 
     // Step 7: store (only if cacheable).
@@ -408,6 +417,7 @@ mod tests {
             content_hash: "x".into(),
             extracted_md: "# cached".into(),
             metadata_json: None,
+            raw_html: None,
         };
         pages::upsert(&db, page.clone()).await.unwrap();
 

@@ -39,6 +39,7 @@ async fn stale_path_inserts_revalidate_task() {
             content_hash: sha256_hex(b"old"),
             extracted_md: "old".into(),
             metadata_json: None,
+            raw_html: None,
         },
     )
     .await
