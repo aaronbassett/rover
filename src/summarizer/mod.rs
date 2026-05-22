@@ -10,6 +10,7 @@ pub mod cloud;
 pub mod error;
 pub mod extractive;
 pub mod prompts;
+pub mod registry;
 
 pub use backend::{CompactMode, CompactOpts, PreserveSection, Style, SummarizerBackend};
 pub use error::{BackendError, SummarizerError};

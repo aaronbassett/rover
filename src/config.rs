@@ -49,6 +49,12 @@ pub struct Config {
 
     #[serde(default)]
     pub robots: RobotsConfig,
+
+    #[serde(default)]
+    pub summarization: SummarizationConfig,
+
+    #[serde(default)]
+    pub backends: std::collections::HashMap<String, BackendConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -352,6 +358,64 @@ fn default_robots_ttl() -> Duration {
 }
 fn default_robots_failure_ttl() -> Duration {
     Duration::from_secs(5 * 60)
+}
+
+/// Top-level `[summarization]` section.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SummarizationConfig {
+    #[serde(default = "default_summarization_backend")]
+    pub default_backend: String,
+
+    #[serde(default = "default_summarization_mode")]
+    pub default_mode: String,
+
+    #[serde(default = "default_summarization_style")]
+    pub default_style: String,
+
+    #[serde(default = "default_summarization_fallback")]
+    pub fallback_to_extractive: bool,
+}
+
+impl Default for SummarizationConfig {
+    fn default() -> Self {
+        Self {
+            default_backend: default_summarization_backend(),
+            default_mode: default_summarization_mode(),
+            default_style: default_summarization_style(),
+            fallback_to_extractive: default_summarization_fallback(),
+        }
+    }
+}
+
+fn default_summarization_backend() -> String {
+    "default".to_string()
+}
+fn default_summarization_mode() -> String {
+    "abstractive".to_string()
+}
+fn default_summarization_style() -> String {
+    "prose".to_string()
+}
+fn default_summarization_fallback() -> bool {
+    true
+}
+
+/// One `[backends.<name>]` block. Free-form `kind`/`provider` strings —
+/// validation lives in `summarizer::registry::build` where the parsed
+/// values are matched against the typed enum.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct BackendConfig {
+    pub kind: String,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
 }
 
 /// Load config. If `path` is provided, the file must exist and parse cleanly.
@@ -927,5 +991,56 @@ failure_ttl = "10m"
             load(Some(file.path())),
             Err(ConfigError::Invalid { .. })
         ));
+    }
+
+    #[test]
+    fn summarization_section_parses_with_defaults() {
+        let toml = r#"
+[summarization]
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.summarization.default_backend, "default");
+        assert_eq!(cfg.summarization.default_mode, "abstractive");
+        assert_eq!(cfg.summarization.default_style, "prose");
+        assert!(cfg.summarization.fallback_to_extractive);
+    }
+
+    #[test]
+    fn backends_section_parses_extractive_block() {
+        let toml = r#"
+[backends.default]
+kind = "extractive"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.backends.len(), 1);
+        let b = cfg.backends.get("default").unwrap();
+        assert_eq!(b.kind, "extractive");
+        assert!(b.provider.is_none());
+    }
+
+    #[test]
+    fn backends_section_parses_cloud_block_with_all_fields() {
+        let toml = r#"
+[backends.lm_studio]
+kind = "cloud"
+provider = "openai_compat"
+base_url = "http://localhost:1234/v1"
+model = "qwen3.5-0.8b"
+api_key_env = "LM_KEY"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let b = cfg.backends.get("lm_studio").unwrap();
+        assert_eq!(b.kind, "cloud");
+        assert_eq!(b.provider.as_deref(), Some("openai_compat"));
+        assert_eq!(b.base_url.as_deref(), Some("http://localhost:1234/v1"));
+        assert_eq!(b.model.as_deref(), Some("qwen3.5-0.8b"));
+        assert_eq!(b.api_key_env.as_deref(), Some("LM_KEY"));
+    }
+
+    #[test]
+    fn missing_summarization_section_yields_defaults() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.summarization.default_backend, "default");
+        assert!(cfg.backends.is_empty());
     }
 }
