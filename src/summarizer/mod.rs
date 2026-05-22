@@ -17,8 +17,7 @@ pub use error::{BackendError, SummarizerError};
 
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
-
+use crate::fetcher::cached::sha256_hex;
 use crate::storage::Db;
 use crate::storage::summaries;
 use crate::summarizer::registry::SummarizerRegistry;
@@ -57,15 +56,7 @@ pub fn params_hash(opts: &CompactOpts, model_id: &str) -> String {
         serialized.push_str(&format!("{}:{}", s.len(), s));
     }
 
-    let mut h = Sha256::new();
-    h.update(serialized.as_bytes());
-    let bytes = h.finalize();
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        use std::fmt::Write as _;
-        write!(hex, "{b:02x}").expect("write to string never fails");
-    }
-    hex
+    sha256_hex(serialized.as_bytes())
 }
 
 /// Outcome of a `SummarizerService::compact` call. Carries enough context
@@ -378,6 +369,52 @@ mod tests {
         let c = params_hash(&c_opts, "m");
         let d = params_hash(&d_opts, "m");
         assert_ne!(c, d);
+    }
+
+    #[test]
+    fn hash_handles_utf8_focus() {
+        let mut jp = baseline();
+        jp.focus = Some("日本語".to_string());
+        let mut cafe = baseline();
+        cafe.focus = Some("café".to_string());
+        let mut crab = baseline();
+        crab.focus = Some("🦀".to_string());
+
+        let h_jp = params_hash(&jp, "m");
+        let h_cafe = params_hash(&cafe, "m");
+        let h_crab = params_hash(&crab, "m");
+
+        // Distinct multi-byte focus values produce distinct hashes.
+        assert_ne!(h_jp, h_cafe);
+        assert_ne!(h_jp, h_crab);
+        assert_ne!(h_cafe, h_crab);
+
+        // Same multi-byte focus is stable across calls.
+        assert_eq!(h_jp, params_hash(&jp, "m"));
+        assert_eq!(h_cafe, params_hash(&cafe, "m"));
+        assert_eq!(h_crab, params_hash(&crab, "m"));
+    }
+
+    #[test]
+    fn hash_is_case_sensitive_on_focus() {
+        let mut upper = baseline();
+        upper.focus = Some("API".to_string());
+        let mut lower = baseline();
+        lower.focus = Some("api".to_string());
+        let h_upper = params_hash(&upper, "m");
+        let h_lower = params_hash(&lower, "m");
+        assert_ne!(h_upper, h_lower);
+    }
+
+    #[test]
+    fn hash_handles_long_focus() {
+        let mut o = baseline();
+        o.focus = Some("x".repeat(10_000));
+        let h1 = params_hash(&o, "m");
+        let h2 = params_hash(&o, "m");
+        assert_eq!(h1.len(), 64);
+        assert!(h1.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(h1, h2);
     }
 }
 
