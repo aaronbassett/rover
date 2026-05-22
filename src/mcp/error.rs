@@ -29,8 +29,12 @@ pub enum McpError {
     #[error("invalid URL: {0}")]
     InvalidUrl(String),
 
-    #[error("max_tokens exceeded: {actual} > {max}")]
-    MaxTokensExceeded { actual: usize, max: usize },
+    #[error("max_tokens exceeded: {actual} > {max} (was_auto: {was_auto})")]
+    MaxTokensExceeded {
+        actual: usize,
+        max: usize,
+        was_auto: bool,
+    },
 
     #[error("too many URLs ({count}, max {max})")]
     TooManyUrls { count: usize, max: usize },
@@ -46,14 +50,26 @@ impl McpError {
     /// Translate to the stable wire envelope.
     pub fn into_rover_error(self) -> RoverError {
         match &self {
-            Self::MaxTokensExceeded { actual, max } => {
-                let msg = format!(
-                    "content is {actual} tokens; max_tokens={max}. \
-                     Auto-summarization was attempted (or the agent provided \
-                     an explicit `summarize` arg) and the result still \
-                     exceeded the budget. Reduce max_tokens, or request a \
-                     summarize call with stricter target_tokens."
-                );
+            Self::MaxTokensExceeded {
+                actual,
+                max,
+                was_auto,
+            } => {
+                let msg = if *was_auto {
+                    format!(
+                        "content is {actual} tokens; max_tokens={max}. \
+                         Auto-summarization was attempted and the result still exceeded \
+                         the budget. Reduce max_tokens, or request a summarize call with \
+                         stricter target_tokens."
+                    )
+                } else {
+                    format!(
+                        "content is {actual} tokens; max_tokens={max}. \
+                         You provided an explicit `summarize` arg and the summary still \
+                         exceeded the budget. Increase max_tokens or request stricter \
+                         target_tokens in the summarize call."
+                    )
+                };
                 RoverError::new(RoverError::MAX_TOKENS_EXCEEDED, msg)
             }
             Self::InvalidArgs(m) => RoverError::new(RoverError::INVALID_ARGS, m.clone()),
@@ -182,12 +198,42 @@ mod tests {
         let e = McpError::MaxTokensExceeded {
             actual: 5000,
             max: 1000,
+            was_auto: true,
         };
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::MAX_TOKENS_EXCEEDED);
         assert!(r.message.contains("5000"));
         assert!(r.message.contains("1000"));
         assert!(r.message.contains("summarize"));
+        assert!(r.message.contains("Auto-summarization"));
+    }
+
+    #[test]
+    fn max_tokens_translation_explicit_summarize_message_differs() {
+        let auto = McpError::MaxTokensExceeded {
+            actual: 5000,
+            max: 1000,
+            was_auto: true,
+        }
+        .into_rover_error();
+        let explicit = McpError::MaxTokensExceeded {
+            actual: 5000,
+            max: 1000,
+            was_auto: false,
+        }
+        .into_rover_error();
+        assert_eq!(explicit.code, RoverError::MAX_TOKENS_EXCEEDED);
+        assert!(explicit.message.contains("5000"));
+        assert!(explicit.message.contains("1000"));
+        assert!(
+            explicit.message.contains("explicit `summarize` arg"),
+            "expected explicit-summarize message, got: {}",
+            explicit.message,
+        );
+        assert_ne!(
+            auto.message, explicit.message,
+            "auto vs explicit messages should differ",
+        );
     }
 
     #[test]

@@ -56,6 +56,10 @@ pub struct FetchArgs {
     /// the summary of the extracted body (post tables/images passes), and
     /// `FetchResponse.summarized` is `true`. The shape mirrors
     /// [`crate::mcp::tools::summarize::SummarizeArgs`] minus the `url`.
+    ///
+    /// Any unset sub-field falls back to its default (mode/style/preserve/
+    /// target_tokens/focus/backend from the `[summarization]` config; same
+    /// defaults the standalone `summarize` tool uses).
     #[serde(default)]
     pub summarize: Option<InlineSummarizeArgs>,
 
@@ -362,7 +366,42 @@ impl JsonSchema for FetchOutput {
     }
 }
 
+/// Per-call summarize bookkeeping carried through `fetch_inner` into the
+/// response envelope.
+#[derive(Debug, Clone)]
+struct SummarizeOutcome {
+    summarized: bool,
+    fallback: Option<crate::mcp::envelope::SummarizerFallbackInfo>,
+}
+
 impl RoverHandler {
+    /// Run the summarizer against `body_md` with `opts` and lift the result
+    /// into the wire envelope's fallback shape.
+    async fn run_compact(
+        &self,
+        body_md: &str,
+        opts: &crate::summarizer::backend::CompactOpts,
+    ) -> Result<(String, Option<crate::mcp::envelope::SummarizerFallbackInfo>), McpError> {
+        let content_hash = format!(
+            "sha256:{}",
+            crate::fetcher::cached::sha256_hex(body_md.as_bytes()),
+        );
+        let r = self
+            .summarizer
+            .compact(&content_hash, body_md, opts)
+            .await?;
+        // FallbackInfo.reason is &'static str (stable enum-ish); on the wire
+        // it's String because serde Deserialize needs an owned String
+        // symmetrically.
+        let fallback = r
+            .fallback
+            .map(|f| crate::mcp::envelope::SummarizerFallbackInfo {
+                from: f.from,
+                reason: f.reason.to_string(),
+            });
+        Ok((r.summary_md, fallback))
+    }
+
     /// Tool body, decoupled from the `#[tool]` macro for unit testing.
     /// Task 11 wires this into the router; here it's a plain async method.
     pub async fn fetch_inner(&self, args: FetchArgs) -> Result<FetchOutput, McpError> {
@@ -489,10 +528,9 @@ impl RoverHandler {
         // M7: optional inline `summarize` arg runs first against the
         // post-pass body. If the agent provided this, the returned
         // `markdown` is the summary.
-        let (body_md, summarize_meta): (
-            String,
-            Option<(bool, Option<crate::mcp::envelope::SummarizerFallbackInfo>)>,
-        ) = if let Some(inline) = args.summarize.clone() {
+        let (body_md, summarize_meta): (String, Option<SummarizeOutcome>) = if let Some(inline) =
+            args.summarize.clone()
+        {
             let defaults = crate::summarizer::DefaultsHint::from_config(&self.config.summarization);
             let opts = self.summarizer.resolve_defaults(
                 inline.mode.map(Into::into),
@@ -503,18 +541,14 @@ impl RoverHandler {
                 inline.backend,
                 &defaults,
             );
-            let content_hash = format!("sha256:{}", sha256_hex(body_md.as_bytes()));
-            let r = self
-                .summarizer
-                .compact(&content_hash, &body_md, &opts)
-                .await?;
-            let fallback = r
-                .fallback
-                .map(|f| crate::mcp::envelope::SummarizerFallbackInfo {
-                    from: f.from,
-                    reason: f.reason.to_string(),
-                });
-            (r.summary_md, Some((true, fallback)))
+            let (summary_md, fallback) = self.run_compact(&body_md, &opts).await?;
+            (
+                summary_md,
+                Some(SummarizeOutcome {
+                    summarized: true,
+                    fallback,
+                }),
+            )
         } else {
             (body_md, None)
         };
@@ -527,59 +561,55 @@ impl RoverHandler {
         // resulting summary is still over budget, return MaxTokensExceeded.
         // If the agent already supplied an explicit `summarize` arg, don't
         // override that choice — surface the error directly.
-        let (body_md, tokens, auto_meta): (
-            String,
-            usize,
-            Option<(bool, Option<crate::mcp::envelope::SummarizerFallbackInfo>)>,
-        ) = if let Some(max) = args.max_tokens {
-            if tokens <= max {
-                (body_md, tokens, None)
-            } else if summarize_meta.is_some() {
-                return Err(McpError::MaxTokensExceeded {
-                    actual: tokens,
-                    max,
-                });
-            } else if args.count_only {
-                // count_only is a probe: tell the agent the real size
-                // without auto-correction. Don't summarize — fall through
-                // to the count_only short-circuit which reports the real
-                // (over-budget) token count.
-                (body_md, tokens, None)
-            } else {
-                let defaults =
-                    crate::summarizer::DefaultsHint::from_config(&self.config.summarization);
-                let opts = self.summarizer.resolve_defaults(
-                    None,
-                    None,
-                    Some(max),
-                    None,
-                    vec![],
-                    None,
-                    &defaults,
-                );
-                let content_hash = format!("sha256:{}", sha256_hex(body_md.as_bytes()));
-                let r = self
-                    .summarizer
-                    .compact(&content_hash, &body_md, &opts)
-                    .await?;
-                let new_tokens = tokenizer::count(&r.summary_md, family)?;
-                if new_tokens > max {
+        let (body_md, tokens, auto_meta): (String, usize, Option<SummarizeOutcome>) =
+            if let Some(max) = args.max_tokens {
+                if tokens <= max {
+                    (body_md, tokens, None)
+                } else if summarize_meta.is_some() {
                     return Err(McpError::MaxTokensExceeded {
-                        actual: new_tokens,
+                        actual: tokens,
                         max,
+                        was_auto: false,
                     });
+                } else if args.count_only {
+                    // count_only is a probe: tell the agent the real size
+                    // without auto-correction. Don't summarize — fall through
+                    // to the count_only short-circuit which reports the real
+                    // (over-budget) token count.
+                    (body_md, tokens, None)
+                } else {
+                    let defaults =
+                        crate::summarizer::DefaultsHint::from_config(&self.config.summarization);
+                    let opts = self.summarizer.resolve_defaults(
+                        None,
+                        None,
+                        Some(max),
+                        None,
+                        vec![],
+                        None,
+                        &defaults,
+                    );
+                    let (summary_md, fallback) = self.run_compact(&body_md, &opts).await?;
+                    let new_tokens = tokenizer::count(&summary_md, family)?;
+                    if new_tokens > max {
+                        return Err(McpError::MaxTokensExceeded {
+                            actual: new_tokens,
+                            max,
+                            was_auto: true,
+                        });
+                    }
+                    (
+                        summary_md,
+                        new_tokens,
+                        Some(SummarizeOutcome {
+                            summarized: true,
+                            fallback,
+                        }),
+                    )
                 }
-                let fallback = r
-                    .fallback
-                    .map(|f| crate::mcp::envelope::SummarizerFallbackInfo {
-                        from: f.from,
-                        reason: f.reason.to_string(),
-                    });
-                (r.summary_md, new_tokens, Some((true, fallback)))
-            }
-        } else {
-            (body_md, tokens, None)
-        };
+            } else {
+                (body_md, tokens, None)
+            };
 
         // Build the optional SWR envelope before lowering `cache_status` to the
         // unit-variant wire enum.
@@ -663,11 +693,11 @@ impl RoverHandler {
             images_failed: images_result.images_failed,
         });
 
-        let summarized_flag = summarize_meta.as_ref().map(|(b, _)| *b);
-        let auto_summarized_flag = auto_meta.as_ref().map(|(b, _)| *b);
+        let summarized_flag = summarize_meta.as_ref().map(|o| o.summarized);
+        let auto_summarized_flag = auto_meta.as_ref().map(|o| o.summarized);
         let summarizer_fallback = summarize_meta
-            .and_then(|(_, f)| f)
-            .or_else(|| auto_meta.and_then(|(_, f)| f));
+            .and_then(|o| o.fallback)
+            .or_else(|| auto_meta.and_then(|o| o.fallback));
 
         Ok(FetchOutput::Full(FetchResponse {
             markdown: body_md,
