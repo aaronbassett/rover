@@ -486,7 +486,12 @@ impl RoverHandler {
                             .compact(&content_hash, &table_text, &opts)
                             .await
                             .map(|r| {
-                                if let Some(fb) = &r.fallback {
+                                let fb =
+                                    r.fallback.map(|f| crate::extractor::tables::FallbackInfo {
+                                        from: f.from,
+                                        reason: f.reason.to_string(),
+                                    });
+                                if let Some(fb) = &fb {
                                     tracing::debug!(
                                         target: "rover::mcp",
                                         from = %fb.from,
@@ -494,12 +499,22 @@ impl RoverHandler {
                                         "table summarizer fell back to extractive",
                                     );
                                 }
-                                r.summary_md
+                                (r.summary_md, fb)
                             })
                             .map_err(|e| e.fallback_reason().to_string())
                     })
                         as std::pin::Pin<
-                            Box<dyn std::future::Future<Output = Result<String, String>> + Send>,
+                            Box<
+                                dyn std::future::Future<
+                                        Output = Result<
+                                            (
+                                                String,
+                                                Option<crate::extractor::tables::FallbackInfo>,
+                                            ),
+                                            String,
+                                        >,
+                                    > + Send,
+                            >,
                         >
                 }))
             } else {

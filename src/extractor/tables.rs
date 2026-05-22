@@ -30,20 +30,46 @@ pub struct TableTransform {
     /// returned an error (see `fallback_reason`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary_md: Option<String>,
-    /// Reason the per-table summarizer hook failed for this table; the
-    /// original markdown is preserved verbatim in the body when this is
-    /// set. Mirrors `SummarizerError::fallback_reason()` strings.
+    /// Set in two cases: (1) the per-table summarizer hook failed
+    /// entirely — `summary_md` is `None` and the original markdown is
+    /// preserved verbatim; (2) the service fell back internally (e.g.
+    /// cloud→extractive) — `summary_md` is set to the fallback backend's
+    /// output and `fallback_from` is set to the original backend name.
+    /// Mirrors `SummarizerError::fallback_reason()` strings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_reason: Option<String>,
+    /// Backend name that the per-table summarizer fell back FROM, when
+    /// the service performed an internal fallback (e.g.
+    /// cloud→extractive). Set alongside `summary_md` (body has a
+    /// successfully-produced summary, from the fallback backend) AND
+    /// `fallback_reason` (why the primary failed). Distinct from the
+    /// total-failure case where `summary_md` is `None` and
+    /// `fallback_from` is `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_from: Option<String>,
+}
+
+/// Carrier for per-table internal-fallback metadata. Mirrors
+/// `crate::summarizer::FallbackInfo` but owned (the static-str `reason`
+/// is converted to `String` to keep this module independent of the
+/// summarizer crate).
+#[derive(Debug, Clone)]
+pub struct FallbackInfo {
+    pub from: String,
+    pub reason: String,
 }
 
 /// Async hook the `TablesMode::Summarize` path invokes for each detected
 /// table. Receives the plaintext-rendered table block and returns either
-/// the summary string or an error reason (the string is recorded in
+/// the summary string plus optional internal-fallback metadata, or an
+/// error reason (the string is recorded in
 /// `TableTransform.fallback_reason`).
 pub type TableSummarizeHook = Arc<
-    dyn for<'a> Fn(&'a str) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>
-        + Send
+    dyn for<'a> Fn(
+            &'a str,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<(String, Option<FallbackInfo>), String>> + Send + 'a>,
+        > + Send
         + Sync,
 >;
 
@@ -101,10 +127,14 @@ pub fn apply(
 /// through `hook`. All other modes delegate to the sync `apply` path.
 ///
 /// For each detected pipe-table the hook is invoked with the table's
-/// raw markdown block; on `Ok(summary)` the block is replaced with the
-/// summary text and `TableTransform.summary_md` is populated. On
-/// `Err(reason)` the original table is preserved verbatim and
-/// `fallback_reason` records `reason`.
+/// raw markdown block; on `Ok((summary, fallback))` the block is
+/// replaced with the summary text and `TableTransform.summary_md` is
+/// populated. If `fallback` is `Some`, the service performed an
+/// internal fallback (e.g. cloud→extractive) and the metadata is
+/// recorded on the record under `fallback_reason` and `fallback_from`.
+/// On `Err(reason)` the original table is preserved verbatim and
+/// `fallback_reason` records `reason` (with `fallback_from` left
+/// `None`).
 pub async fn apply_with_summarizer(
     markdown: &str,
     mode: &TablesMode,
@@ -139,7 +169,7 @@ pub async fn apply_with_summarizer(
             }
             let table_text = rows.join("\n");
             match hook(&table_text).await {
-                Ok(summary) => {
+                Ok((summary, fallback)) => {
                     out.push_str(&summary);
                     out.push('\n');
                     records.push(TableTransform {
@@ -149,7 +179,8 @@ pub async fn apply_with_summarizer(
                         kept_rows: None,
                         truncated_rows: None,
                         summary_md: Some(summary),
-                        fallback_reason: None,
+                        fallback_reason: fallback.as_ref().map(|f| f.reason.clone()),
+                        fallback_from: fallback.map(|f| f.from),
                     });
                 }
                 Err(reason) => {
@@ -163,6 +194,7 @@ pub async fn apply_with_summarizer(
                         truncated_rows: None,
                         summary_md: None,
                         fallback_reason: Some(reason),
+                        fallback_from: None,
                     });
                 }
             }
@@ -208,6 +240,7 @@ fn transform_table(
                 truncated_rows: None,
                 summary_md: None,
                 fallback_reason: None,
+                fallback_from: None,
             }),
         )),
         TablesMode::Drop => Ok((
@@ -220,6 +253,7 @@ fn transform_table(
                 truncated_rows: None,
                 summary_md: None,
                 fallback_reason: None,
+                fallback_from: None,
             }),
         )),
         TablesMode::Sample(strategy) => {
@@ -248,6 +282,7 @@ fn transform_table(
                     truncated_rows: Some(truncated),
                     summary_md: None,
                     fallback_reason: None,
+                    fallback_from: None,
                 }),
             ))
         }
@@ -272,6 +307,7 @@ fn transform_table(
                     truncated_rows: None,
                     summary_md: None,
                     fallback_reason: None,
+                    fallback_from: None,
                 }),
             ))
         }
@@ -440,7 +476,7 @@ mod tests {
             let counter_clone = counter_clone.clone();
             Box::pin(async move {
                 counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Ok::<String, String>("(summary)".to_string())
+                Ok::<(String, Option<FallbackInfo>), String>(("(summary)".to_string(), None))
             })
         });
         let (out, recs) =
@@ -455,6 +491,7 @@ mod tests {
                 .all(|r| r.summary_md.as_deref() == Some("(summary)"))
         );
         assert!(recs.iter().all(|r| r.fallback_reason.is_none()));
+        assert!(recs.iter().all(|r| r.fallback_from.is_none()));
         assert!(out.contains("(summary)"));
         assert!(!out.contains("| 1 | 2 |"));
         assert!(!out.contains("| 9 | 8 |"));
@@ -467,7 +504,9 @@ mod tests {
             paths()
         };
         let hook: TableSummarizeHook = std::sync::Arc::new(|_text: &str| {
-            Box::pin(async move { Err::<String, String>("auth_failed".to_string()) })
+            Box::pin(async move {
+                Err::<(String, Option<FallbackInfo>), String>("auth_failed".to_string())
+            })
         });
         let (out, recs) = apply_with_summarizer(
             TABLE_3ROWS,
@@ -482,8 +521,46 @@ mod tests {
         assert_eq!(recs[0].mode, "summarize");
         assert!(recs[0].summary_md.is_none());
         assert_eq!(recs[0].fallback_reason.as_deref(), Some("auth_failed"));
+        assert!(recs[0].fallback_from.is_none());
         assert!(out.contains("| 1 | 2 |"));
         assert!(out.contains("| 5 | 6 |"));
+    }
+
+    #[tokio::test]
+    async fn summarize_mode_records_internal_fallback_when_hook_returns_fallback_info() {
+        let paths = {
+            let _g = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            paths()
+        };
+        let hook: TableSummarizeHook = std::sync::Arc::new(|_text: &str| {
+            Box::pin(async move {
+                Ok::<(String, Option<FallbackInfo>), String>((
+                    "(extractive summary)".to_string(),
+                    Some(FallbackInfo {
+                        from: "fast".to_string(),
+                        reason: "backend_unavailable".to_string(),
+                    }),
+                ))
+            })
+        });
+        let (out, recs) = apply_with_summarizer(
+            TABLE_3ROWS,
+            &TablesMode::Summarize,
+            &paths,
+            &url(),
+            Some(&hook),
+        )
+        .await
+        .unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].summary_md.as_deref(), Some("(extractive summary)"));
+        assert_eq!(recs[0].fallback_from.as_deref(), Some("fast"));
+        assert_eq!(
+            recs[0].fallback_reason.as_deref(),
+            Some("backend_unavailable")
+        );
+        assert!(out.contains("(extractive summary)"));
+        assert!(!out.contains("| 1 | 2 |"));
     }
 
     #[test]
