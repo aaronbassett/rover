@@ -15,10 +15,10 @@ use crate::tokenizer;
 
 /// Wire-side `fetch` tool arguments.
 ///
-/// Live in M3+M4: `url`, `force_refresh`, `count_only`, `tokenizer`,
-/// `max_tokens`, `tables`, `images`, `metadata`. Accept-no-op (schema-stable,
-/// body-deferred): `headless`, `summarize`. Their values are accepted by the
-/// schema and emit one `tracing::debug` line each.
+/// Live in M3+M4+M7: `url`, `force_refresh`, `count_only`, `tokenizer`,
+/// `max_tokens`, `tables`, `images`, `metadata`, `summarize`. Accept-no-op
+/// (schema-stable, body-deferred): `headless`. Their values are accepted by
+/// the schema and emit one `tracing::debug` line each.
 ///
 /// `tokenizer` is exposed as a string on the wire (rather than the
 /// [`Tokenizer`] enum) so the JSON schema doesn't have to mirror the
@@ -50,11 +50,41 @@ pub struct FetchArgs {
     #[serde(default)]
     pub metadata: Option<MetadataArg>,
 
+    /// Inline summarize request. When present, the returned `markdown` is
+    /// the summary of the extracted body (post tables/images passes), and
+    /// `FetchResponse.summarized` is `true`. The shape mirrors
+    /// [`crate::mcp::tools::summarize::SummarizeArgs`] minus the `url`.
+    #[serde(default)]
+    pub summarize: Option<InlineSummarizeArgs>,
+
     // ---- accept-no-op until later milestones ----
     #[serde(default)]
     pub headless: Option<serde_json::Value>,
+}
+
+/// Inline `summarize` sub-arg for the `fetch` tool. Re-uses the same
+/// enums as the standalone `summarize` tool so a single CLI/schema source
+/// of truth covers both call sites.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InlineSummarizeArgs {
     #[serde(default)]
-    pub summarize: Option<serde_json::Value>,
+    pub target_tokens: Option<usize>,
+
+    #[serde(default)]
+    pub mode: Option<crate::mcp::tools::summarize::SummarizeMode>,
+
+    #[serde(default)]
+    pub focus: Option<String>,
+
+    #[serde(default)]
+    pub preserve: Vec<crate::mcp::tools::summarize::SummarizePreserve>,
+
+    #[serde(default)]
+    pub style: Option<crate::mcp::tools::summarize::SummarizeStyle>,
+
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 /// Wire shape for `tables`.
@@ -402,18 +432,94 @@ impl RoverHandler {
         .map_err(McpError::Extractor)?;
         let body_md = images_result.markdown;
 
-        // Recompute tokens against the post-pass body; `max_tokens` constrains
-        // what the agent will actually see.
+        // M7: optional inline `summarize` arg runs first against the
+        // post-pass body. If the agent provided this, the returned
+        // `markdown` is the summary.
+        let (body_md, summarize_meta): (
+            String,
+            Option<(bool, Option<crate::mcp::envelope::SummarizerFallbackInfo>)>,
+        ) = if let Some(inline) = args.summarize.clone() {
+            let defaults = crate::summarizer::DefaultsHint::from_config(&self.config.summarization);
+            let opts = self.summarizer.resolve_defaults(
+                inline.mode.map(Into::into),
+                inline.style.map(Into::into),
+                inline.target_tokens,
+                inline.focus,
+                inline.preserve.into_iter().map(Into::into).collect(),
+                inline.backend,
+                &defaults,
+            );
+            let content_hash = format!("sha256:{}", sha256_hex(body_md.as_bytes()));
+            let r = self
+                .summarizer
+                .compact(&content_hash, &body_md, &opts)
+                .await?;
+            let fallback = r
+                .fallback
+                .map(|f| crate::mcp::envelope::SummarizerFallbackInfo {
+                    from: f.from,
+                    reason: f.reason.to_string(),
+                });
+            (r.summary_md, Some((true, fallback)))
+        } else {
+            (body_md, None)
+        };
+
+        // Recompute tokens against the (possibly summarized) body; `max_tokens`
+        // constrains what the agent will actually see.
         let tokens = tokenizer::count(&body_md, family)?;
 
-        if let Some(max) = args.max_tokens
-            && tokens > max
-        {
-            return Err(McpError::MaxTokensExceeded {
-                actual: tokens,
-                max,
-            });
-        }
+        // M7: auto-summarize on `max_tokens` overflow. Single-shot: if the
+        // resulting summary is still over budget, return MaxTokensExceeded.
+        // If the agent already supplied an explicit `summarize` arg, don't
+        // override that choice — surface the error directly.
+        let (body_md, tokens, auto_meta): (
+            String,
+            usize,
+            Option<(bool, Option<crate::mcp::envelope::SummarizerFallbackInfo>)>,
+        ) = if let Some(max) = args.max_tokens {
+            if tokens <= max {
+                (body_md, tokens, None)
+            } else if summarize_meta.is_some() {
+                return Err(McpError::MaxTokensExceeded {
+                    actual: tokens,
+                    max,
+                });
+            } else {
+                let defaults =
+                    crate::summarizer::DefaultsHint::from_config(&self.config.summarization);
+                let opts = self.summarizer.resolve_defaults(
+                    None,
+                    None,
+                    Some(max),
+                    None,
+                    vec![],
+                    None,
+                    &defaults,
+                );
+                let content_hash = format!("sha256:{}", sha256_hex(body_md.as_bytes()));
+                let r = self
+                    .summarizer
+                    .compact(&content_hash, &body_md, &opts)
+                    .await?;
+                let new_tokens = tokenizer::count(&r.summary_md, family)?;
+                if new_tokens > max {
+                    return Err(McpError::MaxTokensExceeded {
+                        actual: new_tokens,
+                        max,
+                    });
+                }
+                let fallback = r
+                    .fallback
+                    .map(|f| crate::mcp::envelope::SummarizerFallbackInfo {
+                        from: f.from,
+                        reason: f.reason.to_string(),
+                    });
+                (r.summary_md, new_tokens, Some((true, fallback)))
+            }
+        } else {
+            (body_md, tokens, None)
+        };
 
         // Build the optional SWR envelope before lowering `cache_status` to the
         // unit-variant wire enum.
@@ -495,11 +601,20 @@ impl RoverHandler {
             images_failed: images_result.images_failed,
         });
 
+        let summarized_flag = summarize_meta.as_ref().map(|(b, _)| *b);
+        let auto_summarized_flag = auto_meta.as_ref().map(|(b, _)| *b);
+        let summarizer_fallback = summarize_meta
+            .and_then(|(_, f)| f)
+            .or_else(|| auto_meta.and_then(|(_, f)| f));
+
         Ok(FetchOutput::Full(FetchResponse {
             markdown: body_md,
             frontmatter,
             cache_status,
             revalidation,
+            summarized: summarized_flag,
+            auto_summarized: auto_summarized_flag,
+            summarizer_fallback,
         }))
     }
 }
@@ -507,9 +622,6 @@ impl RoverHandler {
 fn log_deferred_args(args: &FetchArgs) {
     if let Some(v) = &args.headless {
         tracing::debug!(target: "rover::mcp", arg = "headless", value = ?v, "ignored until M9");
-    }
-    if let Some(v) = &args.summarize {
-        tracing::debug!(target: "rover::mcp", arg = "summarize", value = ?v, "ignored until M7");
     }
 }
 
@@ -535,13 +647,45 @@ mod tests {
         let v: FetchArgs = serde_json::from_str(
             r#"{
                 "url":"https://example.com",
-                "headless":"auto",
-                "summarize":{"target_tokens":500}
+                "headless":"auto"
             }"#,
         )
         .unwrap();
         assert!(v.headless.is_some());
-        assert!(v.summarize.is_some());
+    }
+
+    #[test]
+    fn fetch_args_parse_typed_summarize() {
+        let v: FetchArgs = serde_json::from_str(
+            r#"{
+                "url":"https://example.com",
+                "summarize":{
+                    "target_tokens":500,
+                    "mode":"extractive",
+                    "style":"bullet",
+                    "preserve":["code","tables"]
+                }
+            }"#,
+        )
+        .unwrap();
+        let s = v.summarize.expect("summarize parsed");
+        assert_eq!(s.target_tokens, Some(500));
+        assert!(matches!(
+            s.mode,
+            Some(crate::mcp::tools::summarize::SummarizeMode::Extractive)
+        ));
+        assert!(matches!(
+            s.style,
+            Some(crate::mcp::tools::summarize::SummarizeStyle::Bullet)
+        ));
+        assert_eq!(s.preserve.len(), 2);
+    }
+
+    #[test]
+    fn fetch_args_reject_unknown_summarize_field() {
+        let r: Result<FetchArgs, _> =
+            serde_json::from_str(r#"{"url":"https://x/","summarize":{"bogus":1}}"#);
+        assert!(r.is_err());
     }
 
     #[test]

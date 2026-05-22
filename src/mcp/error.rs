@@ -48,8 +48,11 @@ impl McpError {
         match &self {
             Self::MaxTokensExceeded { actual, max } => {
                 let msg = format!(
-                    "extracted content is {actual} tokens; max_tokens={max}. \
-                     summarize tool not yet available (M7)"
+                    "content is {actual} tokens; max_tokens={max}. \
+                     Auto-summarization was attempted (or the agent provided \
+                     an explicit `summarize` arg) and the result still \
+                     exceeded the budget. Reduce max_tokens, or request a \
+                     summarize call with stricter target_tokens."
                 );
                 RoverError::new(RoverError::MAX_TOKENS_EXCEEDED, msg)
             }

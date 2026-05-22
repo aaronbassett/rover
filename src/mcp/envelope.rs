@@ -49,6 +49,21 @@ pub struct FetchResponse {
     /// task was successfully queued. Agents can monitor or ignore.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revalidation: Option<StaleRevalidation>,
+
+    /// `true` when the agent supplied an explicit `summarize` arg and the
+    /// returned `markdown` is the summary, not the extracted body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summarized: Option<bool>,
+
+    /// `true` when the extracted body exceeded `max_tokens` and Rover
+    /// auto-summarized to bring it within budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_summarized: Option<bool>,
+
+    /// Populated when whichever summarize path ran (`summarize` arg or the
+    /// auto path on `max_tokens`) fell back to an extractive backend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summarizer_fallback: Option<SummarizerFallbackInfo>,
 }
 
 /// `count_tokens` or `fetch{count_only:true}` response.
@@ -213,6 +228,9 @@ mod tests {
             frontmatter: "f".into(),
             cache_status: CacheStatus::Hit,
             revalidation: None,
+            summarized: None,
+            auto_summarized: None,
+            summarizer_fallback: None,
         };
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"cache_status\":\"hit\""), "got: {s}");
