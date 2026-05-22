@@ -8,7 +8,9 @@ use crate::extractor::frontmatter::{PageMeta, render as render_frontmatter};
 use crate::extractor::options::{ImagesMode, SampleStrategy, TablesMode};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
-use crate::mcp::envelope::{CacheStatus, CountResponse, CountSource, FetchResponse};
+use crate::mcp::envelope::{
+    CacheStatus, CountResponse, CountSingleResponse, CountSource, FetchResponse,
+};
 use crate::mcp::error::McpError;
 use crate::mcp::handler::{RoverHandler, resolve_tokenizer};
 use crate::tokenizer;
@@ -598,19 +600,21 @@ impl RoverHandler {
         if args.count_only {
             // `result.page.content_hash` is already prefixed (`sha256:...`)
             // by the `extract_fn` above; pass it through verbatim.
-            return Ok(FetchOutput::Count(CountResponse {
-                tokens,
-                tokenizer: family.as_str().to_string(),
-                source: CountSource::Url,
-                url: Some(url.as_str().to_string()),
-                content_hash: Some(result.page.content_hash.clone()),
-                fetched_at: Some(
-                    jiff::Timestamp::from_second(result.page.fetched_at)
-                        .map(|t| t.to_string())
-                        .unwrap_or_default(),
-                ),
-                cache_status: Some(cache_status),
-            }));
+            return Ok(FetchOutput::Count(CountResponse::Single(
+                CountSingleResponse {
+                    tokens,
+                    tokenizer: family.as_str().to_string(),
+                    source: CountSource::Url,
+                    url: Some(url.as_str().to_string()),
+                    content_hash: Some(result.page.content_hash.clone()),
+                    fetched_at: Some(
+                        jiff::Timestamp::from_second(result.page.fetched_at)
+                            .map(|t| t.to_string())
+                            .unwrap_or_default(),
+                    ),
+                    cache_status: Some(cache_status),
+                },
+            )));
         }
 
         let canonical = Url::parse(&result.page.canonical_url)

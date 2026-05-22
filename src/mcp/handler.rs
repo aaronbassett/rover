@@ -87,10 +87,11 @@ impl RoverHandler {
     }
 
     /// Count tokens in either an inline `text` or a fetched `url`.
-    #[tool(
-        description = "Count tokens in either an inline text string or a URL's \
-                       extracted Markdown. Exactly one of text/url is required."
-    )]
+    #[tool(description = "Count tokens for a URL or inline text. \
+                       mode=\"single\" (default) returns one token count. \
+                       mode=\"estimates\" returns four counts: raw_html, \
+                       extracted_md, summary_short (~250 tokens), summary_medium (~750 tokens). \
+                       Estimates mode requires url and uses the extractive backend.")]
     pub async fn count_tokens_tool(
         &self,
         Parameters(args): Parameters<CountTokensArgs>,

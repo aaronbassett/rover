@@ -66,9 +66,12 @@ pub struct FetchResponse {
     pub summarizer_fallback: Option<SummarizerFallbackInfo>,
 }
 
-/// `count_tokens` or `fetch{count_only:true}` response.
+/// Single-count `count_tokens` or `fetch{count_only:true}` response.
+///
+/// This is the historical M2/M3 shape: one tokenization result over either
+/// inline text or a fetched URL's extracted markdown.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CountResponse {
+pub struct CountSingleResponse {
     pub tokens: usize,
     pub tokenizer: String,
     pub source: CountSource,
@@ -81,6 +84,61 @@ pub struct CountResponse {
     pub fetched_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_status: Option<CacheStatus>,
+}
+
+/// Four token-count estimates returned in `mode = "estimates"`.
+///
+/// `raw_html` is `None` when `[cache] store_raw_html = false` (the default)
+/// or when the cached row has no `raw_html_zstd` blob.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CountEstimates {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_html: Option<usize>,
+    pub extracted_md: usize,
+    pub summary_short: usize,
+    pub summary_medium: usize,
+}
+
+/// `count_tokens { mode: "estimates" }` response shape.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CountEstimatesResponse {
+    pub url: String,
+    pub tokenizer: String,
+    pub estimates: CountEstimates,
+}
+
+/// `count_tokens` / `fetch{count_only:true}` response. Untagged so the
+/// historical single-count shape (still the default) remains
+/// wire-compatible; agents that opt into `mode = "estimates"` see the
+/// `CountEstimatesResponse` variant instead.
+///
+/// `JsonSchema` is implemented manually so the generated schema is rooted
+/// at `type: "object"` with a `oneOf` of the two variants — matching the
+/// pattern used by `FetchOutput` in `src/mcp/tools/fetch.rs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CountResponse {
+    Single(CountSingleResponse),
+    Estimates(CountEstimatesResponse),
+}
+
+impl JsonSchema for CountResponse {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "CountResponse".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::CountResponse").into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let single = generator.subschema_for::<CountSingleResponse>();
+        let estimates = generator.subschema_for::<CountEstimatesResponse>();
+        schemars::json_schema!({
+            "type": "object",
+            "oneOf": [single, estimates],
+        })
+    }
 }
 
 /// `get_metadata` response — structured metadata only, no markdown body.
@@ -238,7 +296,7 @@ mod tests {
 
     #[test]
     fn count_response_omits_optional_fields() {
-        let v = CountResponse {
+        let v = CountResponse::Single(CountSingleResponse {
             tokens: 7,
             tokenizer: "o200k".into(),
             source: CountSource::Text,
@@ -246,11 +304,31 @@ mod tests {
             content_hash: None,
             fetched_at: None,
             cache_status: None,
-        };
+        });
         let s = serde_json::to_string(&v).unwrap();
         assert!(!s.contains("url"));
         assert!(!s.contains("content_hash"));
         assert!(!s.contains("cache_status"));
+    }
+
+    #[test]
+    fn count_response_estimates_serialises_as_estimates_shape() {
+        let v = CountResponse::Estimates(CountEstimatesResponse {
+            url: "https://example.com/p".into(),
+            tokenizer: "o200k".into(),
+            estimates: CountEstimates {
+                raw_html: None,
+                extracted_md: 123,
+                summary_short: 45,
+                summary_medium: 78,
+            },
+        });
+        let s = serde_json::to_string(&v).unwrap();
+        // Untagged: top-level keys are the inner struct's fields.
+        assert!(s.contains("\"estimates\""), "got: {s}");
+        assert!(s.contains("\"extracted_md\":123"), "got: {s}");
+        // raw_html=None is omitted by skip_serializing_if.
+        assert!(!s.contains("raw_html"), "got: {s}");
     }
 
     #[test]
