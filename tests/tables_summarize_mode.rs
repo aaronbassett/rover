@@ -26,6 +26,7 @@ fn html_with_table() -> &'static str {
      <tr><td>South</td><td>47</td></tr>\
      <tr><td>East</td><td>3</td></tr>\
      <tr><td>West</td><td>88</td></tr>\
+     <tr><td>distinctive_marker_xyz_42</td><td>9999</td></tr>\
      </tbody>\
      </table>\
      <p>Closing paragraph after the table.</p>\
@@ -93,6 +94,28 @@ async fn fetch_tables_summarize_records_summary_mode_in_frontmatter() {
     assert!(
         body.contains("Lead-in paragraph"),
         "lead-in paragraph should be preserved: {body}",
+    );
+
+    // The summarize path replaces each detected pipe-table block with
+    // the summarizer hook's output. With the offline extractive backend
+    // the "summary" is bullet-style markdown, so the body should not
+    // contain any raw pipe-table separator row (which always begins a
+    // line with `|---`). A regression that left the table un-transformed
+    // would re-introduce that exact pattern.
+    assert!(
+        !body.lines().any(|l| l.trim_start().starts_with("|---")),
+        "expected no raw pipe-table separator rows in the body, got:\n{body}",
+    );
+    // The distinctive marker fixture row exists only inside the
+    // original table. After summarize, it must not appear as a raw
+    // pipe-table cell (i.e. inside `| ... |` at line start). Bullet-
+    // prefixed lines (`- | distinctive_marker ... |`) are accepted as
+    // legitimate summary output from the extractive backend.
+    assert!(
+        !body
+            .lines()
+            .any(|l| l.trim_start().starts_with("| distinctive_marker_xyz_42")),
+        "expected the original pipe-table row for distinctive_marker_xyz_42 to be gone, got body:\n{body}",
     );
 
     client.cancel().await.unwrap();

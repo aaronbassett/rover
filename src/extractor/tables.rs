@@ -47,7 +47,14 @@ pub type TableSummarizeHook = Arc<
         + Sync,
 >;
 
-/// Returns the transformed markdown plus per-table records.
+/// Apply a tables transformation to the markdown, returning the
+/// transformed markdown plus per-table records.
+///
+/// For [`TablesMode::Summarize`], callers MUST use
+/// [`apply_with_summarizer`] instead — this synchronous entry point
+/// returns an [`ExtractorError`] for that mode because per-table
+/// summarization requires an async closure hook. The sync `apply`
+/// handles `Embed | Drop | CsvFile | Sample`.
 pub fn apply(
     markdown: &str,
     mode: &TablesMode,

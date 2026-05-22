@@ -444,7 +444,17 @@ impl RoverHandler {
                         summarizer
                             .compact(&content_hash, &table_text, &opts)
                             .await
-                            .map(|r| r.summary_md)
+                            .map(|r| {
+                                if let Some(fb) = &r.fallback {
+                                    tracing::debug!(
+                                        target: "rover::mcp",
+                                        from = %fb.from,
+                                        reason = %fb.reason,
+                                        "table summarizer fell back to extractive",
+                                    );
+                                }
+                                r.summary_md
+                            })
                             .map_err(|e| e.fallback_reason().to_string())
                     })
                         as std::pin::Pin<
