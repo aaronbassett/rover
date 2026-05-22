@@ -375,6 +375,12 @@ pub struct SummarizationConfig {
 
     #[serde(default = "default_summarization_fallback")]
     pub fallback_to_extractive: bool,
+
+    /// Per-table summarization defaults consumed by the
+    /// `TablesMode::Summarize` hook in `mcp::tools::fetch`. Lives under
+    /// `[summarization.tables]` in the config file.
+    #[serde(default)]
+    pub tables: TablesSummarizationConfig,
 }
 
 impl Default for SummarizationConfig {
@@ -384,6 +390,7 @@ impl Default for SummarizationConfig {
             default_mode: default_summarization_mode(),
             default_style: default_summarization_style(),
             fallback_to_extractive: default_summarization_fallback(),
+            tables: TablesSummarizationConfig::default(),
         }
     }
 }
@@ -399,6 +406,33 @@ fn default_summarization_style() -> String {
 }
 fn default_summarization_fallback() -> bool {
     true
+}
+
+/// `[summarization.tables]` block. Controls the per-table summarize
+/// defaults used by the `TablesMode::Summarize` hook.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TablesSummarizationConfig {
+    #[serde(default = "default_tables_target_tokens")]
+    pub target_tokens: usize,
+    #[serde(default = "default_tables_focus")]
+    pub focus: String,
+}
+
+impl Default for TablesSummarizationConfig {
+    fn default() -> Self {
+        Self {
+            target_tokens: default_tables_target_tokens(),
+            focus: default_tables_focus(),
+        }
+    }
+}
+
+fn default_tables_target_tokens() -> usize {
+    150
+}
+fn default_tables_focus() -> String {
+    "Describe what this table shows. Highlight any extreme values or notable rows.".to_string()
 }
 
 /// One `[backends.<name>]` block. Free-form `kind`/`provider` strings —
@@ -1003,6 +1037,22 @@ failure_ttl = "10m"
         assert_eq!(cfg.summarization.default_mode, "abstractive");
         assert_eq!(cfg.summarization.default_style, "prose");
         assert!(cfg.summarization.fallback_to_extractive);
+        assert_eq!(cfg.summarization.tables.target_tokens, 150);
+        assert!(cfg.summarization.tables.focus.contains("Describe"));
+    }
+
+    #[test]
+    fn summarization_tables_block_overrides_defaults() {
+        let toml = r#"
+[summarization.tables]
+target_tokens = 250
+focus = "Custom table focus prompt."
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.summarization.tables.target_tokens, 250);
+        assert_eq!(cfg.summarization.tables.focus, "Custom table focus prompt.");
+        // Sibling defaults remain in force.
+        assert_eq!(cfg.summarization.default_backend, "default");
     }
 
     #[test]

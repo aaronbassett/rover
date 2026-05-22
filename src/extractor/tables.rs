@@ -73,6 +73,50 @@ pub type TableSummarizeHook = Arc<
         + Sync,
 >;
 
+/// In-order event emitted by [`iterate_tables`]. `Line` carries a
+/// non-table line (without its trailing `\n`); `Table` carries the full
+/// pipe-table block (header + separator + data rows) and the table's
+/// sequential `ordinal`.
+enum TableEvent<'a> {
+    Line(&'a str),
+    Table(Vec<String>, usize),
+}
+
+/// Walk `markdown` line by line and invoke `sink` for each non-table
+/// line and each detected pipe-table block (with its sequential
+/// `ordinal`). The sink decides what to do with the event — push into
+/// an output buffer (sync transform) or enqueue for a follow-up await
+/// loop (async hook).
+///
+/// Shared by the sync [`apply`] and the async [`apply_with_summarizer`]
+/// so the scanning rules — pipe-table start detection and consecutive
+/// `|`-prefixed line collection — cannot drift between the two callers.
+fn iterate_tables<F>(markdown: &str, mut sink: F) -> Result<(), ExtractorError>
+where
+    F: FnMut(TableEvent<'_>) -> Result<(), ExtractorError>,
+{
+    let mut ordinal: usize = 0;
+    let mut iter = markdown.lines().peekable();
+    while let Some(line) = iter.next() {
+        if is_pipe_table_start(line, iter.peek().copied()) {
+            let mut rows: Vec<String> = vec![line.to_string()];
+            while let Some(next) = iter.peek().copied() {
+                if next.trim_start().starts_with('|') {
+                    rows.push(next.to_string());
+                    iter.next();
+                } else {
+                    break;
+                }
+            }
+            sink(TableEvent::Table(rows, ordinal))?;
+            ordinal += 1;
+        } else {
+            sink(TableEvent::Line(line))?;
+        }
+    }
+    Ok(())
+}
+
 /// Apply a tables transformation to the markdown, returning the
 /// transformed markdown plus per-table records.
 ///
@@ -89,34 +133,26 @@ pub fn apply(
 ) -> Result<(String, Vec<TableTransform>), ExtractorError> {
     let mut out = String::with_capacity(markdown.len());
     let mut records = Vec::new();
-    let mut ordinal: usize = 0;
-    let mut iter = markdown.lines().peekable();
 
-    while let Some(line) = iter.next() {
-        if is_pipe_table_start(line, iter.peek().copied()) {
-            // Collect all consecutive table lines.
-            let mut rows: Vec<String> = vec![line.to_string()];
-            while let Some(next) = iter.peek().copied() {
-                if next.trim_start().starts_with('|') {
-                    rows.push(next.to_string());
-                    iter.next();
-                } else {
-                    break;
+    iterate_tables(markdown, |ev| {
+        match ev {
+            TableEvent::Line(line) => {
+                out.push_str(line);
+                out.push('\n');
+            }
+            TableEvent::Table(rows, ordinal) => {
+                let (replacement, record) =
+                    transform_table(rows, ordinal, mode, output_paths, base_url)?;
+                out.push_str(&replacement);
+                out.push('\n');
+                if let Some(r) = record {
+                    records.push(r);
                 }
             }
-            let (replacement, record) =
-                transform_table(rows, ordinal, mode, output_paths, base_url)?;
-            out.push_str(&replacement);
-            out.push('\n');
-            if let Some(r) = record {
-                records.push(r);
-            }
-            ordinal += 1;
-        } else {
-            out.push_str(line);
-            out.push('\n');
         }
-    }
+        Ok(())
+    })?;
+
     if !markdown.ends_with('\n') && out.ends_with('\n') {
         out.pop();
     }
@@ -151,57 +187,71 @@ pub async fn apply_with_summarizer(
         ));
     };
 
+    // Phase 1: scan synchronously into an in-order event queue. Reuses
+    // `iterate_tables` so the scanning rules cannot drift from the sync
+    // `apply` path. The hook is async, so we cannot await inside the
+    // sync sink — buffer events here and drain in Phase 2.
+    enum OwnedEvent {
+        Line(String),
+        Table(Vec<String>, usize),
+    }
+    let mut events: Vec<OwnedEvent> = Vec::new();
+    iterate_tables(markdown, |ev| {
+        match ev {
+            TableEvent::Line(line) => events.push(OwnedEvent::Line(line.to_string())),
+            TableEvent::Table(rows, ordinal) => events.push(OwnedEvent::Table(rows, ordinal)),
+        }
+        Ok(())
+    })?;
+
+    // Phase 2: drain the queue in document order, awaiting the hook for
+    // each table block. Non-table lines pass through verbatim.
+    //
+    // TODO(m8): parallelize per-table summarization via FuturesUnordered
+    // or futures::stream::iter(...).buffer_unordered(N) — bounded by a
+    // small N to avoid hammering cloud backends. Preserve insertion
+    // order in the output so frontmatter ordinals match document order.
     let mut out = String::with_capacity(markdown.len());
     let mut records = Vec::new();
-    let mut ordinal: usize = 0;
-    let mut iter = markdown.lines().peekable();
-
-    while let Some(line) = iter.next() {
-        if is_pipe_table_start(line, iter.peek().copied()) {
-            let mut rows: Vec<String> = vec![line.to_string()];
-            while let Some(next) = iter.peek().copied() {
-                if next.trim_start().starts_with('|') {
-                    rows.push(next.to_string());
-                    iter.next();
-                } else {
-                    break;
+    for ev in events {
+        match ev {
+            OwnedEvent::Line(line) => {
+                out.push_str(&line);
+                out.push('\n');
+            }
+            OwnedEvent::Table(rows, ordinal) => {
+                let table_text = rows.join("\n");
+                match hook(&table_text).await {
+                    Ok((summary, fallback)) => {
+                        out.push_str(&summary);
+                        out.push('\n');
+                        records.push(TableTransform {
+                            ordinal,
+                            mode: "summarize".into(),
+                            path: None,
+                            kept_rows: None,
+                            truncated_rows: None,
+                            summary_md: Some(summary),
+                            fallback_reason: fallback.as_ref().map(|f| f.reason.clone()),
+                            fallback_from: fallback.map(|f| f.from),
+                        });
+                    }
+                    Err(reason) => {
+                        out.push_str(&table_text);
+                        out.push('\n');
+                        records.push(TableTransform {
+                            ordinal,
+                            mode: "summarize".into(),
+                            path: None,
+                            kept_rows: None,
+                            truncated_rows: None,
+                            summary_md: None,
+                            fallback_reason: Some(reason),
+                            fallback_from: None,
+                        });
+                    }
                 }
             }
-            let table_text = rows.join("\n");
-            match hook(&table_text).await {
-                Ok((summary, fallback)) => {
-                    out.push_str(&summary);
-                    out.push('\n');
-                    records.push(TableTransform {
-                        ordinal,
-                        mode: "summarize".into(),
-                        path: None,
-                        kept_rows: None,
-                        truncated_rows: None,
-                        summary_md: Some(summary),
-                        fallback_reason: fallback.as_ref().map(|f| f.reason.clone()),
-                        fallback_from: fallback.map(|f| f.from),
-                    });
-                }
-                Err(reason) => {
-                    out.push_str(&table_text);
-                    out.push('\n');
-                    records.push(TableTransform {
-                        ordinal,
-                        mode: "summarize".into(),
-                        path: None,
-                        kept_rows: None,
-                        truncated_rows: None,
-                        summary_md: None,
-                        fallback_reason: Some(reason),
-                        fallback_from: None,
-                    });
-                }
-            }
-            ordinal += 1;
-        } else {
-            out.push_str(line);
-            out.push('\n');
         }
     }
     if !markdown.ends_with('\n') && out.ends_with('\n') {

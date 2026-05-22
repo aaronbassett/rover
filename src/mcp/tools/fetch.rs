@@ -472,12 +472,8 @@ impl RoverHandler {
                         let opts = crate::summarizer::backend::CompactOpts {
                             mode: defaults.mode,
                             style: crate::summarizer::backend::Style::Bullet,
-                            target_tokens: Some(150),
-                            focus: Some(
-                                "Describe what this table shows. Highlight any extreme \
-                                 values or notable rows."
-                                    .to_string(),
-                            ),
+                            target_tokens: Some(config.summarization.tables.target_tokens),
+                            focus: Some(config.summarization.tables.focus.clone()),
                             preserve: vec![],
                             backend_name: defaults.backend.clone(),
                         };
