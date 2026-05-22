@@ -411,6 +411,15 @@ trait SummarizerBackend: Send + Sync {
 
 **Acceptance (PRD §14, M7).** All summarization modes work against at least one cloud provider; extractive mode works offline; summary cache avoids redundant LLM calls.
 
+**Status:** Complete (2026-05-22).
+
+**M7 follow-ups deferred to later milestones.**
+1. Local inference backend (`LocalMistralRs`) → M9 as already documented.
+2. Streaming summarization responses via MCP — requires MCP-side streaming surface that doesn't exist in v1.
+3. Cross-process new-task notify channel (carry-over from M6) — still deferred to M8.
+4. Per-backend sampling overrides (temperature, top_p, etc.) — defer until a user asks.
+5. The PRD §4.5 `raw_html` estimate returns `null` for any page cached before M7 (and for any page whose host is in a config block that doesn't enable `store_raw_html`). The estimate becomes available the first time a page is re-fetched with `store_raw_html = true`.
+
 **Deferred from M7.**
 - Local inference backend (`LocalMistralRs`) → M9.
 

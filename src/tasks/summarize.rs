@@ -1,8 +1,12 @@
-//! `summarize` stub worker.
+//! `summarize` stub worker — schema-only.
 //!
-//! Always fails with `summarization_not_yet_implemented`. The real
-//! summarizer lands in M7. The stub exists so the `tasks.kind` schema is
-//! final in M6 and the scheduler has a concrete worker to dispatch.
+//! M7 implements all summarization synchronously through the
+//! `SummarizerService`. No new task rows of `kind = "summarize"` are
+//! ever inserted by M7. The worker remains because the M6 schema's
+//! `tasks.kind` CHECK constraint includes "summarize" and removing it
+//! would require a migration; the worker safely errors any pre-M7
+//! row that somehow gets reclaimed with
+//! `summarization_not_yet_implemented` (defense-in-depth).
 
 use serde_json::json;
 use tokio_util::sync::CancellationToken;

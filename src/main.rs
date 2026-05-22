@@ -92,6 +92,19 @@ struct FetchArgs {
     #[arg(long)]
     max_retries: Option<u8>,
 
+    /// Auto-summarize when extracted markdown exceeds N tokens. **v1
+    /// note:** the canonical auto-summarize path is the MCP `fetch` tool;
+    /// the CLI parses and validates this flag but does not yet apply
+    /// summarization here.
+    #[arg(long)]
+    max_tokens: Option<usize>,
+
+    /// JSON `SummarizeOpts` blob (same shape as the MCP `summarize` args
+    /// without `url`). **v1 note:** validated but not yet applied in the
+    /// CLI path; use the MCP `summarize` tool for the canonical surface.
+    #[arg(long, value_name = "JSON")]
+    summarize: Option<String>,
+
     /// **Test-only.** Allow loopback addresses to satisfy SSRF checks. Used by
     /// the integration test suite against wiremock; never used in production.
     #[cfg(any(test, feature = "test-loopback"))]
@@ -287,6 +300,8 @@ impl FetchArgs {
             per_host_concurrency: self.per_host_concurrency,
             global_concurrency: self.global_concurrency,
             max_retries: self.max_retries,
+            max_tokens: self.max_tokens,
+            summarize: self.summarize,
             #[cfg(any(test, feature = "test-loopback"))]
             ssrf_test_loopback: self.ssrf_test_loopback,
         }
