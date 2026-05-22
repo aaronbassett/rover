@@ -246,3 +246,97 @@ api_key_env = "ROVER_TEST_FAKE_KEY"
     drop(html_server);
     drop(llm_server);
 }
+
+/// End-to-end fallback metadata: when the configured "fast" cloud backend
+/// returns 401 (mapped to BackendError::AuthFailed), the service falls back
+/// to the extractive "default" backend and the response carries
+/// `summarizer_fallback { from: "fast", reason: "auth_failed" }`.
+#[tokio::test]
+async fn summarize_falls_back_to_extractive_when_cloud_returns_401() {
+    let html_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/article4"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/html; charset=utf-8")
+                .set_body_string(html_body()),
+        )
+        .mount(&html_server)
+        .await;
+
+    let llm_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "error": { "message": "invalid api key", "type": "invalid_request_error" }
+        })))
+        .mount(&llm_server)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    seed_default_tokenizer(tmp.path());
+
+    let cfg_path = tmp.path().join("rover.toml");
+    let cfg = format!(
+        r#"
+[robots]
+respect = false
+
+[backends.default]
+kind = "extractive"
+
+[backends.fast]
+kind = "cloud"
+provider = "openai_compat"
+base_url = "{}/v1/"
+model = "test-model"
+api_key_env = "ROVER_TEST_FAKE_KEY_401"
+"#,
+        llm_server.uri()
+    );
+    std::fs::write(&cfg_path, cfg).unwrap();
+    unsafe {
+        std::env::set_var("ROVER_TEST_FAKE_KEY_401", "wrong-key");
+    }
+
+    let client = spawn_client(tmp.path()).await;
+
+    let url = format!("{}/article4", html_server.uri());
+    let mut params = CallToolRequestParams::new("summarize_tool".to_string());
+    let args = json!({
+        "url": url,
+        "backend": "fast",
+        "mode": "abstractive",
+        "target_tokens": 50,
+    });
+    if let Some(obj) = args.as_object().cloned() {
+        params = params.with_arguments(obj);
+    }
+    let res = client.call_tool(params).await.expect("summarize succeeded");
+    assert!(!res.is_error.unwrap_or(false), "tool errored: {res:?}");
+
+    let outer = serde_json::to_value(&res).unwrap();
+    let text = outer["content"][0]["text"]
+        .as_str()
+        .expect("tool returned text content block");
+    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+
+    assert_eq!(
+        v["metadata"]["backend"], "default",
+        "expected effective backend to be the extractive fallback: {text}"
+    );
+    let fb = &v["metadata"]["summarizer_fallback"];
+    assert_eq!(
+        fb["from"], "fast",
+        "expected fallback.from = original backend name: {text}"
+    );
+    let reason = fb["reason"].as_str().unwrap_or_default();
+    assert_eq!(
+        reason, "auth_failed",
+        "expected fallback reason from 401 → AuthFailed: {text}"
+    );
+
+    client.cancel().await.unwrap();
+    drop(html_server);
+    drop(llm_server);
+}
