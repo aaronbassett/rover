@@ -44,6 +44,13 @@ pub(super) fn split_sentences(content: &str) -> Vec<Sentence> {
         if trimmed.chars().count() < 3 {
             continue;
         }
+        // Skip lines that look like markdown ATX headings. UAX #29 sentence
+        // segmentation classifies "# Title" as a stand-alone sentence; if we
+        // kept it, the heading text would compete for selection in Extractive
+        // mode and pollute Headlines mode's section buckets.
+        if parse_atx_heading(trimmed).is_some() {
+            continue;
+        }
         out.push(Sentence {
             span_start: offset,
             text: trimmed.to_string(),
@@ -109,6 +116,7 @@ pub(super) fn tfidf_vectors(sentences: &[Sentence]) -> Vec<HashMap<usize, f32>> 
     // Step A: document frequencies + vocabulary.
     let mut df: HashMap<String, usize> = HashMap::new();
     let mut vocab: HashMap<String, usize> = HashMap::new();
+    let mut vocab_terms: Vec<String> = Vec::new();
     let tokens_per_sent: Vec<Vec<String>> = sentences.iter().map(|s| tokenize(&s.text)).collect();
     for terms in &tokens_per_sent {
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -119,6 +127,7 @@ pub(super) fn tfidf_vectors(sentences: &[Sentence]) -> Vec<HashMap<usize, f32>> 
             if !vocab.contains_key(t) {
                 let id = vocab.len();
                 vocab.insert(t.clone(), id);
+                vocab_terms.push(t.clone());
             }
         }
     }
@@ -134,12 +143,7 @@ pub(super) fn tfidf_vectors(sentences: &[Sentence]) -> Vec<HashMap<usize, f32>> 
         }
         let mut tfidf: HashMap<usize, f32> = HashMap::new();
         for (id, count) in tf {
-            // recover term from vocab by id is O(vocab); instead store reverse:
-            let term = vocab
-                .iter()
-                .find(|(_, v)| **v == id)
-                .map(|(k, _)| k.as_str())
-                .unwrap();
+            let term = vocab_terms[id].as_str();
             let dfv = df[term] as f32;
             let idf = (n / dfv).ln(); // 0 if term in every sentence
             if idf > 0.0 {
@@ -209,16 +213,15 @@ mod tfidf_tests {
 
     #[test]
     fn cosine_is_one_for_identical_sentences() {
-        let s = sents(&["hello world", "hello world"]);
+        // Use a 3-doc corpus so IDF for the shared tokens stays non-zero
+        // (without this, "hello world" appears in every doc → idf = ln(N/N) = 0
+        // and the TF-IDF vectors collapse to empty).
+        let s = sents(&["hello world", "hello world", "goodbye moon"]);
         let v = tfidf_vectors(&s);
         let c = cosine(&v[0], &v[1]);
-        // Identical sentences in a 2-doc corpus have IDF=0 for every shared
-        // token, which collapses the TF-IDF vectors to empty. Cosine over
-        // empty vectors is conventionally 0 (we short-circuit to avoid
-        // NaN); accept 1.0 (non-degenerate case), 0.0 (both-empty), or NaN.
         assert!(
-            (c - 1.0).abs() < 1e-5 || c.abs() < 1e-5 || c.is_nan(),
-            "cosine on identical (or both-zero) was {c}"
+            (c - 1.0).abs() < 1e-5,
+            "cosine on identical non-degenerate sentences was {c}",
         );
     }
 
@@ -235,6 +238,27 @@ mod tfidf_tests {
     #[test]
     fn tfidf_returns_empty_for_empty_input() {
         assert!(tfidf_vectors(&[]).is_empty());
+    }
+
+    #[test]
+    fn tfidf_handles_all_universal_corpus() {
+        // Every sentence shares every token → IDF for every term is 0 →
+        // every vector should be empty. PageRank should still produce a
+        // valid (uniform) distribution.
+        let s = sents(&["the cat", "the cat", "the cat"]);
+        let v = tfidf_vectors(&s);
+        for vec in &v {
+            assert!(vec.is_empty(), "expected empty vector, got {vec:?}");
+        }
+        let pr = pagerank(&v);
+        assert_eq!(pr.len(), 3);
+        // All rows are dangling → uniform after one iteration.
+        for score in &pr {
+            assert!(
+                (score - 1.0 / 3.0).abs() < 0.1,
+                "expected ~0.333 uniform, got {score}",
+            );
+        }
     }
 }
 
@@ -356,6 +380,26 @@ mod pagerank_tests {
         let total: f32 = pr.iter().sum();
         assert!((total - 1.0).abs() < 0.05, "sum was {total}");
     }
+
+    #[test]
+    fn fully_disconnected_graph_converges_to_uniform() {
+        // Every sentence has a unique discriminator and no shared structure
+        // → all pairwise cosines fall below SIMILARITY_FLOOR → every row is
+        // dangling → distribution should converge to uniform 1/n.
+        let v = tfidf_vectors(&sents(&[
+            "alpha unique_one",
+            "beta unique_two",
+            "gamma unique_three",
+            "delta unique_four",
+        ]));
+        let pr = pagerank(&v);
+        for score in &pr {
+            assert!(
+                (score - 0.25).abs() < 0.05,
+                "expected ~0.25 uniform, got {score}",
+            );
+        }
+    }
 }
 
 /// Select sentences for `mode = Extractive`, ranked by PageRank, then
@@ -385,11 +429,26 @@ fn select_extractive(
         Some(max) => {
             let mut chosen = Vec::new();
             let mut cumulative: usize = 0;
+            let mut warned_fallback = false;
             for idx in order {
                 // Token-count by configured tokenizer family. If the call
-                // fails (model not loaded), fall back to a char/4 heuristic.
-                let count = tokenizer::count(&sentences[idx].text, family)
-                    .unwrap_or_else(|_| sentences[idx].text.chars().count().div_ceil(4));
+                // fails (model not loaded), fall back to a char/4 heuristic
+                // and warn once.
+                let count = match tokenizer::count(&sentences[idx].text, family) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        if !warned_fallback {
+                            tracing::warn!(
+                                target: "rover::summarizer",
+                                family = ?family,
+                                error = %e,
+                                "tokenizer unavailable; falling back to chars/4 heuristic for target_tokens accounting"
+                            );
+                            warned_fallback = true;
+                        }
+                        sentences[idx].text.chars().count().div_ceil(4)
+                    }
+                };
                 if chosen.is_empty() {
                     chosen.push(idx);
                     cumulative = count;
@@ -493,6 +552,33 @@ mod extractive_mode_tests {
     }
 
     #[test]
+    fn select_extractive_skips_oversize_and_admits_lower_ranked_that_fits() {
+        // In tests the tokenizer registry is empty, so this exercises the
+        // chars/4 fallback heuristic. Character lengths chosen so:
+        //   s0 = 44 chars → ceil(44/4) = 11 tokens
+        //   s1 =  5 chars → ceil( 5/4) =  2 tokens
+        //   s2 = 44 chars → ceil(44/4) = 11 tokens
+        // Rank order: [0 (0.9), 2 (0.8), 1 (0.1)]. Budget = 13.
+        // Walk:
+        //   idx 0 → cumulative = 11 ≤ 13, admit.
+        //   idx 2 → 11 + 11 = 22 > 13, skip (continue scanning).
+        //   idx 1 → 11 +  2 = 13 ≤ 13, admit (proves we continue, not break).
+        // After sort by span: [0, 1].
+        let s = sents(&[
+            "first sentence here that is reasonably long.", // 44 chars
+            "okay.",                                        //  5 chars
+            "third sentence here that is reasonably long.", // 44 chars
+        ]);
+        let chosen = select_extractive(&s, &[0.9, 0.1, 0.8], Some(13), Tokenizer::O200k);
+        assert!(chosen.contains(&0), "expected index 0 in {chosen:?}");
+        assert!(chosen.contains(&1), "expected index 1 in {chosen:?}");
+        assert!(
+            !chosen.contains(&2),
+            "expected index 2 excluded in {chosen:?}"
+        );
+    }
+
+    #[test]
     fn format_bullet_prefixes_dashes() {
         let s = sents(&["a.", "b.", "c."]);
         assert_eq!(format_selected(&s, &[0, 2], Style::Bullet), "- a.\n- c.",);
@@ -541,7 +627,8 @@ struct HeadingSection {
 /// Sentences are matched into a section by their `span_start` relative
 /// to the byte offsets of the heading lines.
 fn group_by_headings(content: &str, sentences: &[Sentence]) -> Vec<HeadingSection> {
-    let mut headings = Vec::new();
+    let mut headings: Vec<HeadingSection> = Vec::new();
+    let mut heading_offsets: Vec<usize> = Vec::new();
     let mut byte_offset = 0;
     for line in content.split_inclusive('\n') {
         let line_trimmed = line.trim_end_matches('\n');
@@ -551,34 +638,14 @@ fn group_by_headings(content: &str, sentences: &[Sentence]) -> Vec<HeadingSectio
                 heading: text.to_string(),
                 sentence_indices: Vec::new(),
             });
-            // Push a sentinel span boundary by storing the byte_offset on
-            // the heading via a parallel array.
-            // We use the headings vec position + a separate offsets vec.
-            headings
-                .last_mut()
-                .unwrap()
-                .sentence_indices
-                .push(byte_offset);
+            heading_offsets.push(byte_offset);
         }
         byte_offset += line.len();
     }
-    // First-pass abuse: `sentence_indices[0]` is the heading's byte
-    // offset; replace it with the real per-section sentence indices below.
     if headings.is_empty() {
         return Vec::new();
     }
-    let heading_offsets: Vec<usize> = headings.iter().map(|h| h.sentence_indices[0]).collect();
-    for h in &mut headings {
-        h.sentence_indices.clear();
-    }
     for (si, sent) in sentences.iter().enumerate() {
-        // Skip sentences that are themselves ATX heading lines — the
-        // sentence segmenter treats `# A` as a stand-alone sentence and
-        // these would otherwise be lumped into the preceding section.
-        if parse_atx_heading(&sent.text).is_some() {
-            continue;
-        }
-        // Find the heading whose offset precedes this sentence's start.
         let mut bucket: Option<usize> = None;
         for (hi, off) in heading_offsets.iter().enumerate() {
             if sent.span_start >= *off {
@@ -596,8 +663,9 @@ fn group_by_headings(content: &str, sentences: &[Sentence]) -> Vec<HeadingSectio
 
 /// Headlines mode (design §2): for each heading at the deepest covered
 /// depth, emit `## heading\n\n{top-1 sentence}\n\n`. Documents without
-/// any headings fall back to a flat top-k extractive list capped by
-/// `target_tokens` (or top-3 when no target is provided).
+/// any headings fall back to the top-3 highest-scoring sentences as a
+/// bullet list; `target_tokens`, if set, additionally caps the per-sentence
+/// token budget within `select_extractive` before the top-3 truncation.
 fn select_headlines(
     content: &str,
     sentences: &[Sentence],
@@ -629,6 +697,7 @@ fn select_headlines(
     let mut emitted = Vec::new();
     let mut cumulative_tokens: usize = 0;
     let token_budget = target_tokens.unwrap_or(usize::MAX);
+    let mut warned_fallback = false;
     for g in groups.iter().filter(|g| g.depth == deepest) {
         let best = g.sentence_indices.iter().copied().max_by(|a, b| {
             scores[*a]
@@ -636,8 +705,21 @@ fn select_headlines(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         if let Some(idx) = best {
-            let count = tokenizer::count(&sentences[idx].text, family)
-                .unwrap_or_else(|_| sentences[idx].text.chars().count().div_ceil(4));
+            let count = match tokenizer::count(&sentences[idx].text, family) {
+                Ok(c) => c,
+                Err(e) => {
+                    if !warned_fallback {
+                        tracing::warn!(
+                            target: "rover::summarizer",
+                            family = ?family,
+                            error = %e,
+                            "tokenizer unavailable; falling back to chars/4 heuristic for headlines budget"
+                        );
+                        warned_fallback = true;
+                    }
+                    sentences[idx].text.chars().count().div_ceil(4)
+                }
+            };
             // Always include the first heading even if oversize.
             if !emitted.is_empty() && cumulative_tokens + count > token_budget {
                 break;
@@ -700,6 +782,41 @@ mod headlines_tests {
         let out = select_headlines(content, &s, &pr, None, Tokenizer::O200k);
         // No headings → bullet fallback.
         assert!(out.contains("- "));
+    }
+
+    #[test]
+    fn select_headlines_picks_deepest_depth_under_mixed_nesting() {
+        // # A
+        //   ## A1 ...
+        //   ## A2 ...
+        // # B
+        //   ## B1 ...
+        //
+        // Deepest covered depth is 2; output should contain A1/A2/B1
+        // headings and not A or B (which are depth 1).
+        let content = "\
+# A\n\
+## A1\n\
+Sentence under A1 here describing the thing.\n\
+## A2\n\
+Sentence under A2 here describing the other thing.\n\
+# B\n\
+## B1\n\
+Sentence under B1 here describing a third thing.\n";
+        let s = split_sentences(content);
+        let v = tfidf_vectors(&s);
+        let pr = pagerank(&v);
+        let out = select_headlines(content, &s, &pr, None, Tokenizer::O200k);
+        assert!(out.contains("## A1"), "expected ## A1 in {out}");
+        assert!(out.contains("## A2"), "expected ## A2 in {out}");
+        assert!(out.contains("## B1"), "expected ## B1 in {out}");
+        // Top-level "# A" and "# B" should NOT appear as section headings
+        // in their own right.
+        for line in out.lines() {
+            if line.starts_with("# ") && !line.starts_with("## ") {
+                panic!("unexpected H1 in headlines output: {line}");
+            }
+        }
     }
 }
 
