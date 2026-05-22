@@ -5,6 +5,8 @@
 //! instruction for models that obey it by default) would live here if
 //! ever needed; M7 ships one template.
 
+use std::fmt::Write as _;
+
 use crate::summarizer::backend::{CompactOpts, PreserveSection, Style};
 
 /// Pair returned to the cloud backend.
@@ -58,25 +60,25 @@ pub fn render_abstractive(opts: &CompactOpts, content: &str) -> PromptParts {
     sys.push_str("Summarize the content provided in the user message.\n\n");
 
     if let Some(n) = opts.target_tokens {
-        sys.push_str(&format!("Target length: ~{n} tokens.\n"));
+        writeln!(sys, "Target length: ~{n} tokens.").expect("write to String never fails");
     }
-    sys.push_str(&format!(
-        "Output style: {desc}\n",
-        desc = style_description(opts.style),
-    ));
+    writeln!(sys, "Output style: {}", style_description(opts.style))
+        .expect("write to String never fails");
     if let Some(focus) = opts
         .focus
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        sys.push_str(&format!("Focus on: {focus}\n"));
+        writeln!(sys, "Focus on: {focus}").expect("write to String never fails");
     }
     if !opts.preserve.is_empty() {
-        sys.push_str(&format!(
-            "Preserve the following elements verbatim wherever they appear: {pres}.\n",
-            pres = preserve_description(&opts.preserve),
-        ));
+        writeln!(
+            sys,
+            "Preserve the following elements verbatim wherever they appear: {}.",
+            preserve_description(&opts.preserve),
+        )
+        .expect("write to String never fails");
     }
     sys.push_str("\nRules:\n");
     sys.push_str("- Do not add information not present in the source.\n");
@@ -169,6 +171,39 @@ mod tests {
             "system was {}",
             p.system,
         );
+    }
+
+    #[test]
+    fn system_sections_appear_in_expected_order() {
+        // Render with everything set so all sections are present.
+        let p = render_abstractive(
+            &opts(
+                Style::Prose,
+                vec![PreserveSection::Code],
+                Some(500),
+                Some("safety"),
+            ),
+            "x",
+        );
+        let target = p
+            .system
+            .find("Target length")
+            .expect("Target length section present");
+        let style = p
+            .system
+            .find("Output style")
+            .expect("Output style section present");
+        let focus = p.system.find("Focus on").expect("Focus on section present");
+        let preserve = p
+            .system
+            .find("Preserve the following")
+            .expect("Preserve section present");
+        let rules = p.system.find("Rules:").expect("Rules section present");
+
+        assert!(target < style, "Target length must precede Output style");
+        assert!(style < focus, "Output style must precede Focus on");
+        assert!(focus < preserve, "Focus on must precede Preserve");
+        assert!(preserve < rules, "Preserve must precede Rules");
     }
 
     #[test]
