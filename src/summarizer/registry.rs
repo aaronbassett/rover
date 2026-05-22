@@ -32,8 +32,6 @@ impl fmt::Debug for SummarizerRegistry {
 }
 
 impl SummarizerRegistry {
-    // Consumed in Task 7 (SummarizerService).
-    #[allow(dead_code)]
     pub fn get(&self, name: &str) -> Result<Arc<dyn SummarizerBackend>, SummarizerError> {
         self.backends
             .get(name)
@@ -43,28 +41,28 @@ impl SummarizerRegistry {
             })
     }
 
-    // Consumed in Task 7 (SummarizerService).
+    // Consumed in Task 8 (MCP wiring) and beyond.
     #[allow(dead_code)]
     pub fn default_backend_name(&self) -> &str {
         &self.default_backend
     }
 
-    // Consumed in Task 7 (SummarizerService).
-    #[allow(dead_code)]
     pub fn extractive_fallback_name(&self) -> Option<&str> {
         self.extractive_fallback.as_deref()
     }
 
-    // Consumed in Task 7 (SummarizerService).
+    // Consumed in Task 8 (MCP wiring) and beyond.
     #[allow(dead_code)]
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.backends.keys().map(String::as_str)
     }
 
-    /// Direct-construction helper for sibling-module unit tests. Skips
-    /// the validation in `build`; tests are responsible for passing a
-    /// coherent set of backends. Consumed in Task 7's `service_tests`.
-    #[cfg(test)]
+    /// Direct-construction helper for sibling-module unit tests and the
+    /// `tests/summary_cache_lifecycle.rs` integration test. Skips the
+    /// validation in `build`; tests are responsible for passing a
+    /// coherent set of backends.
+    #[doc(hidden)]
+    #[cfg(any(test, feature = "test-loopback"))]
     #[allow(dead_code)]
     pub fn __test_construct(
         backends: HashMap<String, Arc<dyn SummarizerBackend>>,
