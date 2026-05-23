@@ -6,6 +6,7 @@ pub mod canonical;
 pub mod charset;
 pub mod client;
 pub mod fetch;
+pub mod har;
 pub mod ssrf;
 pub mod ttl;
 
