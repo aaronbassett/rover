@@ -30,6 +30,7 @@ scraper = "0.26"
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
 toml = "1"
+toml_edit = "0.22"
 sha2 = "0.11"
 jiff = { version = "0.2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
