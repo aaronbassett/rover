@@ -41,6 +41,7 @@ impl RoverHandler {
                 force_refresh: args.force_refresh,
                 ssrf_level: self.ssrf_level,
                 ssrf_project_root: self.ssrf_project_root.clone(),
+                har_recorder: self.har_recorder.clone(),
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
             },

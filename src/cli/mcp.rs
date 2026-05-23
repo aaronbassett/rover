@@ -44,6 +44,45 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         None
     };
 
+    // Optional HAR recorder. Created before the server takes over stdio so any
+    // error opening the file surfaces as a normal startup failure. A periodic
+    // flush task batches up exchanges every 5 seconds; final flush happens at
+    // shutdown via `Arc::strong_count` going to 1 (the flush task holds one
+    // clone for the lifetime of the process).
+    let har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>> =
+        if !cfg.debug.har_path.is_empty() {
+            let path = std::path::PathBuf::from(&cfg.debug.har_path);
+            let r = crate::fetcher::har::HarRecorder::new(path, cfg.debug.har_body_cap)
+                .with_context(|| format!("opening har file at {}", cfg.debug.har_path))?;
+            let r = Arc::new(r);
+
+            let r_flush = r.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = r_flush.flush().await {
+                        tracing::warn!(
+                            target: "rover::fetcher",
+                            error = ?e,
+                            "har periodic flush failed"
+                        );
+                    }
+                }
+            });
+
+            tracing::info!(
+                target: "rover::fetcher",
+                har_path = %cfg.debug.har_path,
+                har_body_cap = cfg.debug.har_body_cap,
+                "har recorder enabled",
+            );
+            Some(r)
+        } else {
+            None
+        };
+
     let cfg = Arc::new(cfg);
 
     let data_dir = crate::paths::data_dir();
@@ -52,5 +91,5 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         .await
         .context("opening cache database")?;
 
-    mcp::serve_stdio(db, cfg, ssrf_level, ssrf_project_root).await
+    mcp::serve_stdio(db, cfg, ssrf_level, ssrf_project_root, har_recorder).await
 }

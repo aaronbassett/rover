@@ -22,7 +22,7 @@ async fn fetches_simple_page() {
     let client = build_http_client("test/0.1", Duration::from_secs(5));
     let url = Url::parse(&format!("{}/article", server.uri())).unwrap();
 
-    let page = fetch_url(&client, &url, SsrfLevel::Loopback, None)
+    let page = fetch_url(&client, &url, SsrfLevel::Loopback, None, None)
         .await
         .expect("fetch ok");
     assert_eq!(page.final_url.as_str(), url.as_str());
@@ -33,7 +33,7 @@ async fn fetches_simple_page() {
 async fn rejects_private_ip_at_ssrf_check() {
     let client = build_http_client("test/0.1", Duration::from_secs(5));
     let url = Url::parse("http://10.0.0.1/").unwrap();
-    let result = fetch_url(&client, &url, SsrfLevel::Strict, None).await;
+    let result = fetch_url(&client, &url, SsrfLevel::Strict, None, None).await;
     assert!(matches!(result, Err(rover::fetcher::FetcherError::Ssrf(_))));
 }
 
@@ -57,7 +57,7 @@ async fn follows_redirects_and_records_final_url() {
 
     let client = build_http_client("test/0.1", Duration::from_secs(5));
     let start = Url::parse(&format!("{}/redirect", server.uri())).unwrap();
-    let page = fetch_url(&client, &start, SsrfLevel::Loopback, None)
+    let page = fetch_url(&client, &start, SsrfLevel::Loopback, None, None)
         .await
         .expect("fetch ok");
     assert!(page.final_url.path().ends_with("/final"));
@@ -84,7 +84,7 @@ async fn extracts_canonical_from_html() {
 
     let client = build_http_client("test/0.1", Duration::from_secs(5));
     let url = Url::parse(&format!("{}/page", server.uri())).unwrap();
-    let page = fetch_url(&client, &url, SsrfLevel::Loopback, None)
+    let page = fetch_url(&client, &url, SsrfLevel::Loopback, None, None)
         .await
         .expect("fetch ok");
     assert_eq!(page.canonical_url.as_str(), canonical);

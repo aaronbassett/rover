@@ -101,6 +101,7 @@ pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, cancel: Cancellation
             force_refresh: true,
             ssrf_level: deps.ssrf_level,
             ssrf_project_root: deps.ssrf_project_root.clone(),
+            har_recorder: deps.har_recorder.clone(),
             ignore_robots: !deps.robots_cfg.respect,
             user_agent: deps.fetch_cfg.user_agent.clone(),
         },

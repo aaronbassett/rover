@@ -45,6 +45,7 @@ pub async fn with_retries(
     url: &Url,
     level: SsrfLevel,
     project_root: Option<&std::path::Path>,
+    har_recorder: Option<&std::sync::Arc<crate::fetcher::har::HarRecorder>>,
     cond: &ConditionalGet,
     crawl_delay: Option<Duration>,
     cfg: &RateLimitConfig,
@@ -62,7 +63,8 @@ pub async fn with_retries(
 
     let mut attempt: u8 = 0;
     loop {
-        let result = fetch_url_conditional(client, url, level, project_root, cond).await;
+        let result =
+            fetch_url_conditional(client, url, level, project_root, har_recorder, cond).await;
         let class = classify(result, cfg);
         match class {
             Class::Done(page) => return Ok(*page),
@@ -381,6 +383,7 @@ mod tests {
             &client,
             &url,
             SsrfLevel::Loopback,
+            None,
             None,
             &cond,
             None,

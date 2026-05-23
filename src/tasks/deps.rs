@@ -25,4 +25,7 @@ pub struct WorkerDeps {
     /// Pre-canonicalized project root used when `ssrf_level == Project` to
     /// validate `file://` URLs. `None` for every other level.
     pub ssrf_project_root: Option<PathBuf>,
+    /// Optional HAR recorder. When `Some`, every fetch in background workers
+    /// is recorded into the shared recorder used by the foreground server.
+    pub har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
 }

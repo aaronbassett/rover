@@ -83,3 +83,14 @@ pub async fn spawn_client(data_dir: &Path) -> rmcp::service::RunningService<rmcp
     let proc = TokioChildProcess::new(cmd).expect("spawn rover mcp");
     ().serve(proc).await.expect("client handshake")
 }
+
+/// Like [`spawn_client`], but writes the caller-supplied `config_toml` to
+/// `rover.toml` first (overwriting any prior file). Use when a test needs
+/// non-default config sections (e.g. `[debug] har_path`).
+pub async fn spawn_client_with_config(
+    data_dir: &Path,
+    config_toml: &str,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    std::fs::write(data_dir.join("rover.toml"), config_toml).unwrap();
+    spawn_client(data_dir).await
+}

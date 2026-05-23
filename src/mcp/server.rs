@@ -24,6 +24,7 @@ pub async fn serve_stdio(
     config: Arc<Config>,
     ssrf_level: SsrfLevel,
     ssrf_project_root: Option<std::path::PathBuf>,
+    har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
 ) -> anyhow::Result<()> {
     let pid = std::process::id() as i64;
     let version = env!("CARGO_PKG_VERSION").to_string();
@@ -116,6 +117,7 @@ pub async fn serve_stdio(
         fetch_cfg: config.fetch.clone(),
         ssrf_level,
         ssrf_project_root: ssrf_project_root.clone(),
+        har_recorder: har_recorder.clone(),
     };
     let spawner = default_spawner(worker_deps);
     // The orphan scan interval is normally 10s, but integration tests need
@@ -164,12 +166,18 @@ pub async fn serve_stdio(
         config.summarization.fallback_to_extractive,
     ));
 
+    // Keep a clone for the shutdown flush below. The handler also holds a
+    // clone for the foreground tools; background workers get yet another via
+    // `WorkerDeps` above.
+    let har_recorder_for_shutdown = har_recorder.clone();
+
     let handler = RoverHandler::new(
         db.clone(),
         config,
         client,
         ssrf_level,
         ssrf_project_root,
+        har_recorder,
         pacer,
         summarizer,
     );
@@ -215,6 +223,14 @@ pub async fn serve_stdio(
         }
         Err(_) => {
             tracing::warn!(target: "rover::mcp", "scheduler shutdown timed out");
+        }
+    }
+
+    // Final HAR flush on shutdown so a clean client disconnect leaves a
+    // complete file on disk (rather than depending on the next interval tick).
+    if let Some(r) = &har_recorder_for_shutdown {
+        if let Err(e) = r.flush().await {
+            tracing::warn!(target: "rover::fetcher", error = ?e, "har shutdown flush failed");
         }
     }
 

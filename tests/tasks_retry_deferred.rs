@@ -51,6 +51,7 @@ async fn retry_succeeds_on_second_attempt() {
         fetch_cfg: cfg.fetch.clone(),
         ssrf_level: SsrfLevel::Loopback,
         ssrf_project_root: None,
+        har_recorder: None,
     };
 
     let params = RetryParams {
@@ -106,6 +107,7 @@ async fn retry_max_attempts_exhausted_terminal_failure() {
         fetch_cfg: cfg.fetch.clone(),
         ssrf_level: SsrfLevel::Loopback,
         ssrf_project_root: None,
+        har_recorder: None,
     };
 
     let params = RetryParams {

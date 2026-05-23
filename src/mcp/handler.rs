@@ -31,6 +31,9 @@ pub struct RoverHandler {
     /// Pre-canonicalized project root used when `ssrf_level == Project` to
     /// validate `file://` URLs. `None` for every other level.
     pub(crate) ssrf_project_root: Option<std::path::PathBuf>,
+    /// Optional HAR recorder shared with background workers. `Some` when
+    /// `[debug] har_path` is set in config.
+    pub(crate) har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
     pub(crate) pacer: Arc<Pacer>,
     pub(crate) summarizer: Arc<crate::summarizer::SummarizerService>,
     tool_router: ToolRouter<Self>,
@@ -44,6 +47,7 @@ impl RoverHandler {
         client: reqwest::Client,
         ssrf_level: SsrfLevel,
         ssrf_project_root: Option<std::path::PathBuf>,
+        har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
         pacer: Arc<Pacer>,
         summarizer: Arc<crate::summarizer::SummarizerService>,
     ) -> Self {
@@ -53,6 +57,7 @@ impl RoverHandler {
             client,
             ssrf_level,
             ssrf_project_root,
+            har_recorder,
             pacer,
             summarizer,
             tool_router: Self::tool_router(),

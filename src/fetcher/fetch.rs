@@ -70,8 +70,17 @@ pub async fn fetch_url(
     url: &Url,
     level: SsrfLevel,
     project_root: Option<&std::path::Path>,
+    har_recorder: Option<&std::sync::Arc<super::har::HarRecorder>>,
 ) -> Result<FetchedPage, FetcherError> {
-    fetch_url_conditional(client, url, level, project_root, &ConditionalGet::default()).await
+    fetch_url_conditional(
+        client,
+        url,
+        level,
+        project_root,
+        har_recorder,
+        &ConditionalGet::default(),
+    )
+    .await
 }
 
 /// Fetch `url` with optional conditional-GET validators.
@@ -80,13 +89,19 @@ pub async fn fetch_url(
 /// `If-Modified-Since` headers when present in `cond`. Callers should be
 /// prepared for a `304 Not Modified` response: in that case the body is empty
 /// and only the freshness-related headers are meaningful.
+///
+/// When `har_recorder` is `Some`, the round-trip is captured and pushed onto
+/// the recorder's in-memory entries buffer. The recorder is responsible for
+/// flushing to disk on an interval or at shutdown.
 pub async fn fetch_url_conditional(
     client: &reqwest::Client,
     url: &Url,
     level: SsrfLevel,
     project_root: Option<&std::path::Path>,
+    har_recorder: Option<&std::sync::Arc<super::har::HarRecorder>>,
     cond: &ConditionalGet,
 ) -> Result<FetchedPage, FetcherError> {
+    let start = std::time::Instant::now();
     ssrf::validate_url_with_project_root(url, level, project_root)?;
     let host = url
         .host_str()
@@ -99,15 +114,28 @@ pub async fn fetch_url_conditional(
     ssrf::validate_addresses(&addrs, level)?;
 
     let mut req = client.get(url.clone());
+    // Capture only the headers we explicitly add; reqwest's implicit headers
+    // (user-agent, accept-encoding) are intentionally omitted — RequestBuilder
+    // doesn't expose them and HAR users care most about what we set.
+    let mut request_headers_pairs: Vec<(String, String)> = Vec::new();
     if let Some(etag) = &cond.if_none_match {
         req = req.header(reqwest::header::IF_NONE_MATCH, etag);
+        request_headers_pairs.push(("if-none-match".into(), etag.clone()));
     }
     if let Some(lm) = &cond.if_modified_since {
         req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm);
+        request_headers_pairs.push(("if-modified-since".into(), lm.clone()));
     }
     let response = req.send().await?;
     let status = response.status().as_u16();
     let final_url = Url::parse(response.url().as_str())?;
+
+    // Snapshot response headers before `.bytes()` consumes the response.
+    let response_headers_pairs: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
 
     let content_type = response
         .headers()
@@ -146,6 +174,22 @@ pub async fn fetch_url_conditional(
         .map(str::to_string);
 
     let bytes = response.bytes().await?;
+
+    if let Some(recorder) = har_recorder {
+        let ex = super::har::RecordedExchange {
+            url: final_url.to_string(),
+            method: "GET".to_string(),
+            request_headers: request_headers_pairs,
+            response_status: status,
+            response_headers: response_headers_pairs,
+            response_body: bytes.to_vec(),
+            duration: start.elapsed(),
+        };
+        if let Err(e) = recorder.record(ex).await {
+            tracing::warn!(target: "rover::fetcher", error = ?e, "failed to record har entry");
+        }
+    }
+
     let (body, charset) = decode_to_utf8(content_type.as_deref(), &bytes);
 
     if let Some(ref ct) = content_type {

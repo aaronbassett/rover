@@ -95,6 +95,19 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let client = build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout());
     let pacer = crate::fetcher::concurrency::Pacer::new(&cfg.rate_limit);
 
+    // Optional HAR recorder for one-shot CLI runs. We flush once at the end
+    // of this subcommand rather than running an interval task — a single
+    // `fetch` invocation produces at most a handful of round-trips.
+    let har_recorder: Option<std::sync::Arc<crate::fetcher::har::HarRecorder>> =
+        if !cfg.debug.har_path.is_empty() {
+            let path = std::path::PathBuf::from(&cfg.debug.har_path);
+            let r = crate::fetcher::har::HarRecorder::new(path, cfg.debug.har_body_cap)
+                .with_context(|| format!("opening har file at {}", cfg.debug.har_path))?;
+            Some(std::sync::Arc::new(r))
+        } else {
+            None
+        };
+
     let result = fetch_with_cache(
         &db,
         &client,
@@ -107,6 +120,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
             force_refresh: args.force_refresh,
             ssrf_level: level,
             ssrf_project_root,
+            har_recorder: har_recorder.clone(),
             ignore_robots: args.ignore_robots,
             user_agent: cfg.fetch.user_agent.clone(),
         },
@@ -188,5 +202,12 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
 
     let envelope = render(&meta);
     print!("{envelope}");
+
+    if let Some(r) = &har_recorder {
+        if let Err(e) = r.flush().await {
+            tracing::warn!(target: "rover::fetcher", error = ?e, "har flush failed");
+        }
+    }
+
     Ok(())
 }
