@@ -3,6 +3,8 @@
 //! M1 covers a tiny subset of the full schema documented in PRD §12.
 //! Subsequent milestones extend this struct.
 
+pub mod provenance;
+
 use serde::Deserialize;
 use std::path::Path;
 use std::time::Duration;
