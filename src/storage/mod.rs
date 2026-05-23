@@ -9,6 +9,7 @@
 
 pub mod error;
 pub mod events;
+pub mod hooks;
 pub mod pages;
 pub mod robots;
 pub mod servers;
@@ -17,8 +18,9 @@ pub mod system;
 pub mod tasks;
 
 pub use error::StorageError;
+pub use hooks::{UpdateHookGuard, register_tasks_update_hook};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -41,6 +43,7 @@ pub type NewTaskNotify = tokio::sync::mpsc::UnboundedSender<String>;
 pub struct Db {
     pub(crate) conn: Connection,
     pub(crate) new_task_tx: Arc<Mutex<Option<NewTaskNotify>>>,
+    path: PathBuf,
 }
 
 impl Db {
@@ -48,6 +51,14 @@ impl Db {
     /// scheduler channel exists, by `mcp::server::serve_stdio`.
     pub fn set_new_task_sender(&self, tx: NewTaskNotify) {
         *self.new_task_tx.lock().expect("new_task_tx mutex poisoned") = Some(tx);
+    }
+
+    /// Path the underlying SQLite file was opened from.
+    ///
+    /// Used by [`register_tasks_update_hook`] to open a dedicated sibling
+    /// connection on which the `update_hook` is installed.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -97,8 +108,9 @@ impl Db {
         path: impl AsRef<Path>,
         migrations: &'static [(&'static str, &'static str)],
     ) -> Result<Self, StorageError> {
-        let path_str = path.as_ref().display().to_string();
-        let conn = Connection::open(path)
+        let path_owned = path.as_ref().to_path_buf();
+        let path_str = path_owned.display().to_string();
+        let conn = Connection::open(&path_owned)
             .await
             .map_err(|source| StorageError::Open {
                 path: path_str.clone(),
@@ -115,6 +127,7 @@ impl Db {
         let db = Self {
             conn,
             new_task_tx: Arc::new(Mutex::new(None)),
+            path: path_owned,
         };
         db.run_migrations(migrations).await?;
         Ok(db)
