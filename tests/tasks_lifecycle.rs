@@ -27,6 +27,7 @@ fn dummy_worker_deps(cfg: &Config) -> WorkerDeps {
         robots_cfg: cfg.robots.clone(),
         fetch_cfg: cfg.fetch.clone(),
         ssrf_level: SsrfLevel::Strict,
+        ssrf_project_root: None,
     }
 }
 

@@ -50,6 +50,7 @@ async fn retry_succeeds_on_second_attempt() {
         robots_cfg: cfg.robots.clone(),
         fetch_cfg: cfg.fetch.clone(),
         ssrf_level: SsrfLevel::Loopback,
+        ssrf_project_root: None,
     };
 
     let params = RetryParams {
@@ -104,6 +105,7 @@ async fn retry_max_attempts_exhausted_terminal_failure() {
         robots_cfg: cfg.robots.clone(),
         fetch_cfg: cfg.fetch.clone(),
         ssrf_level: SsrfLevel::Loopback,
+        ssrf_project_root: None,
     };
 
     let params = RetryParams {

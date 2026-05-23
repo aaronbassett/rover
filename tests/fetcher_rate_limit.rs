@@ -91,6 +91,7 @@ async fn pacing_at_60_rpm_paces_consecutive_requests() {
             FetchOptions {
                 force_refresh: true,
                 ssrf_level: SsrfLevel::Loopback,
+                ssrf_project_root: None,
                 ignore_robots: true,
                 user_agent: "test/0.1".into(),
             },
@@ -154,6 +155,7 @@ async fn per_host_isolation_does_not_pace_other_hosts() {
             FetchOptions {
                 force_refresh: true,
                 ssrf_level: SsrfLevel::Loopback,
+                ssrf_project_root: None,
                 ignore_robots: true,
                 user_agent: "test/0.1".into(),
             },
@@ -177,6 +179,7 @@ async fn per_host_isolation_does_not_pace_other_hosts() {
         FetchOptions {
             force_refresh: true,
             ssrf_level: SsrfLevel::Loopback,
+            ssrf_project_root: None,
             ignore_robots: true,
             user_agent: "test/0.1".into(),
         },

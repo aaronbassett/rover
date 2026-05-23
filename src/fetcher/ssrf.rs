@@ -76,25 +76,87 @@ pub enum SsrfError {
 
     #[error("unknown ssrf level `{level}` (expected one of: strict, loopback, project, lan, none)")]
     UnknownLevel { level: String },
+
+    #[error("file:// URLs are not allowed at level {level:?}")]
+    FileSchemeNotAllowed { level: SsrfLevel },
+
+    #[error("file path {path:?} is not a descendant of project_root {root:?}")]
+    FileOutsideProjectRoot {
+        path: std::path::PathBuf,
+        root: std::path::PathBuf,
+    },
+
+    #[error("file path {path:?} could not be canonicalized: {source}")]
+    FileCanonicalize {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("project_root is required when ssrf.level = project")]
+    ProjectRootMissing,
 }
 
-/// Validate the URL itself (scheme, presence of host).
+/// Validate the URL itself (scheme, presence of host, file:// rules).
+///
+/// For `Project` level, callers must pass the canonicalized `project_root`
+/// via `validate_url_with_project_root`. Calling `validate_url` (no root)
+/// with `level == Project` yields `SsrfError::ProjectRootMissing` for any
+/// `file://` URL.
+pub fn validate_url(url: &Url, level: SsrfLevel) -> Result<(), SsrfError> {
+    validate_url_with_project_root(url, level, None)
+}
+
+/// Validate the URL itself (scheme, presence of host, file:// rules).
+///
+/// For `http`/`https`, this checks the scheme and that a host is present.
+/// For `file://`, the URL must be allowed at `level` (Project, Lan, None),
+/// canonicalized successfully (resolving symlinks), and the resulting path
+/// must be a descendant of the pre-canonicalized `project_root`.
 ///
 /// Call this *before* DNS resolution — it's cheap and rules out bad URLs early.
-pub fn validate_url(url: &Url, level: SsrfLevel) -> Result<(), SsrfError> {
+pub fn validate_url_with_project_root(
+    url: &Url,
+    level: SsrfLevel,
+    project_root: Option<&std::path::Path>,
+) -> Result<(), SsrfError> {
     match url.scheme() {
-        "http" | "https" => {}
-        other => {
-            return Err(SsrfError::Scheme {
-                scheme: other.to_string(),
-            });
+        "http" | "https" => {
+            if url.host_str().is_none() {
+                return Err(SsrfError::NoHost);
+            }
+            Ok(())
         }
+        "file" => {
+            if !matches!(level, SsrfLevel::Project | SsrfLevel::Lan | SsrfLevel::None) {
+                return Err(SsrfError::FileSchemeNotAllowed { level });
+            }
+            let root = project_root.ok_or(SsrfError::ProjectRootMissing)?;
+            let raw_path = url
+                .to_file_path()
+                .map_err(|()| SsrfError::FileCanonicalize {
+                    path: std::path::PathBuf::from(url.path()),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "file:// URL has no local path",
+                    ),
+                })?;
+            let canon =
+                std::fs::canonicalize(&raw_path).map_err(|source| SsrfError::FileCanonicalize {
+                    path: raw_path.clone(),
+                    source,
+                })?;
+            if !canon.starts_with(root) {
+                return Err(SsrfError::FileOutsideProjectRoot {
+                    path: canon,
+                    root: root.to_path_buf(),
+                });
+            }
+            Ok(())
+        }
+        other => Err(SsrfError::Scheme {
+            scheme: other.to_string(),
+        }),
     }
-    if url.host_str().is_none() {
-        return Err(SsrfError::NoHost);
-    }
-    let _ = level; // currently no scheme variation across levels
-    Ok(())
 }
 
 /// Validate every resolved address against the policy.
@@ -256,7 +318,7 @@ mod tests {
             SsrfLevel::Strict,
         )
         .unwrap_err();
-        assert!(matches!(err, SsrfError::Scheme { .. }));
+        assert!(matches!(err, SsrfError::FileSchemeNotAllowed { .. }));
     }
 
     #[test]

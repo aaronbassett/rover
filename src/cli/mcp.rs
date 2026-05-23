@@ -30,6 +30,19 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
 
     let ssrf_level = SsrfLevel::parse(&cfg.ssrf.level)
         .with_context(|| format!("invalid [ssrf] level `{}` in config", cfg.ssrf.level))?;
+    let ssrf_project_root = if ssrf_level == SsrfLevel::Project {
+        let raw = &cfg.ssrf.project_root;
+        let resolved = std::fs::canonicalize(raw)
+            .with_context(|| format!("canonicalizing ssrf.project_root `{}`", raw.display()))?;
+        tracing::info!(
+            target: "rover::ssrf",
+            project_root = %resolved.display(),
+            "ssrf level=project; project_root resolved",
+        );
+        Some(resolved)
+    } else {
+        None
+    };
 
     let cfg = Arc::new(cfg);
 
@@ -39,5 +52,5 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         .await
         .context("opening cache database")?;
 
-    mcp::serve_stdio(db, cfg, ssrf_level).await
+    mcp::serve_stdio(db, cfg, ssrf_level, ssrf_project_root).await
 }

@@ -49,6 +49,8 @@ pub struct CachedFetch {
 pub struct FetchOptions {
     pub force_refresh: bool,
     pub ssrf_level: SsrfLevel,
+    /// Required (some) when `ssrf_level == Project`. Must be pre-canonicalized.
+    pub ssrf_project_root: Option<std::path::PathBuf>,
     /// When `true`, skip the robots gate. Used by `--ignore-robots`.
     pub ignore_robots: bool,
     /// User-Agent used for robots.txt UA-rule evaluation. Must match
@@ -175,6 +177,7 @@ where
         client,
         url,
         opts.ssrf_level,
+        opts.ssrf_project_root.as_deref(),
         &cond,
         crawl_delay,
         rate_cfg,
@@ -448,6 +451,7 @@ mod tests {
             FetchOptions {
                 force_refresh: false,
                 ssrf_level: SsrfLevel::Strict,
+                ssrf_project_root: None,
                 ignore_robots: false,
                 user_agent: "test/0.1".into(),
             },

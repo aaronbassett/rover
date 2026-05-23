@@ -19,7 +19,12 @@ use crate::tasks::WorkerDeps;
 use crate::tasks::default_spawner;
 use crate::tasks::scheduler::{Scheduler, SchedulerConfig};
 
-pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> anyhow::Result<()> {
+pub async fn serve_stdio(
+    db: Db,
+    config: Arc<Config>,
+    ssrf_level: SsrfLevel,
+    ssrf_project_root: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     let pid = std::process::id() as i64;
     let version = env!("CARGO_PKG_VERSION").to_string();
 
@@ -110,6 +115,7 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
         robots_cfg: config.robots.clone(),
         fetch_cfg: config.fetch.clone(),
         ssrf_level,
+        ssrf_project_root: ssrf_project_root.clone(),
     };
     let spawner = default_spawner(worker_deps);
     // The orphan scan interval is normally 10s, but integration tests need
@@ -158,7 +164,15 @@ pub async fn serve_stdio(db: Db, config: Arc<Config>, ssrf_level: SsrfLevel) -> 
         config.summarization.fallback_to_extractive,
     ));
 
-    let handler = RoverHandler::new(db.clone(), config, client, ssrf_level, pacer, summarizer);
+    let handler = RoverHandler::new(
+        db.clone(),
+        config,
+        client,
+        ssrf_level,
+        ssrf_project_root,
+        pacer,
+        summarizer,
+    );
 
     let service = handler.serve(stdio()).await?;
 

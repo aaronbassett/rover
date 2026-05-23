@@ -65,6 +65,7 @@ fn opts() -> FetchOptions {
     FetchOptions {
         force_refresh: true,
         ssrf_level: SsrfLevel::Loopback,
+        ssrf_project_root: None,
         ignore_robots: true,
         user_agent: "test/0.1".into(),
     }

@@ -111,6 +111,7 @@ impl RoverHandler {
             FetchOptions {
                 force_refresh: false,
                 ssrf_level: self.ssrf_level,
+                ssrf_project_root: self.ssrf_project_root.clone(),
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
             },
@@ -187,6 +188,7 @@ impl RoverHandler {
             FetchOptions {
                 force_refresh: false,
                 ssrf_level: self.ssrf_level,
+                ssrf_project_root: self.ssrf_project_root.clone(),
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
             },
@@ -313,6 +315,7 @@ mod tests {
                 cfg,
                 client,
                 crate::fetcher::ssrf::SsrfLevel::Strict,
+                None,
                 pacer,
                 summarizer,
             ),

@@ -130,7 +130,7 @@ async fn retry_robots(
 
     let mut attempt: u8 = 0;
     loop {
-        let result = fetch_url_conditional(client, url, level, cond).await;
+        let result = fetch_url_conditional(client, url, level, None, cond).await;
         match result {
             Ok(page) if (200..300).contains(&page.status) || page.status == 304 => return Ok(page),
             Ok(page) => {

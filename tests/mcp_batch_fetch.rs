@@ -30,6 +30,7 @@ async fn fixture_handler() -> (RoverHandler, Db) {
         cfg,
         client,
         SsrfLevel::Loopback,
+        None,
         pacer,
         summarizer,
     );

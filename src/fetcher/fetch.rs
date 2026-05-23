@@ -69,8 +69,9 @@ pub async fn fetch_url(
     client: &reqwest::Client,
     url: &Url,
     level: SsrfLevel,
+    project_root: Option<&std::path::Path>,
 ) -> Result<FetchedPage, FetcherError> {
-    fetch_url_conditional(client, url, level, &ConditionalGet::default()).await
+    fetch_url_conditional(client, url, level, project_root, &ConditionalGet::default()).await
 }
 
 /// Fetch `url` with optional conditional-GET validators.
@@ -83,9 +84,10 @@ pub async fn fetch_url_conditional(
     client: &reqwest::Client,
     url: &Url,
     level: SsrfLevel,
+    project_root: Option<&std::path::Path>,
     cond: &ConditionalGet,
 ) -> Result<FetchedPage, FetcherError> {
-    ssrf::validate_url(url, level)?;
+    ssrf::validate_url_with_project_root(url, level, project_root)?;
     let host = url
         .host_str()
         .ok_or(FetcherError::Ssrf(ssrf::SsrfError::NoHost))?;

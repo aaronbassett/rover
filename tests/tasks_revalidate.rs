@@ -61,6 +61,7 @@ async fn stale_path_inserts_revalidate_task() {
         FetchOptions {
             force_refresh: false,
             ssrf_level: SsrfLevel::Loopback,
+            ssrf_project_root: None,
             ignore_robots: true,
             user_agent: cfg.fetch.user_agent.clone(),
         },
@@ -128,6 +129,7 @@ async fn revalidate_marks_completed_after_fresh_fetch() {
         robots_cfg: cfg.robots.clone(),
         fetch_cfg: cfg.fetch.clone(),
         ssrf_level: SsrfLevel::Loopback,
+        ssrf_project_root: None,
     };
     let params = RevalidateParams {
         url: format!("{}/page", server.uri()),

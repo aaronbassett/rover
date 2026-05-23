@@ -28,17 +28,22 @@ pub struct RoverHandler {
     pub(crate) config: Arc<Config>,
     pub(crate) client: reqwest::Client,
     pub(crate) ssrf_level: SsrfLevel,
+    /// Pre-canonicalized project root used when `ssrf_level == Project` to
+    /// validate `file://` URLs. `None` for every other level.
+    pub(crate) ssrf_project_root: Option<std::path::PathBuf>,
     pub(crate) pacer: Arc<Pacer>,
     pub(crate) summarizer: Arc<crate::summarizer::SummarizerService>,
     tool_router: ToolRouter<Self>,
 }
 
 impl RoverHandler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db: Db,
         config: Arc<Config>,
         client: reqwest::Client,
         ssrf_level: SsrfLevel,
+        ssrf_project_root: Option<std::path::PathBuf>,
         pacer: Arc<Pacer>,
         summarizer: Arc<crate::summarizer::SummarizerService>,
     ) -> Self {
@@ -47,6 +52,7 @@ impl RoverHandler {
             config,
             client,
             ssrf_level,
+            ssrf_project_root,
             pacer,
             summarizer,
             tool_router: Self::tool_router(),
