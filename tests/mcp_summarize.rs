@@ -182,6 +182,9 @@ async fn summarize_falls_back_to_extractive_when_cloud_unavailable() {
 [robots]
 respect = false
 
+[ssrf]
+level = "loopback"
+
 [backends.default]
 kind = "extractive"
 
@@ -281,6 +284,9 @@ async fn summarize_falls_back_to_extractive_when_cloud_returns_401() {
         r#"
 [robots]
 respect = false
+
+[ssrf]
+level = "loopback"
 
 [backends.default]
 kind = "extractive"

@@ -120,6 +120,14 @@ impl Config {
             self.robots.respect = false;
         }
     }
+
+    /// Test-only convenience for swapping the SSRF level on an
+    /// already-loaded config. Production callers go through TOML.
+    #[cfg(any(test, feature = "test-loopback"))]
+    pub fn with_ssrf_level(mut self, level: &str) -> Self {
+        self.ssrf.level = level.to_string();
+        self
+    }
 }
 
 fn default_user_agent() -> String {

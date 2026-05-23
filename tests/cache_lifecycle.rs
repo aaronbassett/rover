@@ -67,11 +67,19 @@ async fn cache_hit_then_force_refresh_and_purge() {
 
     let url = format!("{}/article", server.uri());
     let tmp = tempfile::tempdir().unwrap();
+    let cfg_path = tmp.path().join("rover.toml");
+    std::fs::write(&cfg_path, "[ssrf]\nlevel = \"loopback\"\n").unwrap();
 
     // First fetch -- miss, hits the network.
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
-        .args(["fetch", &url, "--ignore-robots", "--ssrf-test-loopback"])
+        .args([
+            "--config",
+            cfg_path.to_str().unwrap(),
+            "fetch",
+            &url,
+            "--ignore-robots",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("How to do the thing"));
@@ -84,7 +92,13 @@ async fn cache_hit_then_force_refresh_and_purge() {
     // Second fetch -- hit, no network.
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
-        .args(["fetch", &url, "--ignore-robots", "--ssrf-test-loopback"])
+        .args([
+            "--config",
+            cfg_path.to_str().unwrap(),
+            "fetch",
+            &url,
+            "--ignore-robots",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("How to do the thing"));
@@ -98,11 +112,12 @@ async fn cache_hit_then_force_refresh_and_purge() {
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
         .args([
+            "--config",
+            cfg_path.to_str().unwrap(),
             "fetch",
             &url,
             "--force-refresh",
             "--ignore-robots",
-            "--ssrf-test-loopback",
         ])
         .assert()
         .success();
@@ -181,7 +196,7 @@ async fn stale_entry_serves_immediately_under_swr() {
     let cfg_path = tmp.path().join("rover.toml");
     std::fs::write(
         &cfg_path,
-        "[cache]\nmin_ttl = \"1s\"\ndefault_ttl = \"1s\"\n",
+        "[cache]\nmin_ttl = \"1s\"\ndefault_ttl = \"1s\"\n\n[ssrf]\nlevel = \"loopback\"\n",
     )
     .unwrap();
 
@@ -194,7 +209,6 @@ async fn stale_entry_serves_immediately_under_swr() {
             "fetch",
             &url,
             "--ignore-robots",
-            "--ssrf-test-loopback",
         ])
         .assert()
         .success()
@@ -213,7 +227,6 @@ async fn stale_entry_serves_immediately_under_swr() {
             "fetch",
             &url,
             "--ignore-robots",
-            "--ssrf-test-loopback",
         ])
         .assert()
         .success()

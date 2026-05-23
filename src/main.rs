@@ -104,12 +104,6 @@ struct FetchArgs {
     /// CLI path; use the MCP `summarize` tool for the canonical surface.
     #[arg(long, value_name = "JSON")]
     summarize: Option<String>,
-
-    /// **Test-only.** Allow loopback addresses to satisfy SSRF checks. Used by
-    /// the integration test suite against wiremock; never used in production.
-    #[cfg(any(test, feature = "test-loopback"))]
-    #[arg(long, hide = true)]
-    ssrf_test_loopback: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -302,8 +296,6 @@ impl FetchArgs {
             max_retries: self.max_retries,
             max_tokens: self.max_tokens,
             summarize: self.summarize,
-            #[cfg(any(test, feature = "test-loopback"))]
-            ssrf_test_loopback: self.ssrf_test_loopback,
         }
     }
 }

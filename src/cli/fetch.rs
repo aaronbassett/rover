@@ -45,9 +45,6 @@ pub struct Args {
     /// path is the MCP `fetch` / `summarize` tools. The CLI accepts and
     /// validates this JSON but does not invoke the summarizer in v1.
     pub summarize: Option<String>,
-
-    #[cfg(any(test, feature = "test-loopback"))]
-    pub ssrf_test_loopback: bool,
 }
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
@@ -60,7 +57,8 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         args.ignore_robots,
     );
     let url = Url::parse(&args.url).context("parsing URL argument")?;
-    let level = ssrf_level_for_args(&args);
+    let level = SsrfLevel::parse(&cfg.ssrf.level)
+        .with_context(|| format!("invalid [ssrf] level `{}` in config", cfg.ssrf.level))?;
 
     // Validate the optional --summarize JSON blob up front so the user
     // gets a clean error before any network or storage I/O. The CLI does
@@ -177,18 +175,4 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let envelope = render(&meta);
     print!("{envelope}");
     Ok(())
-}
-
-#[cfg(any(test, feature = "test-loopback"))]
-fn ssrf_level_for_args(args: &Args) -> SsrfLevel {
-    if args.ssrf_test_loopback {
-        SsrfLevel::Loopback
-    } else {
-        SsrfLevel::Strict
-    }
-}
-
-#[cfg(not(any(test, feature = "test-loopback")))]
-fn ssrf_level_for_args(_args: &Args) -> SsrfLevel {
-    SsrfLevel::Strict
 }

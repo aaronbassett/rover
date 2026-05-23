@@ -27,6 +27,10 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         args.max_retries,
         args.ignore_robots,
     );
+
+    let ssrf_level = SsrfLevel::parse(&cfg.ssrf.level)
+        .with_context(|| format!("invalid [ssrf] level `{}` in config", cfg.ssrf.level))?;
+
     let cfg = Arc::new(cfg);
 
     let data_dir = crate::paths::data_dir();
@@ -35,26 +39,5 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         .await
         .context("opening cache database")?;
 
-    let ssrf_level = ssrf_level_from_env();
-
     mcp::serve_stdio(db, cfg, ssrf_level).await
-}
-
-/// Production builds always use `SsrfLevel::Strict`.
-///
-/// When compiled with `--features test-loopback`, the integration test
-/// harness can set `ROVER_MCP_SSRF=test_loopback` to allow wiremock to
-/// bind to 127.0.0.1 and still satisfy SSRF. This env var has no effect
-/// on a normal release build.
-#[cfg(feature = "test-loopback")]
-fn ssrf_level_from_env() -> SsrfLevel {
-    match std::env::var("ROVER_MCP_SSRF").as_deref() {
-        Ok("test_loopback") => SsrfLevel::Loopback,
-        _ => SsrfLevel::Strict,
-    }
-}
-
-#[cfg(not(feature = "test-loopback"))]
-fn ssrf_level_from_env() -> SsrfLevel {
-    SsrfLevel::Strict
 }

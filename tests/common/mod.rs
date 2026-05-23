@@ -29,12 +29,13 @@ pub fn bin_path() -> std::path::PathBuf {
 }
 
 /// Spawn `rover mcp` as a child process and return a connected rmcp client.
-/// The child reads `ROVER_DATA_DIR` (set per-test) and uses
-/// `ROVER_MCP_SSRF=test_loopback` (requires `--features test-loopback` build).
+/// The child reads `ROVER_DATA_DIR` (set per-test) and is configured via the
+/// generated `rover.toml`, which sets `[ssrf] level = "loopback"` so wiremock
+/// servers bound to 127.0.0.1 satisfy SSRF.
 ///
-/// Writes a `rover.toml` to the data dir that disables `robots.respect`,
-/// since the wiremock servers used by tests don't speak HTTPS and would
-/// otherwise produce robots fetch failures → DisallowAll.
+/// The same `rover.toml` disables `robots.respect`, since the wiremock
+/// servers used by tests don't speak HTTPS and would otherwise produce
+/// robots fetch failures → DisallowAll.
 /// Build a minimal in-process `SummarizerService` for tests that construct
 /// a `RoverHandler` directly. Uses a single offline extractive backend so
 /// no network I/O happens.
@@ -69,12 +70,15 @@ pub async fn make_summarizer_service(
 pub async fn spawn_client(data_dir: &Path) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
     let cfg_path = data_dir.join("rover.toml");
     if !cfg_path.exists() {
-        std::fs::write(&cfg_path, "[robots]\nrespect = false\n").unwrap();
+        std::fs::write(
+            &cfg_path,
+            "[robots]\nrespect = false\n\n[ssrf]\nlevel = \"loopback\"\n",
+        )
+        .unwrap();
     }
     let mut cmd = Command::new(bin_path());
     cmd.arg("--config").arg(&cfg_path).arg("mcp");
     cmd.env("ROVER_DATA_DIR", data_dir);
-    cmd.env("ROVER_MCP_SSRF", "test_loopback");
     cmd.env("RUST_LOG", "info,rover=debug");
     let proc = TokioChildProcess::new(cmd).expect("spawn rover mcp");
     ().serve(proc).await.expect("client handshake")
