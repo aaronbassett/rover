@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use futures::stream::{self, StreamExt};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
@@ -193,24 +194,44 @@ pub async fn apply_with_summarizer(
     // sync sink — buffer events here and drain in Phase 2.
     enum OwnedEvent {
         Line(String),
-        Table(Vec<String>, usize),
+        /// `Table(rows, ordinal, table_index)` where `table_index` is the
+        /// position of this table in the parallel-hook output vec (see
+        /// Phase 2).
+        Table(Vec<String>, usize, usize),
     }
     let mut events: Vec<OwnedEvent> = Vec::new();
+    let mut tables: Vec<(Vec<String>, usize)> = Vec::new();
     iterate_tables(markdown, |ev| {
         match ev {
             TableEvent::Line(line) => events.push(OwnedEvent::Line(line.to_string())),
-            TableEvent::Table(rows, ordinal) => events.push(OwnedEvent::Table(rows, ordinal)),
+            TableEvent::Table(rows, ordinal) => {
+                let idx = tables.len();
+                tables.push((rows.clone(), ordinal));
+                events.push(OwnedEvent::Table(rows, ordinal, idx));
+            }
         }
         Ok(())
     })?;
 
-    // Phase 2: drain the queue in document order, awaiting the hook for
-    // each table block. Non-table lines pass through verbatim.
-    //
-    // TODO(m8): parallelize per-table summarization via FuturesUnordered
-    // or futures::stream::iter(...).buffer_unordered(N) — bounded by a
-    // small N to avoid hammering cloud backends. Preserve insertion
-    // order in the output so frontmatter ordinals match document order.
+    // Phase 2 (parallel): bound concurrency to 4. Stream ONLY table
+    // futures through `buffered(N)` — interleaving immediately-ready
+    // `Line` futures starves the bounded buffer (the head Table's
+    // pending status blocks pulling further Tables). `buffered` preserves
+    // input order, so the resulting `Vec` aligns with the `tables` list
+    // and Phase 3 can stitch results back into document order via
+    // `table_index`.
+    let hook_results: Vec<Result<(String, Option<FallbackInfo>), String>> =
+        stream::iter(tables.into_iter())
+            .map(|(rows, _ordinal)| async move {
+                let table_text = rows.join("\n");
+                hook(&table_text).await
+            })
+            .buffered(4)
+            .collect()
+            .await;
+
+    // Phase 3: stitch the rendered table results back into document
+    // order, interleaving with `Line` events.
     let mut out = String::with_capacity(markdown.len());
     let mut records = Vec::new();
     for ev in events {
@@ -219,11 +240,11 @@ pub async fn apply_with_summarizer(
                 out.push_str(&line);
                 out.push('\n');
             }
-            OwnedEvent::Table(rows, ordinal) => {
+            OwnedEvent::Table(rows, ordinal, idx) => {
                 let table_text = rows.join("\n");
-                match hook(&table_text).await {
+                match &hook_results[idx] {
                     Ok((summary, fallback)) => {
-                        out.push_str(&summary);
+                        out.push_str(summary);
                         out.push('\n');
                         records.push(TableTransform {
                             ordinal,
@@ -231,9 +252,9 @@ pub async fn apply_with_summarizer(
                             path: None,
                             kept_rows: None,
                             truncated_rows: None,
-                            summary_md: Some(summary),
+                            summary_md: Some(summary.clone()),
                             fallback_reason: fallback.as_ref().map(|f| f.reason.clone()),
-                            fallback_from: fallback.map(|f| f.from),
+                            fallback_from: fallback.as_ref().map(|f| f.from.clone()),
                         });
                     }
                     Err(reason) => {
@@ -246,7 +267,7 @@ pub async fn apply_with_summarizer(
                             kept_rows: None,
                             truncated_rows: None,
                             summary_md: None,
-                            fallback_reason: Some(reason),
+                            fallback_reason: Some(reason.clone()),
                             fallback_from: None,
                         });
                     }

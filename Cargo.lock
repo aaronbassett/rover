@@ -2731,6 +2731,7 @@ dependencies = [
  "csv",
  "dirs 5.0.1",
  "encoding_rs",
+ "futures",
  "genai",
  "governor",
  "har",
