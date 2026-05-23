@@ -1,0 +1,314 @@
+//! Built-in `rover doctor` checks.
+
+use async_trait::async_trait;
+use std::path::Path;
+
+use super::{Check, CheckCtx, CheckReport, CheckStatus};
+
+pub struct SqliteOpen;
+
+#[async_trait]
+impl Check for SqliteOpen {
+    fn name(&self) -> &'static str {
+        "sqlite_open"
+    }
+    async fn run(&self, _ctx: &CheckCtx) -> CheckReport {
+        // Db is already open in CheckCtx — if we got here, it opened.
+        CheckReport {
+            check: self.name(),
+            status: CheckStatus::Ok,
+            detail: None,
+        }
+    }
+}
+
+pub struct SqliteWalMode;
+
+#[async_trait]
+impl Check for SqliteWalMode {
+    fn name(&self) -> &'static str {
+        "sqlite_wal_mode"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        let mode_res: Result<String, _> = ctx
+            .db
+            .conn
+            .call(|c| {
+                c.query_row("PRAGMA journal_mode", [], |r| r.get::<_, String>(0))
+                    .map_err(tokio_rusqlite::Error::from)
+            })
+            .await;
+        match mode_res {
+            Ok(mode) if mode.eq_ignore_ascii_case("wal") => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some(format!("journal_mode = {mode}")),
+            },
+            Ok(mode) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("expected wal, got {mode}")),
+            },
+            Err(e) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("query failed: {e}")),
+            },
+        }
+    }
+}
+
+pub struct SqliteSchemaVersion;
+
+#[async_trait]
+impl Check for SqliteSchemaVersion {
+    fn name(&self) -> &'static str {
+        "sqlite_schema_version"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        // Sync with MIGRATIONS.len() in src/storage/mod.rs.
+        const EXPECTED: u32 = 5;
+        match ctx.db.schema_version().await {
+            Ok(v) if v == EXPECTED => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some(format!("schema_version = {v}")),
+            },
+            Ok(v) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("schema_version = {v}, expected {EXPECTED}")),
+            },
+            Err(e) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("query failed: {e}")),
+            },
+        }
+    }
+}
+
+pub struct OutputDirWritable;
+
+#[async_trait]
+impl Check for OutputDirWritable {
+    fn name(&self) -> &'static str {
+        "output_dir_writable"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        let dir = match crate::extractor::output::OutputPaths::resolve(
+            ctx.config.output.dir.as_deref(),
+        ) {
+            Ok(p) => p.root().to_path_buf(),
+            Err(e) => {
+                return CheckReport {
+                    check: self.name(),
+                    status: CheckStatus::Fail,
+                    detail: Some(format!("could not resolve: {e}")),
+                };
+            }
+        };
+        let probe = dir.join(".rover_doctor_probe");
+        match std::fs::write(&probe, b"") {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&probe);
+                CheckReport {
+                    check: self.name(),
+                    status: CheckStatus::Ok,
+                    detail: Some(format!("writable: {}", short(&dir))),
+                }
+            }
+            Err(e) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("write probe failed at {}: {e}", short(&dir))),
+            },
+        }
+    }
+}
+
+pub struct NetworkReachable;
+
+#[async_trait]
+impl Check for NetworkReachable {
+    fn name(&self) -> &'static str {
+        "network_reachable"
+    }
+    async fn run(&self, _ctx: &CheckCtx) -> CheckReport {
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return CheckReport {
+                    check: self.name(),
+                    status: CheckStatus::Fail,
+                    detail: Some(format!("client build failed: {e}")),
+                };
+            }
+        };
+        match client.head("https://example.com").send().await {
+            Ok(resp) if resp.status().is_success() => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some(format!("HEAD https://example.com → {}", resp.status())),
+            },
+            Ok(resp) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("HEAD https://example.com → {}", resp.status())),
+            },
+            Err(e) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("HEAD failed: {e}")),
+            },
+        }
+    }
+}
+
+pub struct ExtractiveSynthesis;
+
+#[async_trait]
+impl Check for ExtractiveSynthesis {
+    fn name(&self) -> &'static str {
+        "extractive_synthesis"
+    }
+    async fn run(&self, _ctx: &CheckCtx) -> CheckReport {
+        use crate::summarizer::backend::{CompactMode, CompactOpts, Style, SummarizerBackend};
+        let be = crate::summarizer::extractive::ExtractiveBackend::new(
+            "doctor",
+            crate::tokenizer::Tokenizer::O200k,
+        );
+        let opts = CompactOpts {
+            mode: CompactMode::Extractive,
+            style: Style::Prose,
+            target_tokens: Some(50),
+            focus: None,
+            preserve: vec![],
+            backend_name: "doctor".to_string(),
+        };
+        let content = "Rover is a polite scraper. It caches what it fetches. It summarizes \
+                       what it caches. The summarizer is offline-first.";
+        match be.compact(content, &opts).await {
+            Ok(out) if !out.trim().is_empty() => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some(format!("produced {} chars", out.chars().count())),
+            },
+            Ok(_) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some("extractive backend returned empty output".to_string()),
+            },
+            Err(e) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("extractive backend errored: {e}")),
+            },
+        }
+    }
+}
+
+pub struct BackendsAuthenticate;
+
+#[async_trait]
+impl Check for BackendsAuthenticate {
+    fn name(&self) -> &'static str {
+        "backends_authenticate"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        let cloud: Vec<(&String, &crate::config::BackendConfig)> = ctx
+            .config
+            .backends
+            .iter()
+            .filter(|(_, c)| c.kind == "cloud")
+            .filter(|(_, c)| {
+                c.api_key_env
+                    .as_deref()
+                    .and_then(|e| std::env::var(e).ok())
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false)
+            })
+            .collect();
+        if cloud.is_empty() {
+            return CheckReport {
+                check: self.name(),
+                status: CheckStatus::Skip,
+                detail: Some("no configured cloud backends with non-empty api_key_env".to_string()),
+            };
+        }
+        // Trivial completion per cloud backend. Each gets a 5s timeout.
+        let mut failures: Vec<String> = Vec::new();
+        for (name, cfg) in cloud {
+            let provider_str = cfg.provider.as_deref().unwrap_or("");
+            let model = cfg.model.as_deref().unwrap_or("");
+            let api_key = cfg
+                .api_key_env
+                .as_deref()
+                .and_then(|e| std::env::var(e).ok());
+            let provider = match crate::summarizer::cloud::ProviderKind::parse(provider_str) {
+                Ok(p) => p,
+                Err(e) => {
+                    failures.push(format!("{name}: invalid provider `{provider_str}`: {e}"));
+                    continue;
+                }
+            };
+            let backend = match crate::summarizer::cloud::CloudBackend::new(
+                name.clone(),
+                provider,
+                model.to_string(),
+                cfg.base_url.clone(),
+                api_key,
+            ) {
+                Ok(b) => b,
+                Err(e) => {
+                    failures.push(format!("{name}: build failed: {e}"));
+                    continue;
+                }
+            };
+            use crate::summarizer::backend::{CompactMode, CompactOpts, Style, SummarizerBackend};
+            let opts = CompactOpts {
+                mode: CompactMode::Abstractive,
+                style: Style::Prose,
+                target_tokens: Some(1),
+                focus: None,
+                preserve: vec![],
+                backend_name: name.clone(),
+            };
+            let probe = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                backend.compact("ping", &opts),
+            )
+            .await;
+            match probe {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => failures.push(format!("{name}: {e}")),
+                Err(_) => failures.push(format!("{name}: timeout after 5s")),
+            }
+        }
+        if failures.is_empty() {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some("all configured cloud backends authenticated".to_string()),
+            }
+        } else {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(failures.join("; ")),
+            }
+        }
+    }
+}
+
+fn short(p: &Path) -> String {
+    if let Some(home) = std::env::var("HOME").ok().map(std::path::PathBuf::from)
+        && let Ok(stripped) = p.strip_prefix(&home)
+    {
+        return format!("~/{}", stripped.display());
+    }
+    p.display().to_string()
+}
