@@ -63,7 +63,7 @@ async fn extraction_failure_routes_to_extract_variant() {
         &cf.cache,
         FetchOptions {
             force_refresh: true,
-            ssrf_level: SsrfLevel::TestLoopback,
+            ssrf_level: SsrfLevel::Loopback,
             ignore_robots: true,
             user_agent: "test/0.1".into(),
         },

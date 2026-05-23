@@ -379,7 +379,7 @@ mod tests {
             &pacer,
             &client,
             &url,
-            SsrfLevel::TestLoopback,
+            SsrfLevel::Loopback,
             &cond,
             None,
             &cfg,

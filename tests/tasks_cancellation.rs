@@ -58,7 +58,7 @@ async fn cancellation_between_items_stops_loop() {
         rate_cfg: cfg.rate_limit.clone(),
         robots_cfg: cfg.robots.clone(),
         fetch_cfg: cfg.fetch.clone(),
-        ssrf_level: SsrfLevel::TestLoopback,
+        ssrf_level: SsrfLevel::Loopback,
     };
 
     let urls: Vec<String> = (0..5)

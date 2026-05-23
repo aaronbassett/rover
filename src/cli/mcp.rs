@@ -49,7 +49,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
 #[cfg(feature = "test-loopback")]
 fn ssrf_level_from_env() -> SsrfLevel {
     match std::env::var("ROVER_MCP_SSRF").as_deref() {
-        Ok("test_loopback") => SsrfLevel::TestLoopback,
+        Ok("test_loopback") => SsrfLevel::Loopback,
         _ => SsrfLevel::Strict,
     }
 }

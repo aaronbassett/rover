@@ -182,7 +182,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
 #[cfg(any(test, feature = "test-loopback"))]
 fn ssrf_level_for_args(args: &Args) -> SsrfLevel {
     if args.ssrf_test_loopback {
-        SsrfLevel::TestLoopback
+        SsrfLevel::Loopback
     } else {
         SsrfLevel::Strict
     }
