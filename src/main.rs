@@ -313,9 +313,19 @@ async fn dispatch(cli: Cli) -> ExitCode {
                     }
                 };
             }
-            ConfigCmd::Set { .. } => {
-                eprintln!("rover config set: not yet implemented (Task 13)");
-                return ExitCode::from(2);
+            ConfigCmd::Set { key, value } => {
+                let res = rover::cli::config::set(rover::cli::config::SetArgs {
+                    config_path: cli.config.clone(),
+                    key,
+                    value,
+                });
+                return match res {
+                    Ok(code) => ExitCode::from(code as u8),
+                    Err(e) => {
+                        eprintln!("rover: {e}");
+                        ExitCode::from(1)
+                    }
+                };
             }
         },
     };

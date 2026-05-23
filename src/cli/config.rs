@@ -70,6 +70,40 @@ pub fn show(args: ShowArgs) -> anyhow::Result<i32> {
     Ok(0)
 }
 
+pub struct SetArgs {
+    pub config_path: Option<std::path::PathBuf>,
+    pub key: String,
+    pub value: String,
+}
+
+pub fn set(args: SetArgs) -> anyhow::Result<i32> {
+    let path = args.config_path.unwrap_or_else(default_config_path);
+    // Ensure parent dir exists so a first-time set creates the file cleanly.
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating parent dir {}", parent.display()))?;
+    }
+    // Touch the file if missing so apply_set's read succeeds.
+    if !path.exists() {
+        std::fs::write(&path, "").with_context(|| format!("creating {}", path.display()))?;
+    }
+    match crate::config::edit::apply_set(&path, &args.key, &args.value) {
+        Ok(()) => {
+            eprintln!(
+                "✓ {} = {}  (wrote {})",
+                args.key,
+                args.value,
+                path.display()
+            );
+            Ok(0)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            Ok(1)
+        }
+    }
+}
+
 fn default_config_path() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("ROVER_CONFIG") {
         return std::path::PathBuf::from(p);
