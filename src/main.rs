@@ -56,7 +56,7 @@ enum Command {
     Cache(CacheCmd),
 
     /// Verify the Rover environment (M8).
-    Doctor,
+    Doctor(DoctorArgs),
 
     /// Inspect or modify config (M8).
     #[command(subcommand)]
@@ -184,6 +184,14 @@ enum ConfigCmd {
     Set { key: String, value: String },
 }
 
+#[derive(Debug, clap::Args)]
+struct DoctorArgs {
+    /// Output format: `human` (default) prints one line per check;
+    /// `ndjson` emits one JSON object per line for scripting.
+    #[arg(long, default_value = "human")]
+    format: String,
+}
+
 /// Build a `SummarizerService` for CLI subcommands that need it.
 ///
 /// The MCP server builds its own service inside `serve_stdio`; this helper
@@ -269,7 +277,30 @@ async fn dispatch(cli: Cli) -> ExitCode {
             )
             .await
         }
-        Command::Doctor | Command::Config(_) => {
+        Command::Doctor(args) => {
+            let cfg = match rover::config::load(cli.config.as_deref()) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("rover: loading config: {e}");
+                    return ExitCode::from(1);
+                }
+            };
+            return match rover::cli::doctor::run(
+                rover::cli::doctor::Args {
+                    format: args.format,
+                },
+                cfg,
+            )
+            .await
+            {
+                Ok(code) => ExitCode::from(code as u8),
+                Err(e) => {
+                    eprintln!("rover: {e}");
+                    ExitCode::from(1)
+                }
+            };
+        }
+        Command::Config(_) => {
             eprintln!("not yet implemented (planned for a later milestone)");
             return ExitCode::from(2);
         }
