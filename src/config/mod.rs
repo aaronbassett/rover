@@ -5,7 +5,7 @@
 
 pub mod provenance;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
 use thiserror::Error;
@@ -28,7 +28,7 @@ pub enum ConfigError {
     Invalid { path: String, message: String },
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
@@ -65,7 +65,7 @@ pub struct Config {
     pub backends: std::collections::HashMap<String, BackendConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FetchConfig {
     #[serde(default = "default_user_agent")]
@@ -145,7 +145,7 @@ fn default_timeout_secs() -> u64 {
 
 /// Cache configuration. All durations are parsed by `humantime` (e.g. "1h",
 /// "5m", "7d", "30s"). Defaults follow PRD §12.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CacheConfig {
     #[serde(default = "default_cache_default_ttl", with = "humantime_serde")]
@@ -196,7 +196,7 @@ fn default_cache_max_ttl() -> Duration {
 
 /// Tokenizer configuration. The `default` family is used for token counting
 /// in the frontmatter and the MCP layer when callers don't specify one.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TokenizerConfig {
     #[serde(default = "default_tokenizer")]
@@ -217,7 +217,7 @@ fn default_tokenizer() -> crate::tokenizer::Tokenizer {
 
 /// MCP server configuration. Durations are parsed by `humantime`
 /// (e.g. "5s", "60s", "2m"). Both intervals must be non-zero.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpConfig {
     #[serde(default = "default_heartbeat_interval", with = "humantime_serde")]
@@ -247,7 +247,7 @@ fn default_reap_threshold() -> Duration {
 /// Output configuration. When `dir` is `None`, `ROVER_OUTPUT_DIR` (if set)
 /// takes precedence, otherwise the platform `data_local_dir()/rover/output`
 /// default applies. See `OutputPaths::resolve`.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputConfig {
     #[serde(default)]
@@ -256,7 +256,7 @@ pub struct OutputConfig {
 
 /// Per-domain pacing knobs. All HTTP-bound code paths run through a single
 /// `Pacer` built from this struct at startup. See M5 design spec §3 and §4.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
     #[serde(default = "default_rpm_per_domain")]
@@ -334,7 +334,7 @@ fn default_deferred_threshold_secs() -> u64 {
 }
 
 /// Robots.txt fetch + respect knobs.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RobotsConfig {
     #[serde(default = "default_respect")]
@@ -377,7 +377,7 @@ fn default_robots_failure_ttl() -> Duration {
 }
 
 /// Top-level `[summarization]` section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SummarizationConfig {
     #[serde(default = "default_summarization_backend")]
@@ -426,7 +426,7 @@ fn default_summarization_fallback() -> bool {
 
 /// `[summarization.tables]` block. Controls the per-table summarize
 /// defaults used by the `TablesMode::Summarize` hook.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TablesSummarizationConfig {
     #[serde(default = "default_tables_target_tokens")]
@@ -454,7 +454,7 @@ fn default_tables_focus() -> String {
 /// One `[backends.<name>]` block. Free-form `kind`/`provider` strings —
 /// validation lives in `summarizer::registry::build` where the parsed
 /// values are matched against the typed enum.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BackendConfig {
     pub kind: String,
@@ -473,7 +473,7 @@ pub struct BackendConfig {
 /// here so the file accepts unknown levels with a typed error from the
 /// fetcher rather than a serde error; `validate_url`/`validate_addresses`
 /// reject malformed levels at first use.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SsrfConfig {
     #[serde(default = "default_ssrf_level")]
@@ -506,7 +506,7 @@ fn default_ssrf_project_root() -> std::path::PathBuf {
 /// `har_body_cap` accepts either a raw integer (bytes) or a humansize
 /// string like "64KiB" / "1MiB" via a custom deserializer. The internal
 /// representation is `u64` bytes.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugConfig {
     #[serde(default = "default_debug_har_path")]

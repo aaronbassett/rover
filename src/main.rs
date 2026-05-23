@@ -300,10 +300,24 @@ async fn dispatch(cli: Cli) -> ExitCode {
                 }
             };
         }
-        Command::Config(_) => {
-            eprintln!("not yet implemented (planned for a later milestone)");
-            return ExitCode::from(2);
-        }
+        Command::Config(cmd) => match cmd {
+            ConfigCmd::Show => {
+                let res = rover::cli::config::show(rover::cli::config::ShowArgs {
+                    config_path: cli.config.clone(),
+                });
+                return match res {
+                    Ok(code) => ExitCode::from(code as u8),
+                    Err(e) => {
+                        eprintln!("rover: {e}");
+                        ExitCode::from(1)
+                    }
+                };
+            }
+            ConfigCmd::Set { .. } => {
+                eprintln!("rover config set: not yet implemented (Task 13)");
+                return ExitCode::from(2);
+            }
+        },
     };
 
     match result {
