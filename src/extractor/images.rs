@@ -3,8 +3,10 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use serde::Serialize;
 use url::Url;
 
+use crate::extractor::options::ImageCaptionFilters;
 use crate::extractor::options::ImagesMode;
 use crate::extractor::output::OutputPaths;
 use crate::extractor::pipeline::ExtractorError;
@@ -230,6 +232,87 @@ pub(crate) async fn fetch_content_length(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkipReason {
+    BelowMinDimensions,
+    AboveMaxBytes,
+    PerPageBudget,
+    CaptionerError,
+    DimensionsIndeterminate,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub(crate) enum CaptionDecision {
+    Caption {
+        dims: Option<(u32, u32)>,
+    },
+    Skip {
+        reason: SkipReason,
+        dims: Option<(u32, u32)>,
+        bytes: Option<u64>,
+    },
+}
+
+/// Run the filter pipeline for a single image. The caller is responsible
+/// for incrementing the budget counter only when `Caption` is returned.
+///
+/// Pipeline order (matches spec §3.6):
+///   1. Dimension gate: trust HTML attrs when present; otherwise probe.
+///   2. Size gate: HEAD or range-GET for Content-Length; reject if too big.
+///   3. Budget gate: reject if already captioned >= max_per_page.
+#[allow(dead_code)]
+pub(crate) async fn classify(
+    src: &str,
+    rest: &str,
+    http: &reqwest::Client,
+    captioned_so_far: usize,
+    filters: &ImageCaptionFilters,
+) -> CaptionDecision {
+    // Step 1: dimensions.
+    let dims = match html_attr_dims(rest) {
+        Some(d) => Some(d),
+        None => match partial_fetch_dimensions(http, src).await {
+            Ok(Some(d)) => Some(d),
+            Ok(None) => None,
+            Err(_) => None,
+        },
+    };
+    if let Some((w, h)) = dims {
+        if w < filters.min_width || h < filters.min_height {
+            return CaptionDecision::Skip {
+                reason: SkipReason::BelowMinDimensions,
+                dims: Some((w, h)),
+                bytes: None,
+            };
+        }
+    }
+
+    // Step 2: size.
+    let bytes: Option<u64> = fetch_content_length(http, src).await.unwrap_or_default();
+    if let Some(n) = bytes {
+        if n > filters.max_bytes {
+            return CaptionDecision::Skip {
+                reason: SkipReason::AboveMaxBytes,
+                dims,
+                bytes: Some(n),
+            };
+        }
+    }
+
+    // Step 3: budget.
+    if captioned_so_far >= filters.max_per_page {
+        return CaptionDecision::Skip {
+            reason: SkipReason::PerPageBudget,
+            dims,
+            bytes,
+        };
+    }
+
+    CaptionDecision::Caption { dims }
+}
+
 fn sniff_ext(resp: &reqwest::Response, url: &Url) -> String {
     if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
         if let Ok(s) = ct.to_str() {
@@ -336,6 +419,62 @@ mod tests {
         assert_eq!(html_attr_dims(r#" width="200""#), None);
         assert_eq!(html_attr_dims(""), None);
         assert_eq!(html_attr_dims(r#" width="0" height="100""#), None);
+    }
+
+    #[tokio::test]
+    async fn classify_skips_below_min_dimensions_via_html_attrs() {
+        let client = reqwest::Client::new();
+        let f = ImageCaptionFilters {
+            min_width: 200,
+            min_height: 200,
+            ..Default::default()
+        };
+        let d = classify(
+            "https://example.com/icon.svg",
+            r#" width="24" height="24""#,
+            &client,
+            0,
+            &f,
+        )
+        .await;
+        assert!(matches!(
+            d,
+            CaptionDecision::Skip {
+                reason: SkipReason::BelowMinDimensions,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn classify_skips_per_page_budget() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        // Need a real URL that passes dimension+size checks; provide a small mocked image with no Content-Length headache.
+        let server = MockServer::start().await;
+        Mock::given(method("HEAD"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(&[0u8; 100][..]))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let f = ImageCaptionFilters {
+            max_per_page: 3,
+            ..Default::default()
+        };
+        let url = format!("{}/photo.png", server.uri());
+        // captioned_so_far == max_per_page → skip
+        let d = classify(&url, r#" width="500" height="500""#, &client, 3, &f).await;
+        assert!(matches!(
+            d,
+            CaptionDecision::Skip {
+                reason: SkipReason::PerPageBudget,
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
