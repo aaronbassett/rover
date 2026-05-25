@@ -17,6 +17,36 @@ use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 use url::Url;
 
+/// Per-image dimension pair carried alongside `ImageProcessed` annotations.
+/// Task 11 will add `Serialize` and surface this in the frontmatter sidecar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageDims {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// One row of the `images_processed:` frontmatter sidecar (M9). Each `<img>`
+/// the caption pipeline observes produces one entry — either `"captioned"`
+/// or `"skipped"` with a typed reason. Task 11 expands this with
+/// `Serialize` derive and YAML rendering inside `render(&PageMeta)`.
+#[derive(Debug, Clone)]
+pub struct ImageProcessed {
+    pub src: String,
+    /// `"captioned"` or `"skipped"`.
+    pub decision: String,
+    /// Lowercased `SkipReason` variant when `decision == "skipped"`.
+    pub reason: Option<String>,
+    /// Captioner config-key name when the captioner was attempted.
+    pub captioner: Option<String>,
+    /// The generated caption when `decision == "captioned"`.
+    pub caption: Option<String>,
+    pub dimensions: Option<ImageDims>,
+    /// Reported byte length (from Content-Length probe) when known.
+    pub bytes: Option<u64>,
+    /// Human-readable error when the captioner or download failed.
+    pub error: Option<String>,
+}
+
 /// Inputs for the M4 frontmatter envelope.
 pub struct PageMeta<'a> {
     pub url: &'a Url,

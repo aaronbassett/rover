@@ -311,6 +311,7 @@ mod tests {
                 true,
             ))
         };
+        let captioners = std::sync::Arc::new(crate::vlm::CaptionerRegistry::empty());
         (
             RoverHandler::new(
                 db,
@@ -321,6 +322,7 @@ mod tests {
                 None,
                 pacer,
                 summarizer,
+                captioners,
             ),
             tmp,
         )

@@ -331,6 +331,22 @@ fn images_mode(arg: Option<&ImagesArg>) -> Result<(ImagesMode, Option<String>), 
     })
 }
 
+/// Resolve `[image_captions]` defaults plus an optional per-call captioner
+/// override into the budget knobs `extractor::images::apply` consumes.
+fn build_caption_filters(
+    cfg: &crate::config::ImageCaptionsConfig,
+    override_name: Option<String>,
+) -> crate::extractor::options::ImageCaptionFilters {
+    crate::extractor::options::ImageCaptionFilters {
+        max_per_page: cfg.max_per_page,
+        min_width: cfg.min_width,
+        min_height: cfg.min_height,
+        max_bytes: cfg.max_bytes,
+        max_tokens: cfg.max_tokens,
+        captioner_override: override_name,
+    }
+}
+
 /// One of the two response shapes the `fetch` tool can produce, depending
 /// on `count_only`.
 ///
@@ -454,7 +470,8 @@ impl RoverHandler {
 
         let tables_mode_resolved = tables_mode(args.tables.as_ref())?;
         let (images_mode_resolved, captioner_override) = images_mode(args.images.as_ref())?;
-        let _ = captioner_override; // wired in Task 12
+        let caption_filters =
+            build_caption_filters(&self.config.image_captions, captioner_override);
 
         // Run the M4 post-passes against the cached (pre-pass) body. These
         // always run, even on cache hits: the cached `extracted_md` carries
@@ -528,11 +545,19 @@ impl RoverHandler {
         .await
         .map_err(McpError::Extractor)?;
 
+        let captioners_opt = if self.captioners.is_empty() {
+            None
+        } else {
+            Some(self.captioners.as_ref())
+        };
         let images_result = crate::extractor::images::apply(
             &body_md,
             &images_mode_resolved,
             &output_paths,
             &self.client,
+            captioners_opt,
+            &caption_filters,
+            Some(&self.db),
         )
         .await
         .map_err(McpError::Extractor)?;

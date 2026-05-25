@@ -36,6 +36,10 @@ pub struct RoverHandler {
     pub(crate) har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
     pub(crate) pacer: Arc<Pacer>,
     pub(crate) summarizer: Arc<crate::summarizer::SummarizerService>,
+    /// M9: image captioner registry. Always present in default builds since
+    /// cloud captioners ship in every binary; may be empty when the user
+    /// hasn't configured any `[captioners.*]` blocks.
+    pub(crate) captioners: Arc<crate::vlm::CaptionerRegistry>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -50,6 +54,7 @@ impl RoverHandler {
         har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
         pacer: Arc<Pacer>,
         summarizer: Arc<crate::summarizer::SummarizerService>,
+        captioners: Arc<crate::vlm::CaptionerRegistry>,
     ) -> Self {
         Self {
             db,
@@ -60,6 +65,7 @@ impl RoverHandler {
             har_recorder,
             pacer,
             summarizer,
+            captioners,
             tool_router: Self::tool_router(),
         }
     }

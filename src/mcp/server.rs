@@ -166,6 +166,11 @@ pub async fn serve_stdio(
         config.summarization.fallback_to_extractive,
     ));
 
+    // M9: build the captioner registry from `[captioners.*]` config. An
+    // empty config yields an empty registry, which is fine: caption-mode
+    // calls error at fetch time with `CaptionerNotConfigured`.
+    let captioners = Arc::new(crate::vlm::build(&config).map_err(anyhow::Error::from)?);
+
     // Keep a clone for the shutdown flush below. The handler also holds a
     // clone for the foreground tools; background workers get yet another via
     // `WorkerDeps` above.
@@ -180,6 +185,7 @@ pub async fn serve_stdio(
         har_recorder,
         pacer,
         summarizer,
+        captioners,
     );
 
     let service = handler.serve(stdio()).await?;

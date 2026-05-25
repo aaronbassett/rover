@@ -6,10 +6,13 @@ use regex::Regex;
 use serde::Serialize;
 use url::Url;
 
+use crate::extractor::frontmatter::{ImageDims, ImageProcessed};
 use crate::extractor::options::ImageCaptionFilters;
 use crate::extractor::options::ImagesMode;
 use crate::extractor::output::OutputPaths;
 use crate::extractor::pipeline::ExtractorError;
+use crate::storage::Db;
+use crate::vlm::{CaptionerRegistry, VlmCaptioner};
 
 static INLINE_IMG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"!\[(?P<alt>[^\]]*)\]\((?P<src>[^)\s]+)(?P<rest>[^)]*)\)").unwrap()
@@ -21,6 +24,10 @@ pub struct ImagesApplied {
     pub images_seen: usize,
     pub images_downloaded: usize,
     pub images_failed: usize,
+    /// One annotation per `<img>` processed in `Caption` mode. Empty for
+    /// every other `ImagesMode`. Surfaced via the `images_processed:`
+    /// frontmatter sidecar in Task 11.
+    pub images_processed: Vec<ImageProcessed>,
 }
 
 pub async fn apply(
@@ -28,10 +35,33 @@ pub async fn apply(
     mode: &ImagesMode,
     output_paths: &OutputPaths,
     http: &reqwest::Client,
+    captioners: Option<&CaptionerRegistry>,
+    filters: &ImageCaptionFilters,
+    db: Option<&Db>,
 ) -> Result<ImagesApplied, ExtractorError> {
     let mut images_seen = 0usize;
     let mut images_downloaded = 0usize;
     let mut images_failed = 0usize;
+    let mut images_processed: Vec<ImageProcessed> = Vec::new();
+
+    // Resolve a captioner up front when we're in Caption mode so we can fail
+    // fast (CaptionerNotConfigured) before fetching any images.
+    let captioner: Option<std::sync::Arc<dyn VlmCaptioner>> = if matches!(mode, ImagesMode::Caption)
+    {
+        let reg = captioners.ok_or(ExtractorError::CaptionerNotConfigured)?;
+        let name = filters
+            .captioner_override
+            .as_deref()
+            .or_else(|| reg.default_name())
+            .ok_or(ExtractorError::CaptionerNotConfigured)?;
+        Some(reg.get(name).map_err(|e| ExtractorError::CaptionerCall {
+            name: name.to_string(),
+            reason: e.to_string(),
+        })?)
+    } else {
+        None
+    };
+    let mut captioned_so_far = 0usize;
 
     // Two-step: enumerate matches, then transform. Async download requires
     // we can't use `replace_all` directly.
@@ -75,8 +105,25 @@ pub async fn apply(
                     markdown[start..end].to_string()
                 }
             },
-            // Caption mode wiring added in Task 10; fall back to alt-text for now.
-            ImagesMode::Caption => alt.clone(),
+            ImagesMode::Caption => {
+                // SAFETY: resolved above when mode == Caption.
+                let cap = captioner
+                    .as_ref()
+                    .expect("captioner resolved when mode == Caption");
+                caption_one_image(
+                    cap.as_ref(),
+                    http,
+                    db,
+                    filters,
+                    &alt,
+                    &src,
+                    &rest,
+                    &mut captioned_so_far,
+                    &mut images_failed,
+                    &mut images_processed,
+                )
+                .await
+            }
         };
         out.push_str(&replacement);
     }
@@ -87,7 +134,182 @@ pub async fn apply(
         images_seen,
         images_downloaded,
         images_failed,
+        images_processed,
     })
+}
+
+/// Caption a single image. Returns the replacement markdown for the image
+/// (either the freshly-captioned `![caption](src)` form or a fallback to
+/// the alt text when the image was skipped or the captioner errored).
+/// Pushes one `ImageProcessed` annotation into `processed` per call.
+#[allow(clippy::too_many_arguments)]
+async fn caption_one_image(
+    captioner: &dyn VlmCaptioner,
+    http: &reqwest::Client,
+    db: Option<&Db>,
+    filters: &ImageCaptionFilters,
+    alt: &str,
+    src: &str,
+    rest: &str,
+    captioned_so_far: &mut usize,
+    images_failed: &mut usize,
+    processed: &mut Vec<ImageProcessed>,
+) -> String {
+    let decision = classify(src, rest, http, *captioned_so_far, filters).await;
+    match decision {
+        CaptionDecision::Skip {
+            reason,
+            dims,
+            bytes,
+        } => {
+            processed.push(ImageProcessed {
+                src: src.to_string(),
+                decision: "skipped".into(),
+                reason: Some(skip_reason_to_str(&reason).to_string()),
+                captioner: None,
+                caption: None,
+                dimensions: dims.map(|(w, h)| ImageDims {
+                    width: w,
+                    height: h,
+                }),
+                bytes,
+                error: None,
+            });
+            alt.to_string()
+        }
+        CaptionDecision::Caption { dims } => {
+            let bytes = match download_image_bytes(http, src).await {
+                Ok(b) => b,
+                Err(e) => {
+                    *images_failed += 1;
+                    processed.push(ImageProcessed {
+                        src: src.to_string(),
+                        decision: "skipped".into(),
+                        reason: Some("captioner_error".into()),
+                        captioner: Some(captioner.name().to_string()),
+                        caption: None,
+                        dimensions: dims.map(|(w, h)| ImageDims {
+                            width: w,
+                            height: h,
+                        }),
+                        bytes: None,
+                        error: Some(format!("download: {e}")),
+                    });
+                    return alt.to_string();
+                }
+            };
+            // Cache lookup.
+            let cached = if let Some(db) = db {
+                crate::vlm::cache::lookup(
+                    db,
+                    &bytes,
+                    captioner.name(),
+                    captioner.model_id(),
+                    filters.max_tokens,
+                )
+                .await
+                .unwrap_or(None)
+            } else {
+                None
+            };
+            let alt_hint = if alt.is_empty() { None } else { Some(alt) };
+            let caption = match cached {
+                Some(c) => c,
+                None => match captioner
+                    .caption(&bytes, alt_hint, filters.max_tokens)
+                    .await
+                {
+                    Ok(c) => {
+                        if let Some(db) = db {
+                            let _ = crate::vlm::cache::insert(
+                                db,
+                                &bytes,
+                                captioner.name(),
+                                captioner.model_id(),
+                                filters.max_tokens,
+                                &c,
+                            )
+                            .await;
+                        }
+                        c
+                    }
+                    Err(e) => {
+                        *images_failed += 1;
+                        processed.push(ImageProcessed {
+                            src: src.to_string(),
+                            decision: "skipped".into(),
+                            reason: Some("captioner_error".into()),
+                            captioner: Some(captioner.name().to_string()),
+                            caption: None,
+                            dimensions: dims.map(|(w, h)| ImageDims {
+                                width: w,
+                                height: h,
+                            }),
+                            bytes: None,
+                            error: Some(e.to_string()),
+                        });
+                        return alt.to_string();
+                    }
+                },
+            };
+            *captioned_so_far += 1;
+            processed.push(ImageProcessed {
+                src: src.to_string(),
+                decision: "captioned".into(),
+                reason: None,
+                captioner: Some(captioner.name().to_string()),
+                caption: Some(caption.clone()),
+                dimensions: dims.map(|(w, h)| ImageDims {
+                    width: w,
+                    height: h,
+                }),
+                bytes: None,
+                error: None,
+            });
+            format!("![{caption}]({src}{rest})")
+        }
+    }
+}
+
+fn skip_reason_to_str(r: &SkipReason) -> &'static str {
+    match r {
+        SkipReason::BelowMinDimensions => "below_min_dimensions",
+        SkipReason::AboveMaxBytes => "above_max_bytes",
+        SkipReason::PerPageBudget => "per_page_budget",
+        SkipReason::CaptionerError => "captioner_error",
+        SkipReason::DimensionsIndeterminate => "dimensions_indeterminate",
+    }
+}
+
+async fn download_image_bytes(
+    http: &reqwest::Client,
+    src: &str,
+) -> Result<Vec<u8>, ExtractorError> {
+    let url = Url::parse(src).map_err(|source| ExtractorError::ImageUrlInvalid {
+        url: src.to_string(),
+        source,
+    })?;
+    let resp = http
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|source| ExtractorError::ImageDownload {
+            url: src.to_string(),
+            source,
+        })?
+        .error_for_status()
+        .map_err(|source| ExtractorError::ImageDownload {
+            url: src.to_string(),
+            source,
+        })?;
+    Ok(resp
+        .bytes()
+        .await
+        .map_err(|source| ExtractorError::ImageDownload {
+            url: src.to_string(),
+            source,
+        })?
+        .to_vec())
 }
 
 async fn download_one(
@@ -135,17 +357,14 @@ async fn download_one(
     Ok(path.canonicalize().unwrap_or(path).display().to_string())
 }
 
-#[allow(dead_code)]
 static IMG_WIDTH_ATTR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\bwidth\s*=\s*"?(\d+)"?"#).unwrap());
-#[allow(dead_code)]
 static IMG_HEIGHT_ATTR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\bheight\s*=\s*"?(\d+)"?"#).unwrap());
 
 /// Extract `<img width=… height=…>` from the markdown image's `rest`
 /// capture (the tail between the URL and the closing paren). Returns
 /// `(width, height)` when both are present and parse as positive integers.
-#[allow(dead_code)]
 pub(crate) fn html_attr_dims(rest: &str) -> Option<(u32, u32)> {
     let w = IMG_WIDTH_ATTR
         .captures(rest)?
@@ -167,7 +386,6 @@ pub(crate) fn html_attr_dims(rest: &str) -> Option<(u32, u32)> {
 /// `None` when the server doesn't support range requests, the dimensions
 /// live past the first 2 KiB (rare for web formats), or the response is
 /// not a recognizable image. Errors propagate as `Err`.
-#[allow(dead_code)]
 pub(crate) async fn partial_fetch_dimensions(
     http: &reqwest::Client,
     src: &str,
@@ -205,7 +423,6 @@ pub(crate) async fn partial_fetch_dimensions(
 /// Fetch a `Content-Length` header without downloading the body. Returns
 /// `None` when the server doesn't expose `Content-Length` (e.g. chunked
 /// transfer). HEAD request; falls back to range-GET if HEAD is rejected.
-#[allow(dead_code)]
 pub(crate) async fn fetch_content_length(
     http: &reqwest::Client,
     src: &str,
@@ -243,7 +460,6 @@ pub enum SkipReason {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) enum CaptionDecision {
     Caption {
         dims: Option<(u32, u32)>,
@@ -262,7 +478,6 @@ pub(crate) enum CaptionDecision {
 ///   1. Dimension gate: trust HTML attrs when present; otherwise probe.
 ///   2. Size gate: HEAD or range-GET for Content-Length; reject if too big.
 ///   3. Budget gate: reject if already captioned >= max_per_page.
-#[allow(dead_code)]
 pub(crate) async fn classify(
     src: &str,
     rest: &str,
@@ -364,7 +579,10 @@ mod tests {
     async fn keep_passes_through_unchanged() {
         let p = setup_paths();
         let md = "Look ![alt](https://x/img.png) at this.";
-        let r = apply(md, &ImagesMode::Keep, &p, &client()).await.unwrap();
+        let f = ImageCaptionFilters::default();
+        let r = apply(md, &ImagesMode::Keep, &p, &client(), None, &f, None)
+            .await
+            .unwrap();
         assert_eq!(r.markdown, md);
         assert_eq!(r.images_seen, 1);
         assert_eq!(r.images_downloaded, 0);
@@ -374,7 +592,8 @@ mod tests {
     async fn alt_text_only_substitutes_alt() {
         let p = setup_paths();
         let md = "Look ![hello](https://x/img.png) at this.";
-        let r = apply(md, &ImagesMode::AltTextOnly, &p, &client())
+        let f = ImageCaptionFilters::default();
+        let r = apply(md, &ImagesMode::AltTextOnly, &p, &client(), None, &f, None)
             .await
             .unwrap();
         assert_eq!(r.markdown, "Look hello at this.");
@@ -384,7 +603,8 @@ mod tests {
     async fn alt_text_only_with_empty_alt_removes_image() {
         let p = setup_paths();
         let md = "Look ![](https://x/img.png) at this.";
-        let r = apply(md, &ImagesMode::AltTextOnly, &p, &client())
+        let f = ImageCaptionFilters::default();
+        let r = apply(md, &ImagesMode::AltTextOnly, &p, &client(), None, &f, None)
             .await
             .unwrap();
         assert_eq!(r.markdown, "Look  at this.");
@@ -394,7 +614,10 @@ mod tests {
     async fn drop_removes_image_syntax_entirely() {
         let p = setup_paths();
         let md = "Look ![alt](https://x/img.png) at this.";
-        let r = apply(md, &ImagesMode::Drop, &p, &client()).await.unwrap();
+        let f = ImageCaptionFilters::default();
+        let r = apply(md, &ImagesMode::Drop, &p, &client(), None, &f, None)
+            .await
+            .unwrap();
         assert_eq!(r.markdown, "Look  at this.");
     }
 
@@ -402,11 +625,43 @@ mod tests {
     async fn no_images_in_input_yields_empty_counters() {
         let p = setup_paths();
         let md = "No images here.";
-        let r = apply(md, &ImagesMode::Download, &p, &client())
+        let f = ImageCaptionFilters::default();
+        let r = apply(md, &ImagesMode::Download, &p, &client(), None, &f, None)
             .await
             .unwrap();
         assert_eq!(r.markdown, md);
         assert_eq!(r.images_seen, 0);
+    }
+
+    #[tokio::test]
+    async fn caption_mode_without_registry_errors() {
+        let p = setup_paths();
+        let md = "Look ![alt](https://x/img.png) at this.";
+        let f = ImageCaptionFilters::default();
+        let err = apply(md, &ImagesMode::Caption, &p, &client(), None, &f, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExtractorError::CaptionerNotConfigured));
+    }
+
+    #[tokio::test]
+    async fn caption_mode_with_empty_registry_errors() {
+        let p = setup_paths();
+        let md = "Look ![alt](https://x/img.png) at this.";
+        let f = ImageCaptionFilters::default();
+        let reg = CaptionerRegistry::empty();
+        let err = apply(
+            md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ExtractorError::CaptionerNotConfigured));
     }
 
     #[test]

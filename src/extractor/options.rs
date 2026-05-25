@@ -3,6 +3,8 @@
 use std::sync::Arc;
 
 use crate::extractor::output::OutputPaths;
+use crate::storage::Db;
+use crate::vlm::CaptionerRegistry;
 
 #[derive(Debug, Clone)]
 pub struct ExtractOptions {
@@ -10,6 +12,13 @@ pub struct ExtractOptions {
     pub images: ImagesMode,
     pub metadata: MetadataMode,
     pub output_paths: Arc<OutputPaths>,
+
+    /// M9: captioner registry (always present in default builds since cloud
+    /// captioners ship in every binary). `None` only during very early tests
+    /// or when no `[captioners.*]` are configured.
+    pub captioners: Option<Arc<CaptionerRegistry>>,
+    pub caption_filters: ImageCaptionFilters,
+    pub db: Option<Db>,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -58,6 +58,12 @@ pub enum ExtractorError {
         #[source]
         source: url::ParseError,
     },
+
+    #[error("captioner `{name}` failed: {reason}")]
+    CaptionerCall { name: String, reason: String },
+
+    #[error("no captioner configured for images.mode = caption")]
+    CaptionerNotConfigured,
 }
 
 /// Successfully extracted article.
