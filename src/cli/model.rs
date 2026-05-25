@@ -185,7 +185,12 @@ fn walk(p: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
 }
 
 fn human_bytes(n: u64) -> String {
-    const UNITS: &[(&str, u64)] = &[("GB", 1_000_000_000), ("MB", 1_000_000), ("KB", 1_000), ("B", 1)];
+    const UNITS: &[(&str, u64)] = &[
+        ("GB", 1_000_000_000),
+        ("MB", 1_000_000),
+        ("KB", 1_000),
+        ("B", 1),
+    ];
     for (unit, mult) in UNITS {
         if n >= *mult {
             return format!("{:.1} {}", n as f64 / *mult as f64, unit);

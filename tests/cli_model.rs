@@ -41,9 +41,7 @@ fn list_shows_fake_cached_model() {
         .assert()
         .success()
         .stderr(predicate::str::contains("FakeOwner/FakeModel"))
-        .stderr(
-            predicate::str::contains("MB").or(predicate::str::contains("KB")),
-        );
+        .stderr(predicate::str::contains("MB").or(predicate::str::contains("KB")));
 }
 
 #[test]

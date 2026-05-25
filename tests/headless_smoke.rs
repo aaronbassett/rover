@@ -22,11 +22,17 @@ fn cfg() -> HeadlessConfig {
 async fn renders_static_page() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("<html><body><h1>hello</h1></body></html>"))
-        .mount(&server).await;
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string("<html><body><h1>hello</h1></body></html>"),
+        )
+        .mount(&server)
+        .await;
     let renderer = HeadlessRenderer::new(&cfg()).await.expect("launch");
     let url = url::Url::parse(&format!("{}/", server.uri())).unwrap();
-    let rendered = renderer.render(&url, SsrfLevel::Loopback, None).await.expect("render");
+    let rendered = renderer
+        .render(&url, SsrfLevel::Loopback, None)
+        .await
+        .expect("render");
     assert!(rendered.html.contains("hello"));
     renderer.shutdown().await;
 }
@@ -43,7 +49,10 @@ async fn auto_mode_triggers_on_short_extraction() {
         .mount(&server).await;
     let renderer = HeadlessRenderer::new(&cfg()).await.expect("launch");
     let url = url::Url::parse(&format!("{}/", server.uri())).unwrap();
-    let rendered = renderer.render(&url, SsrfLevel::Loopback, None).await.expect("render");
+    let rendered = renderer
+        .render(&url, SsrfLevel::Loopback, None)
+        .await
+        .expect("render");
     // After JS execution, the page text should contain "hydrated content".
     assert!(rendered.html.contains("hydrated content"));
     renderer.shutdown().await;
@@ -66,7 +75,10 @@ async fn block_list_fulfills_not_aborts() {
     c.block_css = true;
     let renderer = HeadlessRenderer::new(&c).await.expect("launch");
     let url = url::Url::parse(&format!("{}/", server.uri())).unwrap();
-    let rendered = renderer.render(&url, SsrfLevel::Loopback, None).await.expect("render");
+    let rendered = renderer
+        .render(&url, SsrfLevel::Loopback, None)
+        .await
+        .expect("render");
     assert!(rendered.html.contains("OK"));
     renderer.shutdown().await;
 }
