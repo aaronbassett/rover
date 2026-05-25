@@ -433,7 +433,17 @@ pub(crate) async fn fetch_content_length(
     })?;
     let resp = http.head(url.clone()).send().await;
     match resp {
-        Ok(r) if r.status().is_success() => Ok(r.content_length()),
+        Ok(r) if r.status().is_success() => {
+            // reqwest's content_length() returns 0 for HEAD responses (no body).
+            // Read the raw Content-Length header instead so the size gate works
+            // correctly against the declared resource size.
+            let from_header = r
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            Ok(from_header)
+        }
         _ => {
             let r = http
                 .get(url)
