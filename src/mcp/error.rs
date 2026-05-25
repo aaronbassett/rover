@@ -120,6 +120,25 @@ impl McpError {
                     F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
                         RoverError::new(RoverError::FETCH_FAILED, e.to_string())
                     }
+                    F::HeadlessFeatureNotCompiled => {
+                        RoverError::new(RoverError::HEADLESS_FEATURE_NOT_COMPILED, e.to_string())
+                    }
+                    F::HeadlessRendererUnavailable => {
+                        RoverError::new(RoverError::HEADLESS_RENDERER_UNAVAILABLE, e.to_string())
+                    }
+                    #[cfg(feature = "headless")]
+                    F::Headless(he) => match he {
+                        crate::fetcher::headless::HeadlessError::LaunchFailed(_) => {
+                            RoverError::new(RoverError::HEADLESS_LAUNCH_FAILED, e.to_string())
+                        }
+                        crate::fetcher::headless::HeadlessError::Timeout { .. } => {
+                            RoverError::new(RoverError::HEADLESS_RENDER_TIMEOUT, e.to_string())
+                        }
+                        crate::fetcher::headless::HeadlessError::PageClosed(_) => {
+                            RoverError::new(RoverError::HEADLESS_PAGE_CLOSED, e.to_string())
+                        }
+                        _ => RoverError::new(RoverError::HEADLESS_INTERNAL_ERROR, e.to_string()),
+                    },
                 }
             }
             Self::Extractor(e) => RoverError::new(RoverError::EXTRACT_FAILED, e.to_string()),

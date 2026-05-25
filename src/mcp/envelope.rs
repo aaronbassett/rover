@@ -204,6 +204,12 @@ impl RoverError {
     pub const SUMMARIZER_INVALID_REQUEST: &'static str = "summarizer_invalid_request";
     pub const SUMMARIZER_LOCAL_FEATURE_NOT_COMPILED: &'static str =
         "summarizer_local_feature_not_compiled";
+    pub const HEADLESS_FEATURE_NOT_COMPILED: &'static str = "headless_feature_not_compiled";
+    pub const HEADLESS_RENDERER_UNAVAILABLE: &'static str = "headless_renderer_unavailable";
+    pub const HEADLESS_LAUNCH_FAILED: &'static str = "headless_launch_failed";
+    pub const HEADLESS_RENDER_TIMEOUT: &'static str = "headless_render_timeout";
+    pub const HEADLESS_PAGE_CLOSED: &'static str = "headless_page_closed";
+    pub const HEADLESS_INTERNAL_ERROR: &'static str = "headless_internal_error";
 
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
