@@ -220,15 +220,14 @@ pub async fn apply_with_summarizer(
     // input order, so the resulting `Vec` aligns with the `tables` list
     // and Phase 3 can stitch results back into document order via
     // `table_index`.
-    let hook_results: Vec<Result<(String, Option<FallbackInfo>), String>> =
-        stream::iter(tables.into_iter())
-            .map(|(rows, _ordinal)| async move {
-                let table_text = rows.join("\n");
-                hook(&table_text).await
-            })
-            .buffered(4)
-            .collect()
-            .await;
+    let hook_results: Vec<Result<(String, Option<FallbackInfo>), String>> = stream::iter(tables)
+        .map(|(rows, _ordinal)| async move {
+            let table_text = rows.join("\n");
+            hook(&table_text).await
+        })
+        .buffered(4)
+        .collect()
+        .await;
 
     // Phase 3: stitch the rendered table results back into document
     // order, interleaving with `Line` events.
