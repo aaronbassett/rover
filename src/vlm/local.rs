@@ -137,7 +137,7 @@ impl VlmCaptioner for MistralRsCaptioner {
 
 /// Does `~/.cache/huggingface/hub/models--<owner>--<repo>/` exist with
 /// at least one entry? Used by the cold-load banner.
-fn hf_cache_has(repo_id: &str) -> bool {
+pub fn hf_cache_has(repo_id: &str) -> bool {
     let path = hf_cache_root().join(format!("models--{}", repo_id.replace('/', "--"),));
     path.exists()
         && path

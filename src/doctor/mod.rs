@@ -58,6 +58,8 @@ pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
     ];
     #[cfg(feature = "local-inference")]
     checks.push(Box::new(checks::LocalInferenceModelCached));
+    #[cfg(feature = "local-vision")]
+    checks.push(Box::new(checks::LocalVisionModelCached));
     let mut reports = Vec::with_capacity(checks.len());
     let mut summary = CheckStatus::Ok;
     for c in &checks {
