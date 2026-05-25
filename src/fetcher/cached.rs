@@ -196,38 +196,67 @@ where
     };
 
     // Step 3: fetch (conditional if validators present).
-    let fetched = match crate::fetcher::retry::with_retries(
-        db,
-        pacer,
-        client,
-        url,
-        opts.ssrf_level,
-        opts.ssrf_project_root.as_deref(),
-        opts.har_recorder.as_ref(),
-        &cond,
-        crawl_delay,
-        rate_cfg,
-    )
-    .await
-    {
-        Ok(f) => f,
-        Err(e) => {
-            // Network failure with a stale entry available → return stale and
-            // queue a revalidate task (defense-in-depth; with SWR this only
-            // fires on `force_refresh = true`, since the no-force_refresh path
-            // returned stale eagerly above).
-            if let Some(s) = stale {
-                tracing::warn!(target: "rover::fetcher::cached",
-                    error = %e, url = url.as_str(), "fetch failed; serving stale");
-                let task_id = insert_revalidate_task(db, url, &s).await;
-                return Ok(CachedFetch {
-                    page: s,
-                    cache_status: CacheStatus::Stale {
-                        revalidation_task_id: task_id,
-                    },
-                });
+    //
+    // M9 mode dispatch:
+    //   - `Off` (default): today's reqwest path, unchanged.
+    //   - `Auto`: reqwest path now, optional headless re-render after extract.
+    //   - `On`: bypass reqwest entirely; render via the headless browser.
+    //
+    // The `On` branch synthesizes a `FetchedPage`-shaped value from the
+    // renderer output so step 6 (TTL) and step 7 (store) work unchanged.
+    let fetched = match opts.headless_mode {
+        HeadlessMode::Off | HeadlessMode::Auto => {
+            match crate::fetcher::retry::with_retries(
+                db,
+                pacer,
+                client,
+                url,
+                opts.ssrf_level,
+                opts.ssrf_project_root.as_deref(),
+                opts.har_recorder.as_ref(),
+                &cond,
+                crawl_delay,
+                rate_cfg,
+            )
+            .await
+            {
+                Ok(f) => f,
+                Err(e) => {
+                    // Network failure with a stale entry available → return stale and
+                    // queue a revalidate task (defense-in-depth; with SWR this only
+                    // fires on `force_refresh = true`, since the no-force_refresh path
+                    // returned stale eagerly above).
+                    if let Some(s) = stale {
+                        tracing::warn!(target: "rover::fetcher::cached",
+                            error = %e, url = url.as_str(), "fetch failed; serving stale");
+                        let task_id = insert_revalidate_task(db, url, &s).await;
+                        return Ok(CachedFetch {
+                            page: s,
+                            cache_status: CacheStatus::Stale {
+                                revalidation_task_id: task_id,
+                            },
+                        });
+                    }
+                    return Err(e);
+                }
             }
-            return Err(e);
+        }
+        HeadlessMode::On => {
+            #[cfg(not(feature = "headless"))]
+            {
+                return Err(FetcherError::HeadlessFeatureNotCompiled);
+            }
+            #[cfg(feature = "headless")]
+            {
+                let r = opts
+                    .headless
+                    .as_ref()
+                    .ok_or(FetcherError::HeadlessRendererUnavailable)?;
+                let rendered = r
+                    .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
+                    .await?;
+                rendered_to_fetched(rendered)
+            }
         }
     };
 
@@ -235,6 +264,9 @@ where
     // With M6 SWR, conditional GETs are issued only when `force_refresh = true`
     // *and* a stale row was somehow threaded through; the no-force_refresh path
     // returns stale early. This block remains as a safety net.
+    //
+    // 304 is only possible via the reqwest path; the headless render
+    // synthesizes status=200 so this branch is naturally skipped for `On`.
     if fetched.status == 304 {
         let stale = stale.expect("304 implies a stale entry was sent");
         let decision = compute_ttl(
@@ -269,6 +301,38 @@ where
 
     // Step 5: extract.
     let extracted = extract_fn(&fetched.body, &fetched.final_url)?;
+
+    // M9 Auto-mode SPA heuristic: if the reqwest result looks like an
+    // unrendered SPA (`detect_spa(...).total >= 2`), re-render via headless
+    // and re-extract. When the feature is compiled out or the renderer isn't
+    // wired, we silently keep the reqwest extraction.
+    let (fetched, extracted) = if opts.headless_mode == HeadlessMode::Auto {
+        #[cfg(feature = "headless")]
+        {
+            if let Some(r) = opts.headless.as_ref() {
+                let hits =
+                    crate::fetcher::headless::detect::detect_spa(&fetched.body, &extracted.body_md);
+                if hits.total >= 2 {
+                    let rendered = r
+                        .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
+                        .await?;
+                    let f2 = rendered_to_fetched(rendered);
+                    let e2 = extract_fn(&f2.body, &f2.final_url)?;
+                    (f2, e2)
+                } else {
+                    (fetched, extracted)
+                }
+            } else {
+                (fetched, extracted)
+            }
+        }
+        #[cfg(not(feature = "headless"))]
+        {
+            (fetched, extracted)
+        }
+    } else {
+        (fetched, extracted)
+    };
 
     // Step 6: TTL from real Cache-Control / Expires headers.
     let decision = compute_ttl(
@@ -320,6 +384,38 @@ where
         page,
         cache_status: CacheStatus::Miss,
     })
+}
+
+/// Convert a `RenderedPage` (from the headless renderer) into a `FetchedPage`
+/// so the rest of `fetch_with_cache` (TTL → store) can treat it uniformly.
+///
+/// Synthesizes empty cache headers, no ETag, no Last-Modified. The TTL
+/// computation will therefore fall through to the default-TTL policy. The
+/// canonical URL is resolved from the rendered DOM (`<link rel="canonical">`)
+/// or falls back to the final URL.
+#[cfg(feature = "headless")]
+fn rendered_to_fetched(
+    rendered: crate::fetcher::headless::RenderedPage,
+) -> crate::fetcher::FetchedPage {
+    use crate::fetcher::FetchedPage;
+    use crate::fetcher::canonical::extract_canonical_url;
+    use crate::fetcher::charset::Detected;
+
+    let canonical_url = extract_canonical_url(&rendered.html, &rendered.final_url, None);
+    FetchedPage {
+        final_url: rendered.final_url,
+        canonical_url,
+        status: rendered.status,
+        content_type: Some("text/html; charset=utf-8".to_string()),
+        body: rendered.html,
+        charset: Detected::default(),
+        link_header: None,
+        etag: None,
+        last_modified: None,
+        cache_control: None,
+        expires: None,
+        retry_after: None,
+    }
 }
 
 /// Compute sha256 hex of bytes. Centralized here so callers don't have to
