@@ -61,6 +61,11 @@ enum Command {
     /// Inspect or modify config (M8).
     #[command(subcommand)]
     Config(ConfigCmd),
+
+    /// Manage local HuggingFace model cache (M9).
+    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[command(subcommand)]
+    Model(rover::cli::model::ModelCmd),
 }
 
 #[derive(Debug, clap::Args)]
@@ -328,6 +333,8 @@ async fn dispatch(cli: Cli) -> ExitCode {
                 };
             }
         },
+        #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+        Command::Model(cmd) => rover::cli::model::run(cmd).await,
     };
 
     match result {
