@@ -72,4 +72,14 @@ pub enum FetcherError {
 
     #[error("fetch deferred to retry task {task_id}")]
     Deferred { task_id: String },
+
+    #[error("headless feature not compiled into this binary")]
+    HeadlessFeatureNotCompiled,
+
+    #[error("headless renderer is not wired into this fetcher")]
+    HeadlessRendererUnavailable,
+
+    #[cfg(feature = "headless")]
+    #[error("headless render failed: {0}")]
+    Headless(#[from] crate::fetcher::headless::HeadlessError),
 }

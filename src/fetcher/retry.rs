@@ -188,7 +188,11 @@ fn classify_err(e: FetcherError) -> Class {
         | FetcherError::RateLimited { .. }
         | FetcherError::RobotsDisallowed { .. }
         | FetcherError::RobotsFetchFailed { .. }
-        | FetcherError::Deferred { .. } => Class::Fatal(e),
+        | FetcherError::Deferred { .. }
+        | FetcherError::HeadlessFeatureNotCompiled
+        | FetcherError::HeadlessRendererUnavailable => Class::Fatal(e),
+        #[cfg(feature = "headless")]
+        FetcherError::Headless(_) => Class::Fatal(e),
     }
 }
 
