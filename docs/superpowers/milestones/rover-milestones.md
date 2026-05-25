@@ -562,6 +562,7 @@ test-loopback = []                        # carried forward from M1
 4. Per-request `max_tokens` plumbing into mistralrs (current implementation accepts the cap but doesn't enforce it through mistralrs's RequestBuilder).
 5. `networkidle2` headless wait — currently approximated as `domcontentloaded + 500ms sleep`. Tighten in v2.
 6. Headless intercept request-counter test hook (`HeadlessRenderer::intercept_blocked_count()`) — make the SSRF intercept test directly observable.
+7. Per-call headless overrides — `HeadlessArg.wait` and `HeadlessArg.timeout_secs` were considered but removed pre-merge to reduce coupling; per-call overrides need plumbing through `FetchOptions.headless_mode` → `HeadlessRenderer::render` (currently reads from the startup-time `HeadlessConfig`).
 
 **Open questions before planning.**
 1. **`mistral.rs` API shape.** Pin a version. Confirm the inference API for both text and VLM workflows.

@@ -294,10 +294,6 @@ pub enum MetadataArg {
 pub struct HeadlessArg {
     #[serde(default)]
     pub mode: Option<HeadlessModeWire>,
-    #[serde(default)]
-    pub wait: Option<HeadlessWaitWire>,
-    #[serde(default)]
-    pub timeout_secs: Option<u32>,
 }
 
 /// Wire variant for `headless.mode`.
@@ -307,14 +303,6 @@ pub enum HeadlessModeWire {
     Off,
     On,
     Auto,
-}
-
-/// Wire variant for `headless.wait`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HeadlessWaitWire {
-    Domcontentloaded,
-    Networkidle2,
 }
 
 fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
