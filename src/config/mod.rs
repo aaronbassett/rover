@@ -514,6 +514,25 @@ pub struct HeadlessConfig {
     /// `HeadlessRenderer` setup (not by the intercept handler).
     #[serde(default = "default_block_service_workers")]
     pub block_service_workers: bool,
+
+    /// Default wait condition: `"domcontentloaded"` or `"networkidle2"`.
+    #[serde(default = "default_headless_wait")]
+    pub default_wait: String,
+
+    /// Per-render timeout in seconds (covers the wait phase).
+    #[serde(default = "default_headless_timeout_secs")]
+    pub timeout_secs: u64,
+
+    /// Whether `HeadlessMode::Auto` should run the SPA detection heuristic.
+    #[serde(default = "default_auto_detect_spa")]
+    pub auto_detect_spa: bool,
+}
+
+impl HeadlessConfig {
+    /// Render timeout as a `Duration`.
+    pub fn timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.timeout_secs)
+    }
 }
 
 impl Default for HeadlessConfig {
@@ -527,12 +546,27 @@ impl Default for HeadlessConfig {
             block_css: false,
             block_third_party: default_block_third_party(),
             block_service_workers: default_block_service_workers(),
+            default_wait: default_headless_wait(),
+            timeout_secs: default_headless_timeout_secs(),
+            auto_detect_spa: default_auto_detect_spa(),
         }
     }
 }
 
 fn default_headless_max_concurrent() -> usize {
     4
+}
+
+fn default_headless_wait() -> String {
+    "domcontentloaded".to_string()
+}
+
+fn default_headless_timeout_secs() -> u64 {
+    15
+}
+
+fn default_auto_detect_spa() -> bool {
+    true
 }
 
 fn default_block_images() -> bool {
