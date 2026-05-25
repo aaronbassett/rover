@@ -17,10 +17,8 @@ use crate::tokenizer;
 
 /// Wire-side `fetch` tool arguments.
 ///
-/// Live in M3+M4+M7: `url`, `force_refresh`, `count_only`, `tokenizer`,
-/// `max_tokens`, `tables`, `images`, `metadata`, `summarize`. Accept-no-op
-/// (schema-stable, body-deferred): `headless`. Their values are accepted by
-/// the schema and emit one `tracing::debug` line each.
+/// Live in M3+M4+M7+M9: `url`, `force_refresh`, `count_only`, `tokenizer`,
+/// `max_tokens`, `tables`, `images`, `metadata`, `summarize`, `headless`.
 ///
 /// `tokenizer` is exposed as a string on the wire (rather than the
 /// [`Tokenizer`] enum) so the JSON schema doesn't have to mirror the
@@ -63,9 +61,8 @@ pub struct FetchArgs {
     #[serde(default)]
     pub summarize: Option<InlineSummarizeArgs>,
 
-    // ---- accept-no-op until later milestones ----
     #[serde(default)]
-    pub headless: Option<serde_json::Value>,
+    pub headless: Option<HeadlessArg>,
 }
 
 /// Inline `summarize` sub-arg for the `fetch` tool. Re-uses the same
@@ -288,6 +285,38 @@ pub enum MetadataArg {
     Skip,
 }
 
+/// Wire shape for the `headless` arg.
+///
+/// All fields are optional; when omitted, `mode` falls back to the server's
+/// `[headless] auto_detect_spa` config key (`Auto` when true, `Off` when false).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessArg {
+    #[serde(default)]
+    pub mode: Option<HeadlessModeWire>,
+    #[serde(default)]
+    pub wait: Option<HeadlessWaitWire>,
+    #[serde(default)]
+    pub timeout_secs: Option<u32>,
+}
+
+/// Wire variant for `headless.mode`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessModeWire {
+    Off,
+    On,
+    Auto,
+}
+
+/// Wire variant for `headless.wait`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessWaitWire {
+    Domcontentloaded,
+    Networkidle2,
+}
+
 fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
     Ok(match arg {
         None | Some(TablesArg::Embed) => TablesMode::Embed,
@@ -345,6 +374,27 @@ fn build_caption_filters(
         max_tokens: cfg.max_tokens,
         captioner_override: override_name,
     }
+}
+
+/// Convert the optional wire `headless` arg into the fetcher's `HeadlessMode`.
+///
+/// When no arg (or no `mode` sub-field) is provided, the config's
+/// `auto_detect_spa` flag drives the default: `Auto` when true, `Off` when
+/// false.
+fn resolve_headless(
+    arg: Option<&HeadlessArg>,
+    config: &crate::config::HeadlessConfig,
+) -> crate::fetcher::cached::HeadlessMode {
+    let mode = arg.and_then(|a| a.mode).map(|m| match m {
+        HeadlessModeWire::Off => crate::fetcher::cached::HeadlessMode::Off,
+        HeadlessModeWire::On => crate::fetcher::cached::HeadlessMode::On,
+        HeadlessModeWire::Auto => crate::fetcher::cached::HeadlessMode::Auto,
+    });
+    mode.unwrap_or(if config.auto_detect_spa {
+        crate::fetcher::cached::HeadlessMode::Auto
+    } else {
+        crate::fetcher::cached::HeadlessMode::Off
+    })
 }
 
 /// One of the two response shapes the `fetch` tool can produce, depending
@@ -420,8 +470,6 @@ impl RoverHandler {
     /// Tool body, decoupled from the `#[tool]` macro for unit testing.
     /// Task 11 wires this into the router; here it's a plain async method.
     pub async fn fetch_inner(&self, args: FetchArgs) -> Result<FetchOutput, McpError> {
-        log_deferred_args(&args);
-
         let url = Url::parse(&args.url).map_err(|e| McpError::InvalidUrl(e.to_string()))?;
         if matches!(args.max_tokens, Some(0)) {
             return Err(McpError::InvalidArgs(
@@ -447,7 +495,7 @@ impl RoverHandler {
                 user_agent: self.config.fetch.user_agent.clone(),
                 #[cfg(feature = "headless")]
                 headless: None,
-                headless_mode: crate::fetcher::HeadlessMode::Off,
+                headless_mode: resolve_headless(args.headless.as_ref(), &self.config.headless),
             },
             |body, base| {
                 let extracted =
@@ -753,12 +801,6 @@ impl RoverHandler {
     }
 }
 
-fn log_deferred_args(args: &FetchArgs) {
-    if let Some(v) = &args.headless {
-        tracing::debug!(target: "rover::mcp", arg = "headless", value = ?v, "ignored until M9");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -777,15 +819,16 @@ mod tests {
     }
 
     #[test]
-    fn fetch_args_accept_deferred_keys_as_no_op() {
+    fn fetch_args_headless_typed_mode_auto() {
         let v: FetchArgs = serde_json::from_str(
             r#"{
                 "url":"https://example.com",
-                "headless":"auto"
+                "headless": { "mode": "auto" }
             }"#,
         )
         .unwrap();
-        assert!(v.headless.is_some());
+        let h = v.headless.expect("headless parsed");
+        assert!(matches!(h.mode, Some(HeadlessModeWire::Auto)));
     }
 
     #[test]
