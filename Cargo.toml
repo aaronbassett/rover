@@ -77,7 +77,7 @@ rmcp = { version = "1", features = ["client", "transport-child-process"] }
 [features]
 default = []
 test-loopback = []
-local-vision = []
+local-vision = ["dep:mistralrs"]
 local-inference = ["dep:mistralrs"]
 
 [lints.rust]
