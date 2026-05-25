@@ -45,7 +45,8 @@ pub trait Check: Send + Sync {
 /// Returns the full report list and a summary status (`Fail` if any
 /// check failed; `Ok` otherwise — `Skip` is non-failing).
 pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
-    let checks: Vec<Box<dyn Check>> = vec![
+    #[allow(unused_mut)]
+    let mut checks: Vec<Box<dyn Check>> = vec![
         Box::new(checks::SqliteOpen),
         Box::new(checks::SqliteWalMode),
         Box::new(checks::SqliteSchemaVersion),
@@ -55,6 +56,8 @@ pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
         Box::new(checks::BackendsAuthenticate),
         Box::new(checks::CaptionersAuthenticate),
     ];
+    #[cfg(feature = "local-inference")]
+    checks.push(Box::new(checks::LocalInferenceModelCached));
     let mut reports = Vec::with_capacity(checks.len());
     let mut summary = CheckStatus::Ok;
     for c in &checks {
@@ -131,6 +134,14 @@ mod tests {
     async fn captioners_authenticate_skips_when_no_cloud_configured() {
         let (ctx, _g) = fresh_ctx().await;
         let r = checks::CaptionersAuthenticate.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Skip);
+    }
+
+    #[cfg(feature = "local-inference")]
+    #[tokio::test]
+    async fn local_inference_model_cached_skips_when_no_local_configured() {
+        let (ctx, _g) = fresh_ctx().await;
+        let r = checks::LocalInferenceModelCached.run(&ctx).await;
         assert_eq!(r.status, CheckStatus::Skip);
     }
 }
