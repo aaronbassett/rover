@@ -7,6 +7,8 @@ pub mod charset;
 pub mod client;
 pub mod fetch;
 pub mod har;
+#[cfg(feature = "headless")]
+pub mod headless;
 pub mod ssrf;
 pub mod ttl;
 

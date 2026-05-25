@@ -61,6 +61,7 @@ zstd = { version = "0.13", default-features = false }
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 base64 = "0.22"
+chromiumoxide = { version = "0.9.1", optional = true, default-features = false }
 mistralrs = { version = "0.8.1", optional = true, default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -77,6 +78,7 @@ rmcp = { version = "1", features = ["client", "transport-child-process"] }
 [features]
 default = []
 test-loopback = []
+headless = ["dep:chromiumoxide"]
 local-vision = ["dep:mistralrs"]
 local-inference = ["dep:mistralrs"]
 
