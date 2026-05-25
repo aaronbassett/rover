@@ -147,6 +147,21 @@ rover config set <dotted.key> <value>
 
 In-place edit of the config file. Creates the parent directory and the file itself if missing. Preserves comments and key ordering for keys that already exist; appends new keys at the bottom of the appropriate `[section]`. Prints `✓ <key> = <value>  (wrote <path>)` on success.
 
+Settable keys:
+
+- `fetch.timeout_secs`
+- `cache.default_ttl`, `cache.min_ttl`, `cache.max_ttl`, `cache.override_no_store`, `cache.store_raw_html`
+- `ssrf.level`, `ssrf.project_root`
+- `rate_limit.requests_per_minute_per_domain`, `rate_limit.per_domain_concurrency`, `rate_limit.global_concurrency`, `rate_limit.max_retries`
+- `robots.respect`, `robots.default_ttl`, `robots.failure_ttl`
+- `summarization.default_backend`, `summarization.default_mode`, `summarization.default_style`, `summarization.fallback_to_extractive`
+- `summarization.tables.target_tokens`, `summarization.tables.focus`
+- `tokenizer.default`
+- `mcp.heartbeat_interval`, `mcp.reap_threshold`
+- `debug.log_level`, `debug.har_path`, `debug.har_body_cap`
+- `headless.max_concurrent`, `headless.chrome_executable` (M9)
+- `image_captions.default`, `image_captions.max_tokens`, `image_captions.max_per_page`, `image_captions.min_width`, `image_captions.min_height`, `image_captions.max_bytes`, `image_captions.max_concurrent` (M9)
+
 Examples:
 
 ```bash
@@ -154,4 +169,68 @@ rover config set fetch.timeout_secs 30
 rover config set ssrf.level project
 rover config set ssrf.project_root /Users/me/code
 rover config set cache.store_raw_html true
+rover config set image_captions.default cloud
+rover config set headless.max_concurrent 8
 ```
+
+## `rover model` (M9)
+
+```text
+rover model download <repo_id>
+rover model list
+rover model remove <repo_id>
+```
+
+Download, list, and remove cached local models from HuggingFace Hub. Requires one of the `local-inference` or `local-vision` features at compile time; the subcommand is absent when neither feature is enabled.
+
+Models are cached under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`). All three subcommands work with this cache directory.
+
+### `rover model download`
+
+```text
+rover model download <repo_id>
+```
+
+Download a model from HuggingFace ahead-of-time. Displays per-file progress to stderr; completes with a confirmation message.
+
+Example output:
+
+```
+downloading Qwen/Qwen3.5-0.8B from HuggingFace…
+  config.json                                                4 KB / 4 KB
+  tokenizer.json                                         11 MB / 11 MB
+  model.safetensors                                     1.6 GB / 1.6 GB
+✓ cached at ~/.cache/huggingface/hub/models--Qwen--Qwen3.5-0.8B
+```
+
+### `rover model list`
+
+```text
+rover model list
+```
+
+List all cached models with their disk sizes.
+
+Example output:
+
+```
+~/.cache/huggingface/hub
+  Qwen/Qwen3.5-0.8B               1.6 GB
+  HuggingFaceTB/SmolVLM-256M-Instruct   240 MB
+```
+
+### `rover model remove`
+
+```text
+rover model remove <repo_id>
+```
+
+Remove a cached model and free disk space. Returns a confirmation with the freed size.
+
+Example output:
+
+```
+removed ~/.cache/huggingface/hub/models--Qwen--Qwen3.5-0.8B (1.6 GB freed)
+```
+
+**Note:** Gated by `any(local-inference, local-vision)`. When neither feature is compiled, `rover model --help` returns an unrecognized subcommand error.
