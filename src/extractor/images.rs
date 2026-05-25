@@ -73,6 +73,8 @@ pub async fn apply(
                     markdown[start..end].to_string()
                 }
             },
+            // Caption mode wiring added in Task 10; fall back to alt-text for now.
+            ImagesMode::Caption => alt.clone(),
         };
         out.push_str(&replacement);
     }

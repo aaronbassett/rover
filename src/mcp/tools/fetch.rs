@@ -273,7 +273,12 @@ pub enum ImagesArg {
     AltTextOnly,
     Download,
     Drop,
-    CaptionVlm,
+    /// Caption images via a configured captioner. Use `[image_captions]` /
+    /// `[captioners.<name>]` in config; per-call override via `captioner`.
+    Caption {
+        #[serde(default)]
+        captioner: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -316,19 +321,13 @@ fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
     })
 }
 
-fn images_mode(arg: Option<&ImagesArg>) -> Result<ImagesMode, McpError> {
+fn images_mode(arg: Option<&ImagesArg>) -> Result<(ImagesMode, Option<String>), McpError> {
     Ok(match arg {
-        None | Some(ImagesArg::AltTextOnly) => ImagesMode::AltTextOnly,
-        Some(ImagesArg::Keep) => ImagesMode::Keep,
-        Some(ImagesArg::Download) => ImagesMode::Download,
-        Some(ImagesArg::Drop) => ImagesMode::Drop,
-        Some(ImagesArg::CaptionVlm) => {
-            return Err(McpError::Extractor(
-                crate::extractor::pipeline::ExtractorError::Metadata(
-                    "images caption_vlm mode requires the vlm feature (M9)".into(),
-                ),
-            ));
-        }
+        None | Some(ImagesArg::AltTextOnly) => (ImagesMode::AltTextOnly, None),
+        Some(ImagesArg::Keep) => (ImagesMode::Keep, None),
+        Some(ImagesArg::Download) => (ImagesMode::Download, None),
+        Some(ImagesArg::Drop) => (ImagesMode::Drop, None),
+        Some(ImagesArg::Caption { captioner }) => (ImagesMode::Caption, captioner.clone()),
     })
 }
 
@@ -454,7 +453,8 @@ impl RoverHandler {
         );
 
         let tables_mode_resolved = tables_mode(args.tables.as_ref())?;
-        let images_mode_resolved = images_mode(args.images.as_ref())?;
+        let (images_mode_resolved, captioner_override) = images_mode(args.images.as_ref())?;
+        let _ = captioner_override; // wired in Task 12
 
         // Run the M4 post-passes against the cached (pre-pass) body. These
         // always run, even on cache hits: the cached `extracted_md` carries

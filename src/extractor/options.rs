@@ -48,4 +48,34 @@ pub enum ImagesMode {
     AltTextOnly,
     Download,
     Drop,
+    /// Caption each `<img>` via a configured `[captioners.<name>]` (M9).
+    /// When no captioner is configured at fetch time, the apply() call
+    /// returns ExtractorError::CaptionerNotConfigured.
+    Caption,
+}
+
+/// Per-fetch caption-mode budget knobs. Resolved from `[image_captions]`
+/// at server startup; cloned per-fetch with any per-call overrides applied.
+#[derive(Debug, Clone)]
+pub struct ImageCaptionFilters {
+    pub max_per_page: usize,
+    pub min_width: u32,
+    pub min_height: u32,
+    pub max_bytes: u64,
+    pub max_tokens: usize,
+    /// When Some, overrides the registry's default captioner for this fetch.
+    pub captioner_override: Option<String>,
+}
+
+impl Default for ImageCaptionFilters {
+    fn default() -> Self {
+        Self {
+            max_per_page: 10,
+            min_width: 200,
+            min_height: 200,
+            max_bytes: 10 * 1024 * 1024,
+            max_tokens: 50,
+            captioner_override: None,
+        }
+    }
 }
