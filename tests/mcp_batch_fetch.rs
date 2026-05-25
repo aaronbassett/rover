@@ -25,6 +25,7 @@ async fn fixture_handler() -> (RoverHandler, Db) {
     let client = build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout());
     let pacer = Arc::new(Pacer::new(&cfg.rate_limit));
     let summarizer = common::make_summarizer_service(&db).await;
+    let captioners = Arc::new(rover::vlm::CaptionerRegistry::empty());
     let h = RoverHandler::new(
         db.clone(),
         cfg,
@@ -34,6 +35,9 @@ async fn fixture_handler() -> (RoverHandler, Db) {
         None,
         pacer,
         summarizer,
+        captioners,
+        #[cfg(feature = "headless")]
+        Arc::new(tokio::sync::OnceCell::new()),
     );
     (h, db)
 }

@@ -64,6 +64,15 @@ pub struct Config {
 
     #[serde(default)]
     pub backends: std::collections::HashMap<String, BackendConfig>,
+
+    #[serde(default)]
+    pub headless: HeadlessConfig,
+
+    #[serde(default)]
+    pub image_captions: ImageCaptionsConfig,
+
+    #[serde(default)]
+    pub captioners: std::collections::BTreeMap<String, CaptionerConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -467,6 +476,199 @@ pub struct BackendConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub api_key_env: Option<String>,
+}
+
+/// `[headless]` configuration block. M9 adds browser/headless-fetch knobs.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessConfig {
+    #[serde(default = "default_headless_max_concurrent")]
+    pub max_concurrent: usize,
+
+    /// Path to a Chrome/Chromium executable. Empty string means auto-detect.
+    #[serde(default)]
+    pub chrome_executable: String,
+
+    /// Fulfill image requests with empty 200 (saves bandwidth + render time).
+    #[serde(default = "default_block_images")]
+    pub block_images: bool,
+
+    /// Fulfill font requests with empty 200.
+    #[serde(default = "default_block_fonts")]
+    pub block_fonts: bool,
+
+    /// Fulfill audio/video/track requests with empty 200.
+    #[serde(default = "default_block_media")]
+    pub block_media: bool,
+
+    /// Fulfill CSS requests with empty 200. Default `false` — many SPAs need
+    /// layout to render correctly.
+    #[serde(default)]
+    pub block_css: bool,
+
+    /// Fulfill third-party analytics/tracker requests with empty 200.
+    #[serde(default = "default_block_third_party")]
+    pub block_third_party: bool,
+
+    /// Disable service workers at browser init via CDP bypass. Honored by
+    /// `HeadlessRenderer` setup (not by the intercept handler).
+    #[serde(default = "default_block_service_workers")]
+    pub block_service_workers: bool,
+
+    /// Default wait condition: `"domcontentloaded"` or `"networkidle2"`.
+    #[serde(default = "default_headless_wait")]
+    pub default_wait: String,
+
+    /// Per-render timeout in seconds (covers the wait phase).
+    #[serde(default = "default_headless_timeout_secs")]
+    pub timeout_secs: u64,
+
+    /// Whether `HeadlessMode::Auto` should run the SPA detection heuristic.
+    #[serde(default = "default_auto_detect_spa")]
+    pub auto_detect_spa: bool,
+}
+
+impl HeadlessConfig {
+    /// Render timeout as a `Duration`.
+    pub fn timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.timeout_secs)
+    }
+}
+
+impl Default for HeadlessConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent: default_headless_max_concurrent(),
+            chrome_executable: String::new(),
+            block_images: default_block_images(),
+            block_fonts: default_block_fonts(),
+            block_media: default_block_media(),
+            block_css: false,
+            block_third_party: default_block_third_party(),
+            block_service_workers: default_block_service_workers(),
+            default_wait: default_headless_wait(),
+            timeout_secs: default_headless_timeout_secs(),
+            auto_detect_spa: default_auto_detect_spa(),
+        }
+    }
+}
+
+fn default_headless_max_concurrent() -> usize {
+    4
+}
+
+fn default_headless_wait() -> String {
+    "domcontentloaded".to_string()
+}
+
+fn default_headless_timeout_secs() -> u64 {
+    15
+}
+
+fn default_auto_detect_spa() -> bool {
+    true
+}
+
+fn default_block_images() -> bool {
+    true
+}
+
+fn default_block_fonts() -> bool {
+    true
+}
+
+fn default_block_media() -> bool {
+    true
+}
+
+fn default_block_third_party() -> bool {
+    true
+}
+
+fn default_block_service_workers() -> bool {
+    true
+}
+
+/// `[image_captions]` defaults block.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ImageCaptionsConfig {
+    pub default: Option<String>,
+    pub max_tokens: usize,
+    pub max_per_page: usize,
+    pub min_width: u32,
+    pub min_height: u32,
+    #[serde(deserialize_with = "humanbytes_to_u64")]
+    pub max_bytes: u64,
+    pub max_concurrent: usize,
+}
+
+impl Default for ImageCaptionsConfig {
+    fn default() -> Self {
+        Self {
+            default: None,
+            max_tokens: 50,
+            max_per_page: 10,
+            min_width: 200,
+            min_height: 200,
+            max_bytes: 10 * 1024 * 1024,
+            max_concurrent: 2,
+        }
+    }
+}
+
+/// `[captioners.<name>]` block. Mirrors `BackendConfig` (M7).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CaptionerConfig {
+    pub kind: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub api_key_env: Option<String>,
+}
+
+/// Parse a human-readable byte size string such as "10MiB", "1.5GiB", "1000"
+/// into a raw `u64` byte count.
+pub fn parse_human_bytes(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    if let Ok(n) = s.parse::<u64>() {
+        return Ok(n);
+    }
+    let (num_str, unit) = s
+        .find(|c: char| c.is_ascii_alphabetic())
+        .map(|i| (&s[..i], &s[i..]))
+        .ok_or_else(|| format!("invalid size: {s}"))?;
+    let num: f64 = num_str
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid size number: {num_str}"))?;
+    let mult: u64 = match unit.trim().to_ascii_uppercase().as_str() {
+        "B" => 1,
+        "K" | "KB" => 1_000,
+        "KIB" => 1_024,
+        "M" | "MB" => 1_000_000,
+        "MIB" => 1_024 * 1_024,
+        "G" | "GB" => 1_000_000_000,
+        "GIB" => 1_024 * 1_024 * 1_024,
+        other => return Err(format!("unknown size unit: {other}")),
+    };
+    Ok((num * mult as f64) as u64)
+}
+
+fn humanbytes_to_u64<'de, D>(d: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let v = toml::Value::deserialize(d)?;
+    match v {
+        toml::Value::Integer(n) if n >= 0 => Ok(n as u64),
+        toml::Value::String(s) => parse_human_bytes(&s).map_err(D::Error::custom),
+        other => Err(D::Error::custom(format!(
+            "expected integer bytes or humansize string, got {other:?}",
+        ))),
+    }
 }
 
 /// Top-level `[ssrf]` section. M8 introduces this — earlier milestones
@@ -1301,5 +1503,74 @@ bogus = 1
 "#,
         );
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn image_captions_defaults_match_spec() {
+        let c = ImageCaptionsConfig::default();
+        assert_eq!(c.max_tokens, 50);
+        assert_eq!(c.max_per_page, 10);
+        assert_eq!(c.min_width, 200);
+        assert_eq!(c.min_height, 200);
+        assert_eq!(c.max_bytes, 10 * 1024 * 1024);
+        assert_eq!(c.max_concurrent, 2);
+    }
+
+    #[test]
+    fn human_bytes_parses_common_forms() {
+        assert_eq!(parse_human_bytes("1024").unwrap(), 1024);
+        assert_eq!(parse_human_bytes("10MiB").unwrap(), 10 * 1024 * 1024);
+        assert_eq!(parse_human_bytes("10MB").unwrap(), 10_000_000);
+        assert_eq!(
+            parse_human_bytes("1.5GiB").unwrap(),
+            (1.5_f64 * 1024.0 * 1024.0 * 1024.0) as u64
+        );
+        assert!(parse_human_bytes("bogus").is_err());
+    }
+
+    #[test]
+    fn image_captions_deserializes_from_toml() {
+        let toml_str = r#"
+[image_captions]
+default = "openai"
+max_per_page = 5
+min_width = 100
+min_height = 100
+max_bytes = "1MiB"
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.image_captions.default.as_deref(), Some("openai"));
+        assert_eq!(cfg.image_captions.max_per_page, 5);
+        assert_eq!(cfg.image_captions.max_bytes, 1024 * 1024);
+        assert_eq!(cfg.image_captions.max_tokens, 50);
+    }
+
+    #[test]
+    fn captioners_block_round_trips() {
+        let toml_str = r#"
+[captioners.openai]
+kind = "cloud"
+provider = "openai"
+model = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+
+[captioners.local]
+kind = "local"
+model = "HuggingFaceTB/SmolVLM-256M-Instruct"
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.captioners.len(), 2);
+        assert_eq!(
+            cfg.captioners.get("openai").unwrap().provider.as_deref(),
+            Some("openai")
+        );
+        assert_eq!(cfg.captioners.get("local").unwrap().kind, "local");
+    }
+
+    #[test]
+    fn headless_m9_keys_default_correctly() {
+        let h = HeadlessConfig::default();
+        assert_eq!(h.max_concurrent, 4);
+        assert!(h.chrome_executable.is_empty());
     }
 }

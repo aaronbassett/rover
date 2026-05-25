@@ -120,9 +120,34 @@ impl McpError {
                     F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
                         RoverError::new(RoverError::FETCH_FAILED, e.to_string())
                     }
+                    F::HeadlessFeatureNotCompiled => {
+                        RoverError::new(RoverError::HEADLESS_FEATURE_NOT_COMPILED, e.to_string())
+                    }
+                    F::HeadlessRendererUnavailable => {
+                        RoverError::new(RoverError::HEADLESS_RENDERER_UNAVAILABLE, e.to_string())
+                    }
+                    #[cfg(feature = "headless")]
+                    F::Headless(he) => match he {
+                        crate::fetcher::headless::HeadlessError::LaunchFailed(_) => {
+                            RoverError::new(RoverError::HEADLESS_LAUNCH_FAILED, e.to_string())
+                        }
+                        crate::fetcher::headless::HeadlessError::Timeout { .. } => {
+                            RoverError::new(RoverError::HEADLESS_RENDER_TIMEOUT, e.to_string())
+                        }
+                        crate::fetcher::headless::HeadlessError::PageClosed(_) => {
+                            RoverError::new(RoverError::HEADLESS_PAGE_CLOSED, e.to_string())
+                        }
+                        _ => RoverError::new(RoverError::HEADLESS_INTERNAL_ERROR, e.to_string()),
+                    },
                 }
             }
-            Self::Extractor(e) => RoverError::new(RoverError::EXTRACT_FAILED, e.to_string()),
+            Self::Extractor(e) => {
+                use crate::extractor::ExtractorError as X;
+                match e {
+                    X::CaptionerCall { source, .. } => vlm_error_to_rover_error(source.as_ref()),
+                    _ => RoverError::new(RoverError::EXTRACT_FAILED, e.to_string()),
+                }
+            }
             Self::Storage(e) => RoverError::new(RoverError::STORAGE_ERROR, e.to_string()),
             Self::Summarizer(e) => {
                 use crate::summarizer::SummarizerError as S;
@@ -177,9 +202,55 @@ impl McpError {
                             RoverError::new(RoverError::TOKENIZER_UNAVAILABLE, inner.to_string())
                         }
                     },
+                    S::LocalFeatureNotCompiled => RoverError::new(
+                        RoverError::SUMMARIZER_LOCAL_FEATURE_NOT_COMPILED,
+                        e.to_string(),
+                    ),
                 }
             }
         }
+    }
+}
+
+/// Map a [`crate::vlm::VlmError`] to the appropriate stable MCP wire code.
+fn vlm_error_to_rover_error(e: &crate::vlm::VlmError) -> RoverError {
+    use crate::vlm::VlmError as V;
+    match e {
+        V::NoSuchCaptioner { name } => RoverError::new(
+            RoverError::CAPTIONER_NO_SUCH,
+            format!("no such captioner: {name}"),
+        ),
+        V::NoCaptionersConfigured => {
+            RoverError::new(RoverError::CAPTIONER_NOT_CONFIGURED, e.to_string())
+        }
+        V::LocalFeatureNotCompiled => RoverError::new(
+            RoverError::CAPTIONER_LOCAL_FEATURE_NOT_COMPILED,
+            e.to_string(),
+        ),
+        V::RateLimited { name } => RoverError::new(
+            RoverError::CAPTIONER_RATE_LIMITED,
+            format!("captioner {name} rate limited"),
+        ),
+        V::AuthFailed { name } => RoverError::new(
+            RoverError::CAPTIONER_AUTH_FAILED,
+            format!("captioner {name} auth failed"),
+        ),
+        V::Unavailable { name, reason } => RoverError::new(
+            RoverError::CAPTIONER_BACKEND_UNAVAILABLE,
+            format!("captioner {name} unavailable: {reason}"),
+        ),
+        V::SemaphoreClosed => {
+            RoverError::new(RoverError::CAPTIONER_BACKEND_UNAVAILABLE, e.to_string())
+        }
+        V::ModelError { name, reason } => RoverError::new(
+            RoverError::CAPTIONER_MODEL_ERROR,
+            format!("captioner {name} model error: {reason}"),
+        ),
+        #[cfg(feature = "local-vision")]
+        V::ImageDecode(_) => {
+            RoverError::new(RoverError::CAPTIONER_IMAGE_DECODE_FAILED, e.to_string())
+        }
+        V::Storage(inner) => RoverError::new(RoverError::STORAGE_ERROR, inner.to_string()),
     }
 }
 
@@ -444,5 +515,160 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::RATE_LIMITED);
         assert!(r.message.contains("60"));
+    }
+
+    // VLM / captioner error routing tests.
+
+    #[test]
+    fn captioner_no_such_routes_to_typed_code() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "openai".into(),
+            source: Box::new(VlmError::NoSuchCaptioner {
+                name: "openai".into(),
+            }),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_NO_SUCH);
+        assert!(r.message.contains("openai"));
+    }
+
+    #[test]
+    fn captioner_not_configured_routes_to_typed_code() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "default".into(),
+            source: Box::new(VlmError::NoCaptionersConfigured),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_NOT_CONFIGURED);
+    }
+
+    #[test]
+    fn captioner_local_feature_not_compiled_routes_to_typed_code() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "local".into(),
+            source: Box::new(VlmError::LocalFeatureNotCompiled),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_LOCAL_FEATURE_NOT_COMPILED);
+    }
+
+    #[test]
+    fn captioner_rate_limited_routes_to_typed_code() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "openai".into(),
+            source: Box::new(VlmError::RateLimited {
+                name: "openai".into(),
+            }),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_RATE_LIMITED);
+        assert!(r.message.contains("openai"));
+    }
+
+    #[test]
+    fn captioner_auth_failed_routes_to_typed_code() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "openai".into(),
+            source: Box::new(VlmError::AuthFailed {
+                name: "openai".into(),
+            }),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_AUTH_FAILED);
+        assert!(r.message.contains("openai"));
+    }
+
+    #[test]
+    fn captioner_unavailable_routes_to_backend_unavailable() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "openai".into(),
+            source: Box::new(VlmError::Unavailable {
+                name: "openai".into(),
+                reason: "connection refused".into(),
+            }),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_BACKEND_UNAVAILABLE);
+        assert!(r.message.contains("connection refused"));
+    }
+
+    #[test]
+    fn captioner_semaphore_closed_routes_to_backend_unavailable() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "local".into(),
+            source: Box::new(VlmError::SemaphoreClosed),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_BACKEND_UNAVAILABLE);
+    }
+
+    #[test]
+    fn captioner_model_error_routes_to_typed_code() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "openai".into(),
+            source: Box::new(VlmError::ModelError {
+                name: "openai".into(),
+                reason: "model not found".into(),
+            }),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_MODEL_ERROR);
+        assert!(r.message.contains("model not found"));
+    }
+
+    #[cfg(feature = "local-vision")]
+    #[test]
+    fn captioner_image_decode_routes_to_typed_code() {
+        use crate::extractor::ExtractorError;
+        use crate::vlm::VlmError;
+        // Construct an image::ImageError via a decode attempt on bad bytes.
+        let img_err = image::load_from_memory(b"not an image").unwrap_err();
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "openai".into(),
+            source: Box::new(VlmError::ImageDecode(img_err)),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::CAPTIONER_IMAGE_DECODE_FAILED);
+    }
+
+    #[test]
+    fn captioner_storage_inner_routes_to_storage_error() {
+        use crate::extractor::ExtractorError;
+        use crate::storage::StorageError;
+        use crate::vlm::VlmError;
+        let inner = StorageError::Backend(tokio_rusqlite::Error::ConnectionClosed);
+        let e = McpError::Extractor(ExtractorError::CaptionerCall {
+            name: "openai".into(),
+            source: Box::new(VlmError::Storage(inner)),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::STORAGE_ERROR);
+    }
+
+    #[test]
+    fn extractor_non_captioner_errors_still_route_to_extract_failed() {
+        use crate::extractor::ExtractorError;
+        let e = McpError::Extractor(ExtractorError::Output {
+            path: "/no/such".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "nope"),
+        });
+        let r = e.into_rover_error();
+        assert_eq!(r.code, RoverError::EXTRACT_FAILED);
     }
 }

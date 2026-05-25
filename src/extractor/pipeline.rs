@@ -58,6 +58,16 @@ pub enum ExtractorError {
         #[source]
         source: url::ParseError,
     },
+
+    #[error("captioner `{name}` failed: {source}")]
+    CaptionerCall {
+        name: String,
+        #[source]
+        source: Box<crate::vlm::VlmError>,
+    },
+
+    #[error("no captioner configured for images.mode = caption")]
+    CaptionerNotConfigured,
 }
 
 /// Successfully extracted article.

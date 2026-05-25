@@ -47,6 +47,63 @@ impl ProviderKind {
     }
 }
 
+/// Build a `genai::Client` configured for the given provider.
+///
+/// For `OpenAiCompat`, a `ServiceTargetResolver` is installed that rewrites
+/// any request for `model` to `base_url` using the OpenAI wire shape.  All
+/// other providers use genai's built-in env-var key resolution unless
+/// `api_key` is supplied.
+///
+/// Shared by `CloudBackend` (summarizer) and `CloudCaptioner` (vlm) so that
+/// provider-resolution logic lives in exactly one place.
+pub fn build_client(
+    provider: ProviderKind,
+    base_url: Option<&str>,
+    api_key: Option<&str>,
+) -> Result<Client, String> {
+    let mut builder = Client::builder();
+
+    if provider == ProviderKind::OpenAiCompat {
+        let base = base_url
+            .ok_or_else(|| "openai_compat requires base_url".to_string())?
+            .to_string();
+        let key_for_resolver = api_key.unwrap_or("noop").to_string();
+        let resolver = ServiceTargetResolver::from_resolver_fn(
+            move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
+                // Force any request through the configured base_url using the
+                // OpenAI Chat Completions wire shape.
+                let mut model = service_target.model;
+                model.adapter_kind = genai::adapter::AdapterKind::OpenAI;
+                Ok(ServiceTarget {
+                    endpoint: Endpoint::from_owned(base.clone()),
+                    auth: AuthData::from_single(key_for_resolver.clone()),
+                    model,
+                })
+            },
+        );
+        builder = builder.with_service_target_resolver(resolver);
+    } else if let Some(k) = api_key {
+        let k = k.to_string();
+        builder = builder.with_auth_resolver(AuthResolver::from_resolver_fn(
+            move |_| -> Result<Option<AuthData>, genai::resolver::Error> {
+                Ok(Some(AuthData::from_single(k.clone())))
+            },
+        ));
+    }
+
+    Ok(builder.build())
+}
+
+/// Return the model name string to pass to `exec_chat`.
+///
+/// For all currently-supported providers the model name is passed through
+/// verbatim.  This shim exists so that `CloudCaptioner` and `CloudBackend`
+/// have a single stable call site to update if a provider ever requires a
+/// prefix (e.g. `"models/gemini-pro-vision"`).
+pub fn resolve_request_model(_provider: ProviderKind, model: &str) -> String {
+    model.to_string()
+}
+
 #[cfg(test)]
 mod provider_tests {
     use super::*;
@@ -106,52 +163,8 @@ impl CloudBackend {
         let name = name.into();
         let model = model.into();
 
-        let mut builder = Client::builder();
-
-        if provider == ProviderKind::OpenAiCompat {
-            let base = base_url
-                .clone()
-                .ok_or_else(|| BackendError::Invalid("openai_compat requires base_url".into()))?;
-            let key_for_resolver = api_key.clone().unwrap_or_else(|| "noop".to_string());
-            let mapped_model = model.clone();
-            let resolver = ServiceTargetResolver::from_resolver_fn(
-                move |service_target: ServiceTarget| -> Result<
-                    ServiceTarget,
-                    genai::resolver::Error,
-                > {
-                    // Only remap when the call is destined for our model. We
-                    // route by exact model id match because multiple
-                    // openai_compat backends with different base_urls might
-                    // share a process. We also force the adapter kind to
-                    // OpenAI so the OpenAI Chat Completions wire shape is
-                    // used regardless of what genai inferred from the model
-                    // name (e.g. it would otherwise route arbitrary names
-                    // to Ollama).
-                    if &*service_target.model.model_name == mapped_model.as_str() {
-                        let mut model = service_target.model;
-                        model.adapter_kind = genai::adapter::AdapterKind::OpenAI;
-                        Ok(ServiceTarget {
-                            endpoint: Endpoint::from_owned(base.clone()),
-                            auth: AuthData::from_single(key_for_resolver.clone()),
-                            model,
-                        })
-                    } else {
-                        Ok(service_target)
-                    }
-                },
-            );
-            builder = builder.with_service_target_resolver(resolver);
-        } else if let Some(k) = api_key {
-            // Native providers with an explicit key override. Most users
-            // leave api_key None and let genai's env-var defaults work.
-            builder = builder.with_auth_resolver(AuthResolver::from_resolver_fn(
-                move |_| -> Result<Option<AuthData>, genai::resolver::Error> {
-                    Ok(Some(AuthData::from_single(k.clone())))
-                },
-            ));
-        }
-
-        let client = builder.build();
+        let client = build_client(provider, base_url.as_deref(), api_key.as_deref())
+            .map_err(BackendError::Invalid)?;
 
         Ok(Self {
             name,

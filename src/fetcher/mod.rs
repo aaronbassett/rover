@@ -7,6 +7,8 @@ pub mod charset;
 pub mod client;
 pub mod fetch;
 pub mod har;
+#[cfg(feature = "headless")]
+pub mod headless;
 pub mod ssrf;
 pub mod ttl;
 
@@ -15,7 +17,9 @@ pub mod rate_limit;
 pub mod retry;
 pub mod robots;
 
-pub use cached::{CacheStatus, CachedFetch, ExtractResult, FetchOptions, fetch_with_cache};
+pub use cached::{
+    CacheStatus, CachedFetch, ExtractResult, FetchOptions, HeadlessMode, fetch_with_cache,
+};
 pub use fetch::FetchedPage;
 
 use thiserror::Error;
@@ -70,4 +74,14 @@ pub enum FetcherError {
 
     #[error("fetch deferred to retry task {task_id}")]
     Deferred { task_id: String },
+
+    #[error("headless feature not compiled into this binary")]
+    HeadlessFeatureNotCompiled,
+
+    #[error("headless renderer is not wired into this fetcher")]
+    HeadlessRendererUnavailable,
+
+    #[cfg(feature = "headless")]
+    #[error("headless render failed: {0}")]
+    Headless(#[from] crate::fetcher::headless::HeadlessError),
 }

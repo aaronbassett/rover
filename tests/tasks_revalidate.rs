@@ -9,7 +9,9 @@
 #[tokio::test]
 async fn stale_path_inserts_revalidate_task() {
     use rover::config::Config;
-    use rover::fetcher::cached::{CacheStatus, FetchOptions, fetch_with_cache, sha256_hex};
+    use rover::fetcher::cached::{
+        CacheStatus, FetchOptions, HeadlessMode, fetch_with_cache, sha256_hex,
+    };
     use rover::fetcher::client::build_http_client;
     use rover::fetcher::concurrency::Pacer;
     use rover::fetcher::ssrf::SsrfLevel;
@@ -65,6 +67,9 @@ async fn stale_path_inserts_revalidate_task() {
             har_recorder: None,
             ignore_robots: true,
             user_agent: cfg.fetch.user_agent.clone(),
+            #[cfg(feature = "headless")]
+            headless: None,
+            headless_mode: HeadlessMode::Off,
         },
         |_b, _u| panic!("extract_fn should not run on stale-served path"),
     )

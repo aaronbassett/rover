@@ -115,6 +115,9 @@ impl RoverHandler {
                 har_recorder: self.har_recorder.clone(),
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
+                #[cfg(feature = "headless")]
+                headless: None,
+                headless_mode: crate::fetcher::HeadlessMode::Off,
             },
             |body, base| {
                 let extracted =
@@ -193,6 +196,9 @@ impl RoverHandler {
                 har_recorder: self.har_recorder.clone(),
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
+                #[cfg(feature = "headless")]
+                headless: None,
+                headless_mode: crate::fetcher::HeadlessMode::Off,
             },
             |body, base| {
                 let extracted =
@@ -281,6 +287,7 @@ mod tests {
     /// never touched and no network I/O happens.
     async fn fake_handler() -> (RoverHandler, tempfile::TempDir) {
         let cfg = std::sync::Arc::new(crate::config::Config::default());
+        crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("rover.db");
@@ -311,6 +318,7 @@ mod tests {
                 true,
             ))
         };
+        let captioners = std::sync::Arc::new(crate::vlm::CaptionerRegistry::empty());
         (
             RoverHandler::new(
                 db,
@@ -321,6 +329,9 @@ mod tests {
                 None,
                 pacer,
                 summarizer,
+                captioners,
+                #[cfg(feature = "headless")]
+                std::sync::Arc::new(tokio::sync::OnceCell::new()),
             ),
             tmp,
         )

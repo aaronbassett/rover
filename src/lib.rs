@@ -16,3 +16,4 @@ pub mod summarizer;
 pub mod tasks;
 pub mod telemetry;
 pub mod tokenizer;
+pub mod vlm;

@@ -17,10 +17,8 @@ use crate::tokenizer;
 
 /// Wire-side `fetch` tool arguments.
 ///
-/// Live in M3+M4+M7: `url`, `force_refresh`, `count_only`, `tokenizer`,
-/// `max_tokens`, `tables`, `images`, `metadata`, `summarize`. Accept-no-op
-/// (schema-stable, body-deferred): `headless`. Their values are accepted by
-/// the schema and emit one `tracing::debug` line each.
+/// Live in M3+M4+M7+M9: `url`, `force_refresh`, `count_only`, `tokenizer`,
+/// `max_tokens`, `tables`, `images`, `metadata`, `summarize`, `headless`.
 ///
 /// `tokenizer` is exposed as a string on the wire (rather than the
 /// [`Tokenizer`] enum) so the JSON schema doesn't have to mirror the
@@ -63,9 +61,8 @@ pub struct FetchArgs {
     #[serde(default)]
     pub summarize: Option<InlineSummarizeArgs>,
 
-    // ---- accept-no-op until later milestones ----
     #[serde(default)]
-    pub headless: Option<serde_json::Value>,
+    pub headless: Option<HeadlessArg>,
 }
 
 /// Inline `summarize` sub-arg for the `fetch` tool. Re-uses the same
@@ -273,7 +270,12 @@ pub enum ImagesArg {
     AltTextOnly,
     Download,
     Drop,
-    CaptionVlm,
+    /// Caption images via a configured captioner. Use `[image_captions]` /
+    /// `[captioners.<name>]` in config; per-call override via `captioner`.
+    Caption {
+        #[serde(default)]
+        captioner: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -281,6 +283,26 @@ pub enum ImagesArg {
 pub enum MetadataArg {
     Include,
     Skip,
+}
+
+/// Wire shape for the `headless` arg.
+///
+/// All fields are optional; when omitted, `mode` falls back to the server's
+/// `[headless] auto_detect_spa` config key (`Auto` when true, `Off` when false).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessArg {
+    #[serde(default)]
+    pub mode: Option<HeadlessModeWire>,
+}
+
+/// Wire variant for `headless.mode`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessModeWire {
+    Off,
+    On,
+    Auto,
 }
 
 fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
@@ -316,19 +338,50 @@ fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
     })
 }
 
-fn images_mode(arg: Option<&ImagesArg>) -> Result<ImagesMode, McpError> {
+fn images_mode(arg: Option<&ImagesArg>) -> Result<(ImagesMode, Option<String>), McpError> {
     Ok(match arg {
-        None | Some(ImagesArg::AltTextOnly) => ImagesMode::AltTextOnly,
-        Some(ImagesArg::Keep) => ImagesMode::Keep,
-        Some(ImagesArg::Download) => ImagesMode::Download,
-        Some(ImagesArg::Drop) => ImagesMode::Drop,
-        Some(ImagesArg::CaptionVlm) => {
-            return Err(McpError::Extractor(
-                crate::extractor::pipeline::ExtractorError::Metadata(
-                    "images caption_vlm mode requires the vlm feature (M9)".into(),
-                ),
-            ));
-        }
+        None | Some(ImagesArg::AltTextOnly) => (ImagesMode::AltTextOnly, None),
+        Some(ImagesArg::Keep) => (ImagesMode::Keep, None),
+        Some(ImagesArg::Download) => (ImagesMode::Download, None),
+        Some(ImagesArg::Drop) => (ImagesMode::Drop, None),
+        Some(ImagesArg::Caption { captioner }) => (ImagesMode::Caption, captioner.clone()),
+    })
+}
+
+/// Resolve `[image_captions]` defaults plus an optional per-call captioner
+/// override into the budget knobs `extractor::images::apply` consumes.
+fn build_caption_filters(
+    cfg: &crate::config::ImageCaptionsConfig,
+    override_name: Option<String>,
+) -> crate::extractor::options::ImageCaptionFilters {
+    crate::extractor::options::ImageCaptionFilters {
+        max_per_page: cfg.max_per_page,
+        min_width: cfg.min_width,
+        min_height: cfg.min_height,
+        max_bytes: cfg.max_bytes,
+        max_tokens: cfg.max_tokens,
+        captioner_override: override_name,
+    }
+}
+
+/// Convert the optional wire `headless` arg into the fetcher's `HeadlessMode`.
+///
+/// When no arg (or no `mode` sub-field) is provided, the config's
+/// `auto_detect_spa` flag drives the default: `Auto` when true, `Off` when
+/// false.
+fn resolve_headless(
+    arg: Option<&HeadlessArg>,
+    config: &crate::config::HeadlessConfig,
+) -> crate::fetcher::cached::HeadlessMode {
+    let mode = arg.and_then(|a| a.mode).map(|m| match m {
+        HeadlessModeWire::Off => crate::fetcher::cached::HeadlessMode::Off,
+        HeadlessModeWire::On => crate::fetcher::cached::HeadlessMode::On,
+        HeadlessModeWire::Auto => crate::fetcher::cached::HeadlessMode::Auto,
+    });
+    mode.unwrap_or(if config.auto_detect_spa {
+        crate::fetcher::cached::HeadlessMode::Auto
+    } else {
+        crate::fetcher::cached::HeadlessMode::Off
     })
 }
 
@@ -405,8 +458,6 @@ impl RoverHandler {
     /// Tool body, decoupled from the `#[tool]` macro for unit testing.
     /// Task 11 wires this into the router; here it's a plain async method.
     pub async fn fetch_inner(&self, args: FetchArgs) -> Result<FetchOutput, McpError> {
-        log_deferred_args(&args);
-
         let url = Url::parse(&args.url).map_err(|e| McpError::InvalidUrl(e.to_string()))?;
         if matches!(args.max_tokens, Some(0)) {
             return Err(McpError::InvalidArgs(
@@ -414,6 +465,34 @@ impl RoverHandler {
             ));
         }
         let family = resolve_tokenizer(args.tokenizer.as_deref(), &self.config)?;
+
+        let headless_mode = resolve_headless(args.headless.as_ref(), &self.config.headless);
+
+        // M9 fix C1: lazily build a `HeadlessRenderer` the first time a
+        // request actually wants one (`On`, or `Auto` — the cached fetcher
+        // only re-renders under Auto when the SPA heuristic fires, but we
+        // still hand it the renderer so it has the option). The renderer
+        // lives in a process-shared `OnceCell` on the handler, so subsequent
+        // fetches reuse the same Chromium instance.
+        #[cfg(feature = "headless")]
+        let headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>> =
+            if !matches!(headless_mode, crate::fetcher::cached::HeadlessMode::Off) {
+                let headless_cfg = self.config.headless.clone();
+                let renderer = self
+                    .headless_renderer
+                    .get_or_try_init(|| async move {
+                        crate::fetcher::headless::HeadlessRenderer::new(&headless_cfg)
+                            .await
+                            .map(std::sync::Arc::new)
+                    })
+                    .await
+                    .map_err(|e: crate::fetcher::headless::HeadlessError| {
+                        McpError::Fetcher(crate::fetcher::FetcherError::Headless(e))
+                    })?;
+                Some(renderer.clone())
+            } else {
+                None
+            };
 
         let result = fetch_with_cache(
             &self.db,
@@ -430,6 +509,9 @@ impl RoverHandler {
                 har_recorder: self.har_recorder.clone(),
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
+                #[cfg(feature = "headless")]
+                headless,
+                headless_mode,
             },
             |body, base| {
                 let extracted =
@@ -454,7 +536,9 @@ impl RoverHandler {
         );
 
         let tables_mode_resolved = tables_mode(args.tables.as_ref())?;
-        let images_mode_resolved = images_mode(args.images.as_ref())?;
+        let (images_mode_resolved, captioner_override) = images_mode(args.images.as_ref())?;
+        let caption_filters =
+            build_caption_filters(&self.config.image_captions, captioner_override);
 
         // Run the M4 post-passes against the cached (pre-pass) body. These
         // always run, even on cache hits: the cached `extracted_md` carries
@@ -528,11 +612,19 @@ impl RoverHandler {
         .await
         .map_err(McpError::Extractor)?;
 
+        let captioners_opt = if self.captioners.is_empty() {
+            None
+        } else {
+            Some(self.captioners.as_ref())
+        };
         let images_result = crate::extractor::images::apply(
             &body_md,
             &images_mode_resolved,
             &output_paths,
             &self.client,
+            captioners_opt,
+            &caption_filters,
+            Some(&self.db),
         )
         .await
         .map_err(McpError::Extractor)?;
@@ -704,6 +796,7 @@ impl RoverHandler {
             images_seen: images_result.images_seen,
             images_downloaded: images_result.images_downloaded,
             images_failed: images_result.images_failed,
+            images_processed: images_result.images_processed.clone(),
         });
 
         let summarized_flag = summarize_meta.as_ref().map(|o| o.summarized);
@@ -721,12 +814,6 @@ impl RoverHandler {
             auto_summarized: auto_summarized_flag,
             summarizer_fallback,
         }))
-    }
-}
-
-fn log_deferred_args(args: &FetchArgs) {
-    if let Some(v) = &args.headless {
-        tracing::debug!(target: "rover::mcp", arg = "headless", value = ?v, "ignored until M9");
     }
 }
 
@@ -748,15 +835,16 @@ mod tests {
     }
 
     #[test]
-    fn fetch_args_accept_deferred_keys_as_no_op() {
+    fn fetch_args_headless_typed_mode_auto() {
         let v: FetchArgs = serde_json::from_str(
             r#"{
                 "url":"https://example.com",
-                "headless":"auto"
+                "headless": { "mode": "auto" }
             }"#,
         )
         .unwrap();
-        assert!(v.headless.is_some());
+        let h = v.headless.expect("headless parsed");
+        assert!(matches!(h.mode, Some(HeadlessModeWire::Auto)));
     }
 
     #[test]
@@ -859,6 +947,28 @@ mod tests {
         let v: FetchArgs =
             serde_json::from_str(r#"{"url":"https://x/","images":{"mode":"download"}}"#).unwrap();
         assert!(matches!(v.images, Some(ImagesArg::Download)));
+    }
+
+    #[test]
+    fn typed_images_caption_parses_without_captioner() {
+        let v: FetchArgs =
+            serde_json::from_str(r#"{"url":"https://x/","images":{"mode":"caption"}}"#).unwrap();
+        assert!(matches!(
+            v.images,
+            Some(ImagesArg::Caption { captioner: None })
+        ));
+    }
+
+    #[test]
+    fn typed_images_caption_parses_with_captioner_override() {
+        let v: FetchArgs = serde_json::from_str(
+            r#"{"url":"https://x/","images":{"mode":"caption","captioner":"gpt4o"}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            v.images,
+            Some(ImagesArg::Caption { captioner: Some(ref s) }) if s == "gpt4o"
+        ));
     }
 
     #[test]

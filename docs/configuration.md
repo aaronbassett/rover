@@ -105,17 +105,84 @@ Controls the per-table defaults consumed by the `tables: {mode: "summarize"}` ho
 | `target_tokens` | integer | `150` | Target token count for each generated table summary. |
 | `focus` | string | `"Describe what this table shows. Highlight any extreme values or notable rows."` | Focus prompt passed to the summarizer for every table. |
 
+## `[image_captions]` (M9)
+
+Configuration for image caption generation when `images.mode = "caption"` is used in the MCP `fetch` tool.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `default` | string | `"default"` | Name of a configured `[captioners.<name>]` block to use when no `captioner` override is supplied in the MCP tool call. |
+| `max_tokens` | integer | `100` | Maximum token count per caption. |
+| `max_per_page` | integer | `10` | Maximum number of images to caption per page. Captions are generated for the first N images; the rest are dropped. |
+| `min_width` | integer | `32` | Skip images narrower than this (pixels). |
+| `min_height` | integer | `32` | Skip images shorter than this (pixels). |
+| `max_bytes` | integer | `2097152` | Skip images larger than this (bytes; default 2 MiB). |
+| `max_concurrent` | integer | `2` | Number of concurrent caption-generation tasks. |
+
+Example:
+
+```toml
+[image_captions]
+default = "cloud"
+max_tokens = 80
+max_per_page = 5
+min_width = 64
+min_height = 64
+max_bytes = 1048576
+max_concurrent = 4
+```
+
+## `[captioners.<name>]` (M9)
+
+Free-form section: repeat for each named captioner. Mirrors the `[backends.<name>]` structure.
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | yes | `cloud` or `local`. |
+| `provider` | string | yes (cloud) | One of `openai`, `anthropic`, `gemini`, `xai`, `groq`, `deepseek`, `together`, `fireworks`, `openai_compat`. Ignored for `kind = "local"`. |
+| `model` | string | yes | For cloud: model id (e.g. `gpt-4-vision`). For local: HuggingFace repo id (requires `local-vision` feature). |
+| `base_url` | string | yes for `openai_compat`; unused otherwise | Custom endpoint. For `openai_compat`, auto-normalized to end in `/v1/`. |
+| `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var. Unused for `kind = "local"`. |
+
+Example:
+
+```toml
+[captioners.cloud]
+kind = "cloud"
+provider = "openai"
+model = "gpt-4-vision"
+api_key_env = "OPENAI_API_KEY"
+
+[captioners.local-vlm]
+kind = "local"
+model = "HuggingFaceTB/SmolVLM-256M-Instruct"
+```
+
+## `[headless]` (M9)
+
+Configuration for the headless browser renderer when the `headless` feature is compiled in.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `auto_detect_spa` | bool | `true` | When true and MCP `fetch` does not specify `headless.mode`, auto-detect single-page apps via heuristics and render via headless. |
+| `default_wait` | string | `"domcontentloaded"` | Navigation wait event: `domcontentloaded` or `networkidle2`. |
+| `timeout` | duration | `"30s"` | Per-render timeout. |
+| `max_concurrent` | integer | `4` | Number of concurrent headless render tasks. |
+| `chrome_executable` | string | unset | Path to the Chrome/Chromium executable. When unset, attempts auto-detection (searches PATH, common install locations). |
+
+The MCP `fetch` tool accepts a typed `headless` argument (see `docs/mcp-tools.md`) which overrides `auto_detect_spa`, `default_wait`, and `timeout` on a per-call basis.
+
 ## `[backends.<name>]`
 
 Free-form section: repeat for each named backend. See `backends.md` for the full reference and worked examples.
 
 | Key | Type | Required | Description |
 | --- | --- | --- | --- |
-| `kind` | string | yes | `extractive` or `cloud`. |
-| `provider` | string | yes (cloud) | One of `openai`, `anthropic`, `gemini`, `xai`, `groq`, `deepseek`, `together`, `fireworks`, `openai_compat`. |
-| `model` | string | yes (cloud) | Literal model id passed through to the provider (e.g. `gpt-4o-mini`). |
+| `kind` | string | yes | `extractive`, `cloud`, or `local`. |
+| `provider` | string | yes (cloud) | One of `openai`, `anthropic`, `gemini`, `xai`, `groq`, `deepseek`, `together`, `fireworks`, `openai_compat`. Ignored for `kind = "local"`. |
+| `model` | string | yes | For cloud: literal model id (e.g. `gpt-4o-mini`). For local: HuggingFace repo id (requires `local-inference` feature). |
 | `base_url` | string | yes for `openai_compat`; unused otherwise | Custom endpoint. For `openai_compat`, auto-normalized to end in `/v1/`. |
-| `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.). |
+| `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.). Unused for `kind = "local"`. |
 
 When the `[backends]` map is empty, Rover installs an implicit `default` extractive backend so a fresh install works offline without any configuration. Adding any explicit `[backends.*]` block disables that implicit injection.
 

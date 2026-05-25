@@ -22,7 +22,8 @@ async-trait = "0.1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal"] }
 tokio-util = "0.7"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "charset"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream", "charset"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 url = "2"
 encoding_rs = "0.8"
 chardetng = "1"
@@ -59,6 +60,13 @@ unicode-segmentation = "1"
 genai = "0.4"
 zstd = { version = "0.13", default-features = false }
 futures = "0.3"
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+base64 = "0.22"
+chromiumoxide = { version = "0.9.1", optional = true, default-features = false }
+mistralrs = { version = "0.8.1", optional = true, default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mistralrs = { version = "0.8.1", optional = true, default-features = false, features = ["metal"] }
 
 [dev-dependencies]
 wiremock = "0.6"
@@ -71,6 +79,9 @@ rmcp = { version = "1", features = ["client", "transport-child-process"] }
 [features]
 default = []
 test-loopback = []
+headless = ["dep:chromiumoxide"]
+local-vision = ["dep:mistralrs", "dep:image"]
+local-inference = ["dep:mistralrs"]
 
 [lints.rust]
 warnings = "deny"

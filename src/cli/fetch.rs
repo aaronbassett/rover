@@ -108,6 +108,28 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
             None
         };
 
+    // M9 fix C1: honor the server-config `auto_detect_spa` flag from the CLI
+    // path too. The CLI doesn't yet expose a `--headless` flag, so the only
+    // way to opt in is via `[headless] auto_detect_spa = true` in the
+    // config. Construction is lazy — we only launch Chromium if Auto-mode
+    // ends up needing it (the cached fetcher checks SPA heuristics first).
+    let headless_mode = if cfg.headless.auto_detect_spa {
+        crate::fetcher::HeadlessMode::Auto
+    } else {
+        crate::fetcher::HeadlessMode::Off
+    };
+    #[cfg(feature = "headless")]
+    let headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>> =
+        if !matches!(headless_mode, crate::fetcher::HeadlessMode::Off) {
+            let r = crate::fetcher::headless::HeadlessRenderer::new(&cfg.headless)
+                .await
+                .map(std::sync::Arc::new)
+                .context("launching headless renderer")?;
+            Some(r)
+        } else {
+            None
+        };
+
     let result = fetch_with_cache(
         &db,
         &client,
@@ -123,6 +145,9 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
             har_recorder: har_recorder.clone(),
             ignore_robots: args.ignore_robots,
             user_agent: cfg.fetch.user_agent.clone(),
+            #[cfg(feature = "headless")]
+            headless: headless.clone(),
+            headless_mode,
         },
         |body, base| {
             let extracted =
@@ -198,6 +223,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         images_seen: 0,
         images_downloaded: 0,
         images_failed: 0,
+        images_processed: vec![],
     };
 
     let envelope = render(&meta);
@@ -206,6 +232,23 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     if let Some(r) = &har_recorder {
         if let Err(e) = r.flush().await {
             tracing::warn!(target: "rover::fetcher", error = ?e, "har flush failed");
+        }
+    }
+
+    // M9 fix C1: tear down the renderer cleanly so chromiumoxide's handler
+    // task doesn't outlive this one-shot CLI invocation. `try_unwrap` is
+    // expected to succeed — `fetch_with_cache` returned, so the only other
+    // strong reference (the one we passed into `FetchOptions`) is gone.
+    #[cfg(feature = "headless")]
+    if let Some(renderer) = headless {
+        match std::sync::Arc::try_unwrap(renderer) {
+            Ok(r) => r.shutdown().await,
+            Err(_still_shared) => {
+                tracing::warn!(
+                    target: "rover::cli::fetch",
+                    "headless renderer still has outstanding Arc references at shutdown; skipping explicit shutdown",
+                );
+            }
         }
     }
 

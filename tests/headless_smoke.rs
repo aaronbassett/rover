@@ -1,0 +1,84 @@
+//! Headless smoketests. Require a real Chrome/Chromium installed locally.
+//! `#[ignore]` by default; opt in via `cargo test --features headless -- --ignored`.
+
+#![cfg(feature = "headless")]
+
+use rover::config::HeadlessConfig;
+use rover::fetcher::headless::HeadlessRenderer;
+use rover::fetcher::ssrf::SsrfLevel;
+
+use wiremock::matchers::method;
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn cfg() -> HeadlessConfig {
+    HeadlessConfig {
+        timeout_secs: 10,
+        ..HeadlessConfig::default()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn renders_static_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string("<html><body><h1>hello</h1></body></html>"),
+        )
+        .mount(&server)
+        .await;
+    let renderer = HeadlessRenderer::new(&cfg()).await.expect("launch");
+    let url = url::Url::parse(&format!("{}/", server.uri())).unwrap();
+    let rendered = renderer
+        .render(&url, SsrfLevel::Loopback, None)
+        .await
+        .expect("render");
+    assert!(rendered.html.contains("hello"));
+    renderer.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn auto_mode_triggers_on_short_extraction() {
+    // Serve an SPA shell that extracts to almost nothing.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><head></head><body><div id="root"></div><script>document.getElementById('root').innerText='hydrated content'</script></body></html>"#,
+        ))
+        .mount(&server).await;
+    let renderer = HeadlessRenderer::new(&cfg()).await.expect("launch");
+    let url = url::Url::parse(&format!("{}/", server.uri())).unwrap();
+    let rendered = renderer
+        .render(&url, SsrfLevel::Loopback, None)
+        .await
+        .expect("render");
+    // After JS execution, the page text should contain "hydrated content".
+    assert!(rendered.html.contains("hydrated content"));
+    renderer.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn block_list_fulfills_not_aborts() {
+    // Serve a page that references a font URL. Assert the page renders
+    // (no font-load error) even though the font request is blocked.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"<html><head><link rel="stylesheet" href="/styles.css"></head><body>OK</body></html>"#,
+        ))
+        .mount(&server).await;
+    // No /styles.css mock — the request hits 404 normally, but our intercept
+    // turns it into empty 200 before chromiumoxide can fail.
+    let mut c = cfg();
+    c.block_css = true;
+    let renderer = HeadlessRenderer::new(&c).await.expect("launch");
+    let url = url::Url::parse(&format!("{}/", server.uri())).unwrap();
+    let rendered = renderer
+        .render(&url, SsrfLevel::Loopback, None)
+        .await
+        .expect("render");
+    assert!(rendered.html.contains("OK"));
+    renderer.shutdown().await;
+}

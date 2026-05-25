@@ -1,7 +1,7 @@
 mod common;
 
 use rover::extractor::images;
-use rover::extractor::options::ImagesMode;
+use rover::extractor::options::{ImageCaptionFilters, ImagesMode};
 use rover::extractor::output::OutputPaths;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -33,9 +33,18 @@ async fn download_writes_to_disk_and_rewrites_markdown() {
 
     let md = format!("![pixel]({}/pixel.png)", server.uri());
     let client = reqwest::Client::new();
-    let r = images::apply(&md, &ImagesMode::Download, &paths, &client)
-        .await
-        .unwrap();
+    let filters = ImageCaptionFilters::default();
+    let r = images::apply(
+        &md,
+        &ImagesMode::Download,
+        &paths,
+        &client,
+        None,
+        &filters,
+        None,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(r.images_seen, 1);
     assert_eq!(r.images_downloaded, 1);

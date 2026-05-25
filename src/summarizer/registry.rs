@@ -189,6 +189,25 @@ fn build_one(
                 })?;
             Ok(Arc::new(be))
         }
+        "local" => {
+            #[cfg(not(feature = "local-inference"))]
+            {
+                Err(SummarizerError::LocalFeatureNotCompiled)
+            }
+            #[cfg(feature = "local-inference")]
+            {
+                let model =
+                    cfg.model
+                        .as_deref()
+                        .ok_or_else(|| SummarizerError::BackendUnavailable {
+                            name: name.to_string(),
+                            reason: "local backend requires `model`".into(),
+                        })?;
+                Ok(Arc::new(crate::summarizer::local::LocalMistralRs::new(
+                    name, model, tokenizer,
+                )))
+            }
+        }
         other => Err(SummarizerError::BackendUnavailable {
             name: name.to_string(),
             reason: format!("unknown backend kind: {other}"),
@@ -481,5 +500,52 @@ mod tests {
             r,
             Err(SummarizerError::NoExtractiveBackendForFallback)
         ));
+    }
+
+    #[cfg(not(feature = "local-inference"))]
+    #[test]
+    fn local_kind_errors_without_feature() {
+        let cfg = cfg_with_backends(&[(
+            "default",
+            BackendConfig {
+                kind: "local".into(),
+                model: Some("Qwen/Qwen3.5-0.8B".into()),
+                ..Default::default()
+            },
+        )]);
+        let r = build(&cfg, Tokenizer::O200k);
+        assert!(matches!(r, Err(SummarizerError::LocalFeatureNotCompiled)));
+    }
+
+    #[cfg(feature = "local-inference")]
+    #[test]
+    fn local_kind_builds_with_feature() {
+        let mut cfg = cfg_with_backends(&[(
+            "default",
+            BackendConfig {
+                kind: "local".into(),
+                model: Some("Qwen/Qwen3.5-0.8B".into()),
+                ..Default::default()
+            },
+        )]);
+        // A local backend is not extractive, so disable fallback validation.
+        cfg.summarization.fallback_to_extractive = false;
+        let reg = build(&cfg, Tokenizer::O200k).unwrap();
+        assert!(reg.get("default").is_ok());
+    }
+
+    #[cfg(feature = "local-inference")]
+    #[test]
+    fn local_kind_without_model_errors() {
+        let cfg = cfg_with_backends(&[(
+            "default",
+            BackendConfig {
+                kind: "local".into(),
+                model: None,
+                ..Default::default()
+            },
+        )]);
+        let r = build(&cfg, Tokenizer::O200k);
+        assert!(matches!(r, Err(SummarizerError::BackendUnavailable { .. })));
     }
 }

@@ -187,6 +187,9 @@ pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, cancel: Cancellation
                     har_recorder: deps_c.har_recorder.clone(),
                     ignore_robots: !deps_c.robots_cfg.respect,
                     user_agent: deps_c.fetch_cfg.user_agent.clone(),
+                    #[cfg(feature = "headless")]
+                    headless: None,
+                    headless_mode: crate::fetcher::HeadlessMode::Off,
                 },
                 |body, base| {
                     let extracted =

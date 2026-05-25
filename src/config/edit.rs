@@ -174,6 +174,51 @@ fn settable() -> &'static [SettableSpec] {
             parser: parse_log_level,
             expected: "one of: trace, debug, info, warn, error",
         },
+        SettableSpec {
+            key: "headless.max_concurrent",
+            parser: parse_usize,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "headless.chrome_executable",
+            parser: parse_string,
+            expected: "string",
+        },
+        SettableSpec {
+            key: "image_captions.default",
+            parser: parse_string,
+            expected: "string",
+        },
+        SettableSpec {
+            key: "image_captions.max_tokens",
+            parser: parse_usize,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "image_captions.max_per_page",
+            parser: parse_usize,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "image_captions.min_width",
+            parser: parse_u32,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "image_captions.min_height",
+            parser: parse_u32,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "image_captions.max_bytes",
+            parser: parse_human_bytes_v,
+            expected: "humansize string or integer (e.g. \"10MiB\")",
+        },
+        SettableSpec {
+            key: "image_captions.max_concurrent",
+            parser: parse_usize,
+            expected: "integer",
+        },
     ]
 }
 
@@ -184,6 +229,29 @@ fn parse_string(s: &str) -> Result<toml_edit::Item, String> {
 fn parse_int(s: &str) -> Result<toml_edit::Item, String> {
     let n: i64 = s.parse().map_err(|_| format!("not an integer: {s}"))?;
     Ok(toml_edit::value(n))
+}
+
+fn parse_usize(s: &str) -> Result<toml_edit::Item, String> {
+    let n: i64 = s
+        .parse::<usize>()
+        .map(|u| u as i64)
+        .map_err(|_| format!("not a non-negative integer: {s}"))?;
+    Ok(toml_edit::value(n))
+}
+
+fn parse_u32(s: &str) -> Result<toml_edit::Item, String> {
+    let n: i64 = s
+        .parse::<u32>()
+        .map(|u| u as i64)
+        .map_err(|_| format!("not a non-negative 32-bit integer: {s}"))?;
+    Ok(toml_edit::value(n))
+}
+
+fn parse_human_bytes_v(v: &str) -> Result<toml_edit::Item, String> {
+    // Validate that the string parses correctly, but persist it as a string
+    // so that the config file stays human-readable (e.g. "10MiB").
+    crate::config::parse_human_bytes(v)?;
+    Ok(toml_edit::value(v.to_string()))
 }
 
 fn parse_bool(s: &str) -> Result<toml_edit::Item, String> {

@@ -20,6 +20,7 @@ into clean, token-efficient Markdown for LLM agents.
 | M6 | Long-running tasks & batching | ✅ | 2026-05-21 |
 | M7 | Summarization | ✅ | 2026-05-22 |
 | M8 | SSRF Levels, Diagnostics, Polish | ✅ | 2026-05-23 |
+| M9 | Feature-flagged extras | ✅ | 2026-05-25 |
 
 ## Build
 
@@ -28,6 +29,24 @@ cargo build --release
 ```
 
 The release binary lands at `target/release/rover`.
+
+### With optional features
+
+```sh
+# Local LLM summarization (Qwen 3.5 0.8B by default)
+cargo install rover --features local-inference
+
+# Local image captioning (SmolVLM 256M by default)
+cargo install rover --features local-vision
+
+# SPA rendering via system Chrome
+cargo install rover --features headless
+
+# All three
+cargo install rover --features local-inference,local-vision,headless
+```
+
+See `docs/features.md` for setup, model management (`rover model`), and binary-size notes.
 
 ## Try it
 
