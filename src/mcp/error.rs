@@ -246,6 +246,7 @@ fn vlm_error_to_rover_error(e: &crate::vlm::VlmError) -> RoverError {
             RoverError::CAPTIONER_MODEL_ERROR,
             format!("captioner {name} model error: {reason}"),
         ),
+        #[cfg(feature = "local-vision")]
         V::ImageDecode(_) => {
             RoverError::new(RoverError::CAPTIONER_IMAGE_DECODE_FAILED, e.to_string())
         }
@@ -631,6 +632,7 @@ mod tests {
         assert!(r.message.contains("model not found"));
     }
 
+    #[cfg(feature = "local-vision")]
     #[test]
     fn captioner_image_decode_routes_to_typed_code() {
         use crate::extractor::ExtractorError;

@@ -25,6 +25,7 @@ pub enum VlmError {
     #[error("captioner {name} model error: {reason}")]
     ModelError { name: String, reason: String },
 
+    #[cfg(feature = "local-vision")]
     #[error("image decode failed: {0}")]
     ImageDecode(#[from] image::ImageError),
 

@@ -413,11 +413,7 @@ pub(crate) async fn partial_fetch_dimensions(
             url: src.to_string(),
             source,
         })?;
-    let cursor = std::io::Cursor::new(&bytes[..]);
-    match image::ImageReader::new(cursor).with_guessed_format() {
-        Ok(reader) => Ok(reader.into_dimensions().ok()),
-        Err(_) => Ok(None),
-    }
+    Ok(crate::extractor::image_dims::peek_dimensions(&bytes[..]))
 }
 
 /// Fetch a `Content-Length` header without downloading the body. Returns
