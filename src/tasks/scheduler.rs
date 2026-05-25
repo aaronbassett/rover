@@ -67,12 +67,34 @@ impl Scheduler {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut join_set: JoinSet<()> = JoinSet::new();
 
+        // Fast in-process wake-up: any insert/update on `tasks` from any
+        // Connection in this process fires the hook. Cross-process writes
+        // still rely on the polling tick above.
+        let hook_notify = Arc::new(tokio::sync::Notify::new());
+        let _hook_guard =
+            match storage::register_tasks_update_hook(&self.db, hook_notify.clone()).await {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "rover::tasks",
+                        error = ?e,
+                        "could not register tasks update_hook; falling back to polling only",
+                    );
+                    None
+                }
+            };
+
         loop {
             tokio::select! {
                 _ = self.cancel.cancelled() => break,
                 _ = tick.tick() => {
                     if let Err(e) = self.scan_and_claim_orphans(&mut join_set).await {
                         tracing::warn!(target: "rover::tasks", error = ?e, "orphan scan failed");
+                    }
+                }
+                _ = hook_notify.notified() => {
+                    if let Err(e) = self.scan_and_claim_orphans(&mut join_set).await {
+                        tracing::warn!(target: "rover::tasks", error = ?e, "hook-driven scan failed");
                     }
                 }
                 Some(task_id) = self.new_task_rx.recv() => {

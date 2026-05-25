@@ -45,8 +45,14 @@ jobs:
       - name: cargo clippy --all-targets --features test-loopback -- -D warnings
         run: cargo clippy --all-targets --features test-loopback -- -D warnings
 
-      - name: cargo test --features test-loopback
-        run: cargo test --features test-loopback
+      # Blocking PR validation runs lib unit tests only (the inline
+      # `#[cfg(test)] mod tests` blocks under `src/`). The integration
+      # suite under `tests/*.rs` lives in the nightly `smoketest.yml`
+      # workflow — it spawns wiremock servers, subprocess-tests CLI
+      # binaries, and sleeps for HAR flush intervals, so we keep it off
+      # the merge path.
+      - name: cargo test --lib --features test-loopback
+        run: cargo test --lib --features test-loopback
 
       - name: cargo build --release
         run: cargo build --release

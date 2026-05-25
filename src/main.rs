@@ -56,7 +56,7 @@ enum Command {
     Cache(CacheCmd),
 
     /// Verify the Rover environment (M8).
-    Doctor,
+    Doctor(DoctorArgs),
 
     /// Inspect or modify config (M8).
     #[command(subcommand)]
@@ -104,12 +104,6 @@ struct FetchArgs {
     /// CLI path; use the MCP `summarize` tool for the canonical surface.
     #[arg(long, value_name = "JSON")]
     summarize: Option<String>,
-
-    /// **Test-only.** Allow loopback addresses to satisfy SSRF checks. Used by
-    /// the integration test suite against wiremock; never used in production.
-    #[cfg(any(test, feature = "test-loopback"))]
-    #[arg(long, hide = true)]
-    ssrf_test_loopback: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -188,6 +182,14 @@ impl CacheCmd {
 enum ConfigCmd {
     Show,
     Set { key: String, value: String },
+}
+
+#[derive(Debug, clap::Args)]
+struct DoctorArgs {
+    /// Output format: `human` (default) prints one line per check;
+    /// `ndjson` emits one JSON object per line for scripting.
+    #[arg(long, default_value = "human")]
+    format: String,
 }
 
 /// Build a `SummarizerService` for CLI subcommands that need it.
@@ -275,10 +277,57 @@ async fn dispatch(cli: Cli) -> ExitCode {
             )
             .await
         }
-        Command::Doctor | Command::Config(_) => {
-            eprintln!("not yet implemented (planned for a later milestone)");
-            return ExitCode::from(2);
+        Command::Doctor(args) => {
+            let cfg = match rover::config::load(cli.config.as_deref()) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("rover: loading config: {e}");
+                    return ExitCode::from(1);
+                }
+            };
+            return match rover::cli::doctor::run(
+                rover::cli::doctor::Args {
+                    format: args.format,
+                },
+                cfg,
+            )
+            .await
+            {
+                Ok(code) => ExitCode::from(code as u8),
+                Err(e) => {
+                    eprintln!("rover: {e}");
+                    ExitCode::from(1)
+                }
+            };
         }
+        Command::Config(cmd) => match cmd {
+            ConfigCmd::Show => {
+                let res = rover::cli::config::show(rover::cli::config::ShowArgs {
+                    config_path: cli.config.clone(),
+                });
+                return match res {
+                    Ok(code) => ExitCode::from(code as u8),
+                    Err(e) => {
+                        eprintln!("rover: {e}");
+                        ExitCode::from(1)
+                    }
+                };
+            }
+            ConfigCmd::Set { key, value } => {
+                let res = rover::cli::config::set(rover::cli::config::SetArgs {
+                    config_path: cli.config.clone(),
+                    key,
+                    value,
+                });
+                return match res {
+                    Ok(code) => ExitCode::from(code as u8),
+                    Err(e) => {
+                        eprintln!("rover: {e}");
+                        ExitCode::from(1)
+                    }
+                };
+            }
+        },
     };
 
     match result {
@@ -302,8 +351,6 @@ impl FetchArgs {
             max_retries: self.max_retries,
             max_tokens: self.max_tokens,
             summarize: self.summarize,
-            #[cfg(any(test, feature = "test-loopback"))]
-            ssrf_test_loopback: self.ssrf_test_loopback,
         }
     }
 }

@@ -32,11 +32,19 @@ async fn fetch_prints_markdown_with_frontmatter() {
 
     let url = format!("{}/article", server.uri());
     let tmp = tempfile::tempdir().unwrap();
+    let cfg_path = tmp.path().join("rover.toml");
+    std::fs::write(&cfg_path, "[ssrf]\nlevel = \"loopback\"\n").unwrap();
 
     Command::cargo_bin("rover")
         .unwrap()
         .env("ROVER_DATA_DIR", tmp.path())
-        .args(["fetch", &url, "--ignore-robots", "--ssrf-test-loopback"])
+        .args([
+            "--config",
+            cfg_path.to_str().unwrap(),
+            "fetch",
+            &url,
+            "--ignore-robots",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::starts_with("---\n"))

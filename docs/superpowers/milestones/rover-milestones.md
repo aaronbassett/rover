@@ -489,6 +489,16 @@ The M1 `TestLoopback` variant becomes redundant once `Loopback` ships. **Decide:
 
 **Acceptance (PRD §14, M8).** `rover doctor` passes on a clean install; HAR files import cleanly into Chrome DevTools.
 
+**Status:** Complete (2026-05-23).
+
+**M8 follow-ups deferred to later milestones.**
+1. DNS-rebinding-resistant fetching → v2. Documented in `docs/security.md`; `reqwest::ClientBuilder::resolve` is the implementation path.
+2. Headless / local-inference / VLM doctor checks land in M9.
+3. List-valued config keys (e.g. `robots.ignore_domains`) are not settable via `rover config set` — edit the file directly. Configurable via M9+ if requested.
+4. Per-backend sampling overrides (temperature, top_p) — defer until a user asks.
+5. Layered (vs merged) `config show` diff view — defer until a user asks.
+6. True cross-process notify (e.g. SQLite WAL polling, Unix socket): M8's `update_hook` covers the same-process multi-Db case only. Cross-process writes still rely on the 10s polling tick.
+
 **Deferred from M8.**
 - DNS-rebinding-resistant fetching → v2 (design §2.4). Document the limitation; note `reqwest::ClientBuilder::resolve` as the v2 implementation path.
 - Headless / local-inference / VLM doctor checks land in M9.

@@ -106,7 +106,9 @@ async fn robots_disallow_admin_refuses_fetch() {
         &cf.cache,
         FetchOptions {
             force_refresh: true,
-            ssrf_level: SsrfLevel::TestLoopback,
+            ssrf_level: SsrfLevel::Loopback,
+            ssrf_project_root: None,
+            har_recorder: None,
             ignore_robots: false,
             user_agent: "test/0.1".into(),
         },
@@ -154,7 +156,9 @@ async fn robots_allow_all_lets_fetch_proceed() {
         &cf.cache,
         FetchOptions {
             force_refresh: true,
-            ssrf_level: SsrfLevel::TestLoopback,
+            ssrf_level: SsrfLevel::Loopback,
+            ssrf_project_root: None,
+            har_recorder: None,
             ignore_robots: false,
             user_agent: "test/0.1".into(),
         },
@@ -191,7 +195,9 @@ async fn robots_disallow_all_refuses_fetch() {
         &cf.cache,
         FetchOptions {
             force_refresh: true,
-            ssrf_level: SsrfLevel::TestLoopback,
+            ssrf_level: SsrfLevel::Loopback,
+            ssrf_project_root: None,
+            har_recorder: None,
             ignore_robots: false,
             user_agent: "test/0.1".into(),
         },
@@ -260,7 +266,9 @@ async fn ignore_robots_flag_skips_gate() {
         &cf.cache,
         FetchOptions {
             force_refresh: true,
-            ssrf_level: SsrfLevel::TestLoopback,
+            ssrf_level: SsrfLevel::Loopback,
+            ssrf_project_root: None,
+            har_recorder: None,
             ignore_robots: true,
             user_agent: "test/0.1".into(),
         },

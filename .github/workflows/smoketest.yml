@@ -1,0 +1,50 @@
+name: Smoketest
+
+# Nightly run of the full integration suite — the wiremock-backed,
+# subprocess-spawning, sleep-bound tests under `tests/*.rs` that are
+# deliberately kept off the PR/push blocking path (see `ci.yml` and
+# `lefthook.yml`).
+#
+# Runs daily at 04:00 UTC; also exposes `workflow_dispatch` so it can be
+# triggered manually from the Actions tab when investigating a regression.
+
+on:
+  schedule:
+    # 04:00 UTC every day.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  smoketest:
+    name: smoketest (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      # Full integration suite. Includes everything `ci.yml` skips:
+      # wiremock-backed HTTP fetch tests, CLI subprocess tests
+      # (`tests/cli_*.rs`), HAR flush waits, multi-connection notify
+      # timing tests, and the long task-scheduler lifecycle suites.
+      - name: cargo test --features test-loopback
+        run: cargo test --features test-loopback

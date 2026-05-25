@@ -3,16 +3,23 @@
 An MCP (Model Context Protocol) server that fetches web pages and turns them
 into clean, token-efficient Markdown for LLM agents.
 
-> **Status:** early development. Milestones M1 (single-URL fetch path),
-> M2 (caching & storage), M3 (MCP server mode), M4 (metadata, tables,
-> images, links), M5 (rate limiting & robots), M6 (long-running tasks
-> & batching — `batch_fetch`, `rover batch <id>`, `rover task <id>`),
-> and M7 (summarization — `summarize` MCP tool, extractive + cloud
-> backends, summary cache) are complete. M8 (SSRF level matrix,
-> diagnostics, `rover doctor`) is next. See
+> **Status:** early development. See
 > `docs/superpowers/prd/2026-05-07-rover-prd.md` for the product spec,
 > `docs/superpowers/specs/2026-05-07-rover-design.md` for architectural
 > decisions, and `docs/security.md` for known v1 security boundaries.
+
+## Milestones
+
+| Milestone | Theme | Status | Date |
+|-----------|-------|--------|------|
+| M1 | Single-URL fetch path | ✅ | 2026-05-08 |
+| M2 | Caching & storage | ✅ | 2026-05-11 |
+| M3 | MCP server mode | ✅ | 2026-05-14 |
+| M4 | Metadata, tables, images, links | ✅ | 2026-05-17 |
+| M5 | Rate limiting & robots | ✅ | 2026-05-19 |
+| M6 | Long-running tasks & batching | ✅ | 2026-05-21 |
+| M7 | Summarization | ✅ | 2026-05-22 |
+| M8 | SSRF Levels, Diagnostics, Polish | ✅ | 2026-05-23 |
 
 ## Build
 
@@ -122,6 +129,41 @@ extracted markdown exceeds the budget) and an inline `summarize` arg
 shaped like the `summarize` tool's. The CLI `rover fetch` exposes
 matching `--max-tokens` and `--summarize <JSON>` flags for forward
 compatibility, but the canonical summarization surface in v1 is MCP.
+
+### Diagnostics & Configuration (M8)
+
+`rover doctor` runs a battery of health checks (SQLite open, WAL mode, schema version, network reachability, output dir, configured cloud backends, extractive synthesis):
+
+```bash
+rover doctor
+rover doctor --format=ndjson    # one JSON object per check, for scripting
+```
+
+`rover config show` prints the merged effective config with per-leaf provenance comments:
+
+```bash
+rover config show
+```
+
+`rover config set <dotted.key> <value>` mutates the config file in place (preserves comments via `toml_edit`, then round-trip validates):
+
+```bash
+rover config set ssrf.level loopback
+```
+
+HAR debug recording — set `[debug] har_path` in `rover.toml`:
+
+```toml
+[debug]
+har_path = "./rover-debug.har"
+har_body_cap = "64KiB"
+```
+
+The resulting file imports into Chrome DevTools' Network panel (Import HAR).
+
+SSRF protection ships with a five-level matrix (`strict | loopback | project | lan | none`) — see `docs/security.md` for the always-floor rules and the v2 DNS-rebinding limitation.
+
+Five reference docs land alongside this milestone: `docs/configuration.md`, `docs/cli.md`, `docs/mcp-tools.md`, `docs/security.md`, `docs/backends.md`.
 
 ## License
 

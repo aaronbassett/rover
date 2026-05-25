@@ -36,8 +36,14 @@ pre-push:
     clippy:
       run: cargo clippy --all-targets --features test-loopback -- -D warnings
 
+    # Fast feedback only on the blocking path: lib unit tests (the
+    # `#[cfg(test)] mod tests` blocks inside `src/`). The integration
+    # suite under `tests/*.rs` runs in the nightly `smoketest` workflow
+    # (`.github/workflows/smoketest.yml`, cron 04:00 UTC) — it spins
+    # wiremock servers, spawns subprocesses, and sleeps for flush
+    # intervals, so it's deliberately kept off the push/merge path.
     test:
-      run: cargo test --features test-loopback
+      run: cargo test --lib --features test-loopback
 
     build:
       run: cargo build --release

@@ -29,7 +29,9 @@ async fn fixture_handler() -> (RoverHandler, Db) {
         db.clone(),
         cfg,
         client,
-        SsrfLevel::TestLoopback,
+        SsrfLevel::Loopback,
+        None,
+        None,
         pacer,
         summarizer,
     );

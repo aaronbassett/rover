@@ -45,9 +45,6 @@ pub struct Args {
     /// path is the MCP `fetch` / `summarize` tools. The CLI accepts and
     /// validates this JSON but does not invoke the summarizer in v1.
     pub summarize: Option<String>,
-
-    #[cfg(any(test, feature = "test-loopback"))]
-    pub ssrf_test_loopback: bool,
 }
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
@@ -60,7 +57,21 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         args.ignore_robots,
     );
     let url = Url::parse(&args.url).context("parsing URL argument")?;
-    let level = ssrf_level_for_args(&args);
+    let level = SsrfLevel::parse(&cfg.ssrf.level)
+        .with_context(|| format!("invalid [ssrf] level `{}` in config", cfg.ssrf.level))?;
+    let ssrf_project_root = if level == SsrfLevel::Project {
+        let raw = &cfg.ssrf.project_root;
+        let resolved = std::fs::canonicalize(raw)
+            .with_context(|| format!("canonicalizing ssrf.project_root `{}`", raw.display()))?;
+        tracing::info!(
+            target: "rover::ssrf",
+            project_root = %resolved.display(),
+            "ssrf level=project; project_root resolved",
+        );
+        Some(resolved)
+    } else {
+        None
+    };
 
     // Validate the optional --summarize JSON blob up front so the user
     // gets a clean error before any network or storage I/O. The CLI does
@@ -84,6 +95,19 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let client = build_http_client(&cfg.fetch.user_agent, cfg.fetch.timeout());
     let pacer = crate::fetcher::concurrency::Pacer::new(&cfg.rate_limit);
 
+    // Optional HAR recorder for one-shot CLI runs. We flush once at the end
+    // of this subcommand rather than running an interval task — a single
+    // `fetch` invocation produces at most a handful of round-trips.
+    let har_recorder: Option<std::sync::Arc<crate::fetcher::har::HarRecorder>> =
+        if !cfg.debug.har_path.is_empty() {
+            let path = std::path::PathBuf::from(&cfg.debug.har_path);
+            let r = crate::fetcher::har::HarRecorder::new(path, cfg.debug.har_body_cap)
+                .with_context(|| format!("opening har file at {}", cfg.debug.har_path))?;
+            Some(std::sync::Arc::new(r))
+        } else {
+            None
+        };
+
     let result = fetch_with_cache(
         &db,
         &client,
@@ -95,6 +119,8 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         FetchOptions {
             force_refresh: args.force_refresh,
             ssrf_level: level,
+            ssrf_project_root,
+            har_recorder: har_recorder.clone(),
             ignore_robots: args.ignore_robots,
             user_agent: cfg.fetch.user_agent.clone(),
         },
@@ -176,19 +202,12 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
 
     let envelope = render(&meta);
     print!("{envelope}");
-    Ok(())
-}
 
-#[cfg(any(test, feature = "test-loopback"))]
-fn ssrf_level_for_args(args: &Args) -> SsrfLevel {
-    if args.ssrf_test_loopback {
-        SsrfLevel::TestLoopback
-    } else {
-        SsrfLevel::Strict
+    if let Some(r) = &har_recorder {
+        if let Err(e) = r.flush().await {
+            tracing::warn!(target: "rover::fetcher", error = ?e, "har flush failed");
+        }
     }
-}
 
-#[cfg(not(any(test, feature = "test-loopback")))]
-fn ssrf_level_for_args(_args: &Args) -> SsrfLevel {
-    SsrfLevel::Strict
+    Ok(())
 }
