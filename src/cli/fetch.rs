@@ -123,6 +123,9 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
             har_recorder: har_recorder.clone(),
             ignore_robots: args.ignore_robots,
             user_agent: cfg.fetch.user_agent.clone(),
+            #[cfg(feature = "headless")]
+            headless: None,
+            headless_mode: crate::fetcher::HeadlessMode::Off,
         },
         |body, base| {
             let extracted =

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rover::config::{Config, RateLimitConfig, RobotsConfig};
-use rover::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache};
+use rover::fetcher::cached::{ExtractResult, FetchOptions, HeadlessMode, fetch_with_cache};
 use rover::fetcher::client::build_http_client;
 use rover::fetcher::concurrency::Pacer;
 use rover::fetcher::ssrf::SsrfLevel;
@@ -95,6 +95,9 @@ async fn pacing_at_60_rpm_paces_consecutive_requests() {
                 har_recorder: None,
                 ignore_robots: true,
                 user_agent: "test/0.1".into(),
+                #[cfg(feature = "headless")]
+                headless: None,
+                headless_mode: HeadlessMode::Off,
             },
             extract_stub(),
         )
@@ -160,6 +163,9 @@ async fn per_host_isolation_does_not_pace_other_hosts() {
                 har_recorder: None,
                 ignore_robots: true,
                 user_agent: "test/0.1".into(),
+                #[cfg(feature = "headless")]
+                headless: None,
+                headless_mode: HeadlessMode::Off,
             },
             extract_stub(),
         )
@@ -185,6 +191,9 @@ async fn per_host_isolation_does_not_pace_other_hosts() {
             har_recorder: None,
             ignore_robots: true,
             user_agent: "test/0.1".into(),
+            #[cfg(feature = "headless")]
+            headless: None,
+            headless_mode: HeadlessMode::Off,
         },
         extract_stub(),
     )

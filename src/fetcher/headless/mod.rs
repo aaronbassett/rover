@@ -91,6 +91,14 @@ pub struct HeadlessRenderer {
     asset_cfg: HeadlessConfig,
 }
 
+impl std::fmt::Debug for HeadlessRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeadlessRenderer")
+            .field("asset_cfg", &self.asset_cfg)
+            .finish_non_exhaustive()
+    }
+}
+
 impl HeadlessRenderer {
     /// Launch the browser and prepare the renderer. The returned value owns
     /// a background tokio task that drives chromiumoxide's event loop; call

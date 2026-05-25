@@ -45,6 +45,23 @@ pub struct CachedFetch {
     pub cache_status: CacheStatus,
 }
 
+/// Per-call headless mode selection.
+///
+/// Defined here (not behind `#[cfg(feature = "headless")]`) so every call site
+/// can use `HeadlessMode::Off` without conditional compilation. The headless
+/// module's own `HeadlessMode` (in `src/fetcher/headless/mod.rs`) is the same
+/// shape and is interconvertible via `as_str`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HeadlessMode {
+    /// Never use the headless renderer (default).
+    #[default]
+    Off,
+    /// Always use the headless renderer.
+    On,
+    /// Use the headless renderer only when SPA heuristics trigger.
+    Auto,
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchOptions {
     pub force_refresh: bool,
@@ -58,6 +75,12 @@ pub struct FetchOptions {
     /// User-Agent used for robots.txt UA-rule evaluation. Must match
     /// `[fetch] user_agent`.
     pub user_agent: String,
+    /// M9: headless renderer instance (`Some` when the binary was built with
+    /// `--features headless` AND the server wired one at startup).
+    #[cfg(feature = "headless")]
+    pub headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>>,
+    /// M9: per-call mode selection.
+    pub headless_mode: HeadlessMode,
 }
 
 /// What `fetch_with_cache` needs from the extractor. Defined here as a tiny
@@ -458,6 +481,9 @@ mod tests {
                 har_recorder: None,
                 ignore_robots: false,
                 user_agent: "test/0.1".into(),
+                #[cfg(feature = "headless")]
+                headless: None,
+                headless_mode: HeadlessMode::Off,
             },
             |_, _| {
                 panic!("extract_fn must not be called on cache hit");

@@ -130,6 +130,9 @@ impl RoverHandler {
                 har_recorder: self.har_recorder.clone(),
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
+                #[cfg(feature = "headless")]
+                headless: None,
+                headless_mode: crate::fetcher::HeadlessMode::Off,
             },
             |body, base| {
                 let extracted =

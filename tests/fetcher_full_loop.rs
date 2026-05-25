@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use rover::config::{Config, RateLimitConfig, RobotsConfig};
 use rover::fetcher::FetcherError;
-use rover::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
+use rover::fetcher::cached::{
+    ExtractResult, FetchOptions, HeadlessMode, fetch_with_cache, sha256_hex,
+};
 use rover::fetcher::client::build_http_client;
 use rover::fetcher::concurrency::Pacer;
 use rover::fetcher::ssrf::SsrfLevel;
@@ -68,6 +70,9 @@ async fn extraction_failure_routes_to_extract_variant() {
             har_recorder: None,
             ignore_robots: true,
             user_agent: "test/0.1".into(),
+            #[cfg(feature = "headless")]
+            headless: None,
+            headless_mode: HeadlessMode::Off,
         },
         |body, base| {
             let extracted = rover::extractor::pipeline::extract(body, Some(base))
