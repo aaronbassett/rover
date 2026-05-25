@@ -176,6 +176,18 @@ pub async fn serve_stdio(
     // `WorkerDeps` above.
     let har_recorder_for_shutdown = har_recorder.clone();
 
+    // M9 fix C1: lazily-initialized headless renderer. Pay the browser-launch
+    // cost only when the first client request actually asks for headless
+    // rendering. The `OnceCell` is shared between the handler (which inits
+    // it on first use) and the shutdown path below (which calls `shutdown`
+    // if the cell was populated).
+    #[cfg(feature = "headless")]
+    let headless_renderer: Arc<
+        tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>,
+    > = Arc::new(tokio::sync::OnceCell::new());
+    #[cfg(feature = "headless")]
+    let headless_renderer_for_shutdown = headless_renderer.clone();
+
     let handler = RoverHandler::new(
         db.clone(),
         config,
@@ -186,13 +198,22 @@ pub async fn serve_stdio(
         pacer,
         summarizer,
         captioners,
+        #[cfg(feature = "headless")]
+        headless_renderer,
     );
 
     let service = handler.serve(stdio()).await?;
 
     // Wait until either the client closes the transport or a signal fires.
+    // We wrap `service` in an `Option` so the cancel branch can drop it
+    // explicitly — releasing the handler (and its `Arc` clone of the
+    // headless `OnceCell`) before the renderer shutdown below.
+    let mut service_holder = Some(service);
     tokio::select! {
-        res = service.waiting() => {
+        res = async {
+            let s = service_holder.take().expect("service present");
+            s.waiting().await
+        } => {
             match res {
                 Ok(reason) => tracing::info!(
                     target: "rover::mcp",
@@ -210,6 +231,9 @@ pub async fn serve_stdio(
             tracing::info!(target: "rover::mcp", "shutting down on signal");
         }
     }
+    // Drop the rmcp service explicitly (cancel-branch case) so the handler is
+    // released before we try to take exclusive ownership of the renderer.
+    drop(service_holder);
 
     // Make sure the heartbeat + signal tasks see the cancel before we
     // delete the row — otherwise the heartbeat can race and re-touch a
@@ -237,6 +261,26 @@ pub async fn serve_stdio(
     if let Some(r) = &har_recorder_for_shutdown {
         if let Err(e) = r.flush().await {
             tracing::warn!(target: "rover::fetcher", error = ?e, "har shutdown flush failed");
+        }
+    }
+
+    // M9 fix C1: stop the headless browser if it was ever launched. We've
+    // already dropped `service` (which owns the handler holding the only
+    // other strong reference to the OnceCell + inner Arc) above, so the
+    // `try_unwrap` should normally succeed and let us cleanly close the
+    // browser. If it doesn't, log and let the renderer's own destructor
+    // close the underlying chromiumoxide handle.
+    #[cfg(feature = "headless")]
+    if let Some(renderer_arc) = headless_renderer_for_shutdown.get().cloned() {
+        drop(headless_renderer_for_shutdown);
+        match Arc::try_unwrap(renderer_arc) {
+            Ok(renderer) => renderer.shutdown().await,
+            Err(_still_shared) => {
+                tracing::warn!(
+                    target: "rover::mcp",
+                    "headless renderer still has outstanding Arc references at shutdown; skipping explicit shutdown",
+                );
+            }
         }
     }
 

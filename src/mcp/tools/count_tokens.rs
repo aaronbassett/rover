@@ -329,6 +329,8 @@ mod tests {
                 pacer,
                 summarizer,
                 captioners,
+                #[cfg(feature = "headless")]
+                std::sync::Arc::new(tokio::sync::OnceCell::new()),
             ),
             tmp,
         )

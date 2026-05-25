@@ -36,6 +36,8 @@ async fn fixture_handler() -> (RoverHandler, Db) {
         pacer,
         summarizer,
         captioners,
+        #[cfg(feature = "headless")]
+        Arc::new(tokio::sync::OnceCell::new()),
     );
     (h, db)
 }

@@ -40,6 +40,14 @@ pub struct RoverHandler {
     /// cloud captioners ship in every binary; may be empty when the user
     /// hasn't configured any `[captioners.*]` blocks.
     pub(crate) captioners: Arc<crate::vlm::CaptionerRegistry>,
+    /// M9 fix C1: lazily-initialized headless renderer. The handler owns a
+    /// shared `OnceCell` so the first call requesting `headless.mode = On`
+    /// (or `Auto` when the SPA heuristic triggers) pays the
+    /// browser-launch cost; subsequent calls reuse the same `Arc<HeadlessRenderer>`.
+    /// `serve_stdio` keeps a clone for shutdown.
+    #[cfg(feature = "headless")]
+    pub(crate) headless_renderer:
+        Arc<tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -55,6 +63,9 @@ impl RoverHandler {
         pacer: Arc<Pacer>,
         summarizer: Arc<crate::summarizer::SummarizerService>,
         captioners: Arc<crate::vlm::CaptionerRegistry>,
+        #[cfg(feature = "headless")] headless_renderer: Arc<
+            tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>,
+        >,
     ) -> Self {
         Self {
             db,
@@ -66,6 +77,8 @@ impl RoverHandler {
             pacer,
             summarizer,
             captioners,
+            #[cfg(feature = "headless")]
+            headless_renderer,
             tool_router: Self::tool_router(),
         }
     }

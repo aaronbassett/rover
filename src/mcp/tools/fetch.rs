@@ -478,6 +478,34 @@ impl RoverHandler {
         }
         let family = resolve_tokenizer(args.tokenizer.as_deref(), &self.config)?;
 
+        let headless_mode = resolve_headless(args.headless.as_ref(), &self.config.headless);
+
+        // M9 fix C1: lazily build a `HeadlessRenderer` the first time a
+        // request actually wants one (`On`, or `Auto` — the cached fetcher
+        // only re-renders under Auto when the SPA heuristic fires, but we
+        // still hand it the renderer so it has the option). The renderer
+        // lives in a process-shared `OnceCell` on the handler, so subsequent
+        // fetches reuse the same Chromium instance.
+        #[cfg(feature = "headless")]
+        let headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>> =
+            if !matches!(headless_mode, crate::fetcher::cached::HeadlessMode::Off) {
+                let headless_cfg = self.config.headless.clone();
+                let renderer = self
+                    .headless_renderer
+                    .get_or_try_init(|| async move {
+                        crate::fetcher::headless::HeadlessRenderer::new(&headless_cfg)
+                            .await
+                            .map(std::sync::Arc::new)
+                    })
+                    .await
+                    .map_err(|e: crate::fetcher::headless::HeadlessError| {
+                        McpError::Fetcher(crate::fetcher::FetcherError::Headless(e))
+                    })?;
+                Some(renderer.clone())
+            } else {
+                None
+            };
+
         let result = fetch_with_cache(
             &self.db,
             &self.client,
@@ -494,8 +522,8 @@ impl RoverHandler {
                 ignore_robots: false,
                 user_agent: self.config.fetch.user_agent.clone(),
                 #[cfg(feature = "headless")]
-                headless: None,
-                headless_mode: resolve_headless(args.headless.as_ref(), &self.config.headless),
+                headless,
+                headless_mode,
             },
             |body, base| {
                 let extracted =
