@@ -61,6 +61,10 @@ zstd = { version = "0.13", default-features = false }
 futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 base64 = "0.22"
+mistralrs = { version = "0.8.1", optional = true, default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mistralrs = { version = "0.8.1", optional = true, default-features = false, features = ["metal"] }
 
 [dev-dependencies]
 wiremock = "0.6"
@@ -74,6 +78,7 @@ rmcp = { version = "1", features = ["client", "transport-child-process"] }
 default = []
 test-loopback = []
 local-vision = []
+local-inference = ["dep:mistralrs"]
 
 [lints.rust]
 warnings = "deny"
