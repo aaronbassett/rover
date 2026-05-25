@@ -513,3 +513,43 @@ fn short(p: &Path) -> String {
     }
     p.display().to_string()
 }
+
+#[cfg(feature = "headless")]
+pub struct HeadlessBrowserLaunches;
+
+#[cfg(feature = "headless")]
+#[async_trait]
+impl Check for HeadlessBrowserLaunches {
+    fn name(&self) -> &'static str {
+        "headless_browser_launches"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        let result = crate::fetcher::headless::browser::launch(&ctx.config.headless).await;
+        match result {
+            Ok((browser, handler)) => {
+                let exec = format!(
+                    "(launched via {})",
+                    if ctx.config.headless.chrome_executable.is_empty() {
+                        "auto-detection"
+                    } else {
+                        &ctx.config.headless.chrome_executable
+                    }
+                );
+                drop(browser);
+                handler.abort();
+                CheckReport {
+                    check: self.name(),
+                    status: CheckStatus::Ok,
+                    detail: Some(format!("browser launched {exec}")),
+                }
+            }
+            Err(e) => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!(
+                    "{e}. See docs/features.md for install instructions."
+                )),
+            },
+        }
+    }
+}

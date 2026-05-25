@@ -60,6 +60,8 @@ pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
     checks.push(Box::new(checks::LocalInferenceModelCached));
     #[cfg(feature = "local-vision")]
     checks.push(Box::new(checks::LocalVisionModelCached));
+    #[cfg(feature = "headless")]
+    checks.push(Box::new(checks::HeadlessBrowserLaunches));
     let mut reports = Vec::with_capacity(checks.len());
     let mut summary = CheckStatus::Ok;
     for c in &checks {
