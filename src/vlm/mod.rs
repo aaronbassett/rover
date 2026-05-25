@@ -161,10 +161,6 @@ fn build_one(
 ) -> Result<Arc<dyn VlmCaptioner>, VlmError> {
     match cfg.kind.as_str() {
         "cloud" => {
-            // Real cloud captioner construction lands in Task 6 once
-            // `CloudCaptioner` exists. For Task 5 we accept the spec and
-            // return a placeholder that errors at call time but registers
-            // correctly. Task 6 replaces this branch with the real impl.
             let provider = cfg
                 .provider
                 .as_deref()
@@ -176,11 +172,26 @@ fn build_one(
                 name: name.to_string(),
                 reason: "cloud captioner requires `model`".into(),
             })?;
-            let _ = (provider, model); // touched once Task 6 lands
-            Ok(Arc::new(PendingCaptioner {
-                name: name.to_string(),
-                model: model.to_string(),
-            }))
+            let provider_kind =
+                crate::summarizer::cloud::ProviderKind::parse(provider).map_err(|reason| {
+                    VlmError::Unavailable {
+                        name: name.to_string(),
+                        reason,
+                    }
+                })?;
+            let api_key = cfg
+                .api_key_env
+                .as_deref()
+                .and_then(|var| std::env::var(var).ok())
+                .filter(|v| !v.is_empty());
+            let base_url = cfg.base_url.clone();
+            Ok(Arc::new(cloud::CloudCaptioner::new(
+                name,
+                provider_kind,
+                model,
+                base_url,
+                api_key,
+            )?))
         }
         "local" => {
             #[cfg(not(feature = "local-vision"))]
@@ -204,35 +215,6 @@ fn build_one(
             name: name.to_string(),
             reason: format!("unknown captioner kind: {other}"),
         }),
-    }
-}
-
-/// Placeholder captioner used between Task 5 and Task 6. Returns
-/// `Unavailable` from `caption()`. Task 6 deletes this struct and replaces
-/// the cloud arm of `build_one` with `CloudCaptioner::new(...)`.
-struct PendingCaptioner {
-    name: String,
-    model: String,
-}
-
-#[async_trait]
-impl VlmCaptioner for PendingCaptioner {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn model_id(&self) -> &str {
-        &self.model
-    }
-    async fn caption(
-        &self,
-        _image_bytes: &[u8],
-        _alt: Option<&str>,
-        _max_tokens: usize,
-    ) -> Result<String, VlmError> {
-        Err(VlmError::Unavailable {
-            name: self.name.clone(),
-            reason: "cloud captioner not yet implemented (pending Task 6)".into(),
-        })
     }
 }
 
