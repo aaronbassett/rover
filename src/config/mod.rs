@@ -488,6 +488,32 @@ pub struct HeadlessConfig {
     /// Path to a Chrome/Chromium executable. Empty string means auto-detect.
     #[serde(default)]
     pub chrome_executable: String,
+
+    /// Fulfill image requests with empty 200 (saves bandwidth + render time).
+    #[serde(default = "default_block_images")]
+    pub block_images: bool,
+
+    /// Fulfill font requests with empty 200.
+    #[serde(default = "default_block_fonts")]
+    pub block_fonts: bool,
+
+    /// Fulfill audio/video/track requests with empty 200.
+    #[serde(default = "default_block_media")]
+    pub block_media: bool,
+
+    /// Fulfill CSS requests with empty 200. Default `false` — many SPAs need
+    /// layout to render correctly.
+    #[serde(default)]
+    pub block_css: bool,
+
+    /// Fulfill third-party analytics/tracker requests with empty 200.
+    #[serde(default = "default_block_third_party")]
+    pub block_third_party: bool,
+
+    /// Disable service workers at browser init via CDP bypass. Honored by
+    /// `HeadlessRenderer` setup (not by the intercept handler).
+    #[serde(default = "default_block_service_workers")]
+    pub block_service_workers: bool,
 }
 
 impl Default for HeadlessConfig {
@@ -495,12 +521,38 @@ impl Default for HeadlessConfig {
         Self {
             max_concurrent: default_headless_max_concurrent(),
             chrome_executable: String::new(),
+            block_images: default_block_images(),
+            block_fonts: default_block_fonts(),
+            block_media: default_block_media(),
+            block_css: false,
+            block_third_party: default_block_third_party(),
+            block_service_workers: default_block_service_workers(),
         }
     }
 }
 
 fn default_headless_max_concurrent() -> usize {
     4
+}
+
+fn default_block_images() -> bool {
+    true
+}
+
+fn default_block_fonts() -> bool {
+    true
+}
+
+fn default_block_media() -> bool {
+    true
+}
+
+fn default_block_third_party() -> bool {
+    true
+}
+
+fn default_block_service_workers() -> bool {
+    true
 }
 
 /// `[image_captions]` defaults block.

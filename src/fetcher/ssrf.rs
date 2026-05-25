@@ -94,6 +94,13 @@ pub enum SsrfError {
 
     #[error("project_root is required when ssrf.level = project")]
     ProjectRootMissing,
+
+    #[error("DNS resolution failed for {host}: {source}")]
+    ResolveFailed {
+        host: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Validate the URL itself (scheme, presence of host, file:// rules).
@@ -210,6 +217,44 @@ pub fn validate_addresses(addrs: &[IpAddr], level: SsrfLevel) -> Result<(), Ssrf
             }
         }
     }
+    Ok(())
+}
+
+/// Validate a URL against an SSRF level WITHOUT actually fetching it.
+///
+/// Resolves the host, checks each address against the level, returns the
+/// first verdict. Used by the headless intercept handler before it decides
+/// whether to `FulfillRequest` (empty 200) vs. `ContinueRequest`.
+///
+/// `file://` URLs follow the same Project-and-above rules as
+/// [`validate_url_with_project_root`].
+pub async fn validate_url_for_level(
+    url: &Url,
+    level: SsrfLevel,
+    project_root: Option<&std::path::Path>,
+) -> Result<(), SsrfError> {
+    match url.scheme() {
+        "file" => {
+            return validate_url_with_project_root(url, level, project_root);
+        }
+        "http" | "https" => {}
+        other => {
+            return Err(SsrfError::Scheme {
+                scheme: other.to_string(),
+            });
+        }
+    }
+    let host = url.host_str().ok_or(SsrfError::NoHost)?;
+    let port = url.port_or_known_default().unwrap_or(0);
+    let addrs: Vec<IpAddr> = tokio::net::lookup_host((host, port))
+        .await
+        .map_err(|e| SsrfError::ResolveFailed {
+            host: host.to_string(),
+            source: e,
+        })?
+        .map(|sa| sa.ip())
+        .collect();
+    validate_addresses(&addrs, level)?;
     Ok(())
 }
 
