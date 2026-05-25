@@ -202,6 +202,8 @@ impl RoverError {
     pub const SUMMARIZER_AUTH_FAILED: &'static str = "summarizer_auth_failed";
     pub const SUMMARIZER_MODEL_ERROR: &'static str = "summarizer_model_error";
     pub const SUMMARIZER_INVALID_REQUEST: &'static str = "summarizer_invalid_request";
+    pub const SUMMARIZER_LOCAL_FEATURE_NOT_COMPILED: &'static str =
+        "summarizer_local_feature_not_compiled";
 
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
