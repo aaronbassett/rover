@@ -72,6 +72,7 @@ rmcp = { version = "1", features = ["client", "transport-child-process"] }
 [features]
 default = []
 test-loopback = []
+local-vision = []
 
 [lints.rust]
 warnings = "deny"
