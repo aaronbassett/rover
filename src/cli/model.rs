@@ -108,14 +108,42 @@ async fn download(repo_id: &str) -> anyhow::Result<()> {
 }
 
 async fn list() -> anyhow::Result<()> {
-    // Implementation: Task 43.
-    eprintln!("listing cached models (placeholder; see Task 43)");
+    let root = hf_cache_root();
+    if !root.exists() {
+        eprintln!("(no models cached at {})", root.display());
+        return Ok(());
+    }
+    eprintln!("{}", root.display());
+
+    let mut rows: Vec<(String, u64)> = Vec::new();
+    for entry in std::fs::read_dir(&root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if let Some(repo) = name_str.strip_prefix("models--") {
+            let repo = repo.replacen("--", "/", 1);
+            let size = dir_size(&entry.path()).unwrap_or(0);
+            rows.push((repo, size));
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    for (repo, size) in rows {
+        eprintln!("  {repo:<48}  {}", human_bytes(size));
+    }
     Ok(())
 }
 
 async fn remove(repo_id: &str) -> anyhow::Result<()> {
-    // Implementation: Task 44.
-    eprintln!("removing {repo_id} (placeholder; see Task 44)");
+    use anyhow::Context;
+    let root = hf_cache_root();
+    let dir = root.join(format!("models--{}", repo_id.replace('/', "--")));
+    if !dir.exists() {
+        eprintln!("(nothing to remove for {repo_id})");
+        return Ok(());
+    }
+    let size = dir_size(&dir).unwrap_or(0);
+    std::fs::remove_dir_all(&dir).context("removing cached model dir")?;
+    eprintln!("removed {} ({} freed)", dir.display(), human_bytes(size));
     Ok(())
 }
 
@@ -127,4 +155,41 @@ fn hf_cache_root() -> PathBuf {
         return PathBuf::from(home).join(".cache/huggingface/hub");
     }
     PathBuf::from(".cache/huggingface/hub")
+}
+
+fn dir_size(p: &std::path::Path) -> std::io::Result<u64> {
+    let mut total = 0u64;
+    for entry in walk(p)? {
+        if entry.is_file() {
+            total += std::fs::metadata(&entry)?.len();
+        }
+    }
+    Ok(total)
+}
+
+fn walk(p: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut out = Vec::new();
+    let mut stack = vec![p.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: &[(&str, u64)] = &[("GB", 1_000_000_000), ("MB", 1_000_000), ("KB", 1_000), ("B", 1)];
+    for (unit, mult) in UNITS {
+        if n >= *mult {
+            return format!("{:.1} {}", n as f64 / *mult as f64, unit);
+        }
+    }
+    format!("{n} B")
 }
