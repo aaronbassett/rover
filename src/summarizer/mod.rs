@@ -9,6 +9,8 @@ pub mod backend;
 pub mod cloud;
 pub mod error;
 pub mod extractive;
+#[cfg(feature = "local-inference")]
+pub mod local;
 pub mod prompts;
 pub mod registry;
 
