@@ -334,4 +334,22 @@ mod tests {
         let r = build(&cfg).unwrap();
         assert_eq!(r.default_name(), Some("openai"));
     }
+
+    #[cfg(feature = "local-vision")]
+    #[test]
+    fn build_with_local_kind_succeeds_with_feature() {
+        let mut cfg = crate::config::Config::default();
+        cfg.captioners.insert(
+            "local".to_string(),
+            crate::config::CaptionerConfig {
+                kind: "local".into(),
+                provider: None,
+                model: Some("HuggingFaceTB/SmolVLM-256M-Instruct".into()),
+                api_key_env: None,
+                base_url: None,
+            },
+        );
+        let r = build(&cfg).unwrap();
+        assert!(r.get("local").is_ok());
+    }
 }
