@@ -862,6 +862,28 @@ mod tests {
     }
 
     #[test]
+    fn typed_images_caption_parses_without_captioner() {
+        let v: FetchArgs =
+            serde_json::from_str(r#"{"url":"https://x/","images":{"mode":"caption"}}"#).unwrap();
+        assert!(matches!(
+            v.images,
+            Some(ImagesArg::Caption { captioner: None })
+        ));
+    }
+
+    #[test]
+    fn typed_images_caption_parses_with_captioner_override() {
+        let v: FetchArgs = serde_json::from_str(
+            r#"{"url":"https://x/","images":{"mode":"caption","captioner":"gpt4o"}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            v.images,
+            Some(ImagesArg::Caption { captioner: Some(ref s) }) if s == "gpt4o"
+        ));
+    }
+
+    #[test]
     fn typed_metadata_skip_parses() {
         let v: FetchArgs =
             serde_json::from_str(r#"{"url":"https://x/","metadata":"skip"}"#).unwrap();
