@@ -14,12 +14,12 @@
 //! and pass it in via `PageMeta`; the writer no longer estimates.
 
 use jiff::Timestamp;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use url::Url;
 
 /// Per-image dimension pair carried alongside `ImageProcessed` annotations.
-/// Task 11 will add `Serialize` and surface this in the frontmatter sidecar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImageDims {
     pub width: u32,
     pub height: u32,
@@ -27,23 +27,28 @@ pub struct ImageDims {
 
 /// One row of the `images_processed:` frontmatter sidecar (M9). Each `<img>`
 /// the caption pipeline observes produces one entry — either `"captioned"`
-/// or `"skipped"` with a typed reason. Task 11 expands this with
-/// `Serialize` derive and YAML rendering inside `render(&PageMeta)`.
-#[derive(Debug, Clone)]
+/// or `"skipped"` with a typed reason.
+#[derive(Debug, Clone, Serialize)]
 pub struct ImageProcessed {
     pub src: String,
     /// `"captioned"` or `"skipped"`.
     pub decision: String,
     /// Lowercased `SkipReason` variant when `decision == "skipped"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// Captioner config-key name when the captioner was attempted.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub captioner: Option<String>,
     /// The generated caption when `decision == "captioned"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub caption: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub dimensions: Option<ImageDims>,
     /// Reported byte length (from Content-Length probe) when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<u64>,
     /// Human-readable error when the captioner or download failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -74,6 +79,7 @@ pub struct PageMeta<'a> {
     pub images_seen: usize,
     pub images_downloaded: usize,
     pub images_failed: usize,
+    pub images_processed: Vec<ImageProcessed>,
 }
 
 /// Render `meta` as a frontmatter-envelope string followed by `body`.
@@ -157,6 +163,34 @@ pub fn render(meta: &PageMeta<'_>) -> String {
     }
     if meta.images_failed > 0 {
         buf.push_str(&format!("images_failed: {}\n", meta.images_failed));
+    }
+    if !meta.images_processed.is_empty() {
+        buf.push_str("images_processed:\n");
+        for ip in &meta.images_processed {
+            buf.push_str(&format!("  - src: {}\n", yaml_escape(&ip.src)));
+            buf.push_str(&format!("    decision: {}\n", yaml_escape(&ip.decision)));
+            if let Some(v) = &ip.reason {
+                buf.push_str(&format!("    reason: {}\n", yaml_escape(v)));
+            }
+            if let Some(v) = &ip.captioner {
+                buf.push_str(&format!("    captioner: {}\n", yaml_escape(v)));
+            }
+            if let Some(v) = &ip.caption {
+                buf.push_str(&format!("    caption: {}\n", yaml_escape(v)));
+            }
+            if let Some(d) = &ip.dimensions {
+                buf.push_str(&format!(
+                    "    dimensions:\n      width: {}\n      height: {}\n",
+                    d.width, d.height
+                ));
+            }
+            if let Some(b) = ip.bytes {
+                buf.push_str(&format!("    bytes: {b}\n"));
+            }
+            if let Some(v) = &ip.error {
+                buf.push_str(&format!("    error: {}\n", yaml_escape(v)));
+            }
+        }
     }
 
     buf.push_str("---\n\n");
@@ -256,6 +290,7 @@ mod tests {
             images_seen: 0,
             images_downloaded: 0,
             images_failed: 0,
+            images_processed: vec![],
         }
     }
 
@@ -369,5 +404,52 @@ mod tests {
         assert!(out.contains("schema_types:"));
         assert!(out.contains("  - Article"));
         assert!(out.contains("  - WebPage"));
+    }
+
+    #[test]
+    fn images_processed_renders_under_frontmatter() {
+        let url = u("https://example.com/p");
+        let m = PageMeta {
+            images_processed: vec![
+                ImageProcessed {
+                    src: "./hero.jpg".into(),
+                    decision: "captioned".into(),
+                    reason: None,
+                    captioner: Some("openai".into()),
+                    caption: Some("A dog.".into()),
+                    dimensions: Some(ImageDims {
+                        width: 800,
+                        height: 600,
+                    }),
+                    bytes: None,
+                    error: None,
+                },
+                ImageProcessed {
+                    src: "./icon.svg".into(),
+                    decision: "skipped".into(),
+                    reason: Some("below_min_dimensions".into()),
+                    captioner: None,
+                    caption: None,
+                    dimensions: Some(ImageDims {
+                        width: 24,
+                        height: 24,
+                    }),
+                    bytes: None,
+                    error: None,
+                },
+            ],
+            ..meta(&url, "# body\n")
+        };
+        let yaml = render(&m);
+        assert!(yaml.contains("images_processed:"));
+        assert!(yaml.contains("./hero.jpg"));
+        assert!(yaml.contains("below_min_dimensions"));
+    }
+
+    #[test]
+    fn images_processed_absent_when_empty() {
+        let url = u("https://example.com/p");
+        let out = render(&meta(&url, "body"));
+        assert!(!out.contains("images_processed:"));
     }
 }

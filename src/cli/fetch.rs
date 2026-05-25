@@ -198,6 +198,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         images_seen: 0,
         images_downloaded: 0,
         images_failed: 0,
+        images_processed: vec![],
     };
 
     let envelope = render(&meta);
