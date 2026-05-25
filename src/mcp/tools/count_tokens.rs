@@ -287,6 +287,7 @@ mod tests {
     /// never touched and no network I/O happens.
     async fn fake_handler() -> (RoverHandler, tempfile::TempDir) {
         let cfg = std::sync::Arc::new(crate::config::Config::default());
+        crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("rover.db");

@@ -571,6 +571,7 @@ mod tests {
     }
 
     fn client() -> reqwest::Client {
+        crate::fetcher::client::install_ring_provider();
         reqwest::Client::new()
     }
 
@@ -684,6 +685,7 @@ mod tests {
 
     #[tokio::test]
     async fn classify_skips_below_min_dimensions_via_html_attrs() {
+        crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let f = ImageCaptionFilters {
             min_width: 200,
@@ -721,6 +723,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(206).set_body_bytes(&[0u8; 100][..]))
             .mount(&server)
             .await;
+        crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let f = ImageCaptionFilters {
             max_per_page: 3,
@@ -756,6 +759,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(206).set_body_bytes(&png[..]))
             .mount(&server)
             .await;
+        crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let url = format!("{}/img.png", server.uri());
         let dims = partial_fetch_dimensions(&client, &url).await.unwrap();

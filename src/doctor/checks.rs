@@ -135,6 +135,7 @@ impl Check for NetworkReachable {
         "network_reachable"
     }
     async fn run(&self, _ctx: &CheckCtx) -> CheckReport {
+        crate::fetcher::client::install_ring_provider();
         let client = match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()

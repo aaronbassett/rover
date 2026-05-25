@@ -379,6 +379,7 @@ mod tests {
             ..Default::default()
         };
         let pacer = Pacer::new(&cfg);
+        crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let cond = ConditionalGet::default();
         let res = with_retries(

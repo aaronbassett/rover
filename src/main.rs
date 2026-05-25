@@ -221,6 +221,7 @@ async fn build_summarizer_service(
 }
 
 fn main() -> ExitCode {
+    rover::fetcher::client::install_ring_provider();
     rover::telemetry::init("info,rover=debug");
     let cli = Cli::parse();
     let runtime = tokio::runtime::Builder::new_multi_thread()

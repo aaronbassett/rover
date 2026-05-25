@@ -4900,6 +4900,7 @@ dependencies = [
  "rmcp",
  "robotxt",
  "rusqlite",
+ "rustls",
  "schemars 1.2.1",
  "scraper 0.26.0",
  "serde",
