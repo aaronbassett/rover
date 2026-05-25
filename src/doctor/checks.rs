@@ -304,6 +304,99 @@ impl Check for BackendsAuthenticate {
     }
 }
 
+pub struct CaptionersAuthenticate;
+
+#[async_trait]
+impl Check for CaptionersAuthenticate {
+    fn name(&self) -> &'static str {
+        "captioners_authenticate"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        // 1x1 transparent PNG (67 bytes).
+        const PROBE_PNG: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+
+        let cloud: Vec<(&String, &crate::config::CaptionerConfig)> = ctx
+            .config
+            .captioners
+            .iter()
+            .filter(|(_, c)| c.kind == "cloud")
+            .filter(|(_, c)| {
+                c.api_key_env
+                    .as_deref()
+                    .and_then(|e| std::env::var(e).ok())
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false)
+            })
+            .collect();
+        if cloud.is_empty() {
+            return CheckReport {
+                check: self.name(),
+                status: CheckStatus::Skip,
+                detail: Some("no cloud captioners with non-empty api_key_env".into()),
+            };
+        }
+        let mut failures = Vec::new();
+        for (name, cfg) in cloud {
+            let provider = match crate::summarizer::cloud::ProviderKind::parse(
+                cfg.provider.as_deref().unwrap_or(""),
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    failures.push(format!("{name}: invalid provider: {e}"));
+                    continue;
+                }
+            };
+            let api_key = cfg
+                .api_key_env
+                .as_deref()
+                .and_then(|e| std::env::var(e).ok());
+            let cap = match crate::vlm::cloud::CloudCaptioner::new(
+                name,
+                provider,
+                cfg.model.as_deref().unwrap_or(""),
+                cfg.base_url.clone(),
+                api_key,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    failures.push(format!("{name}: build failed: {e}"));
+                    continue;
+                }
+            };
+            use crate::vlm::VlmCaptioner;
+            let probe = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                cap.caption(PROBE_PNG, None, 1),
+            )
+            .await;
+            match probe {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => failures.push(format!("{name}: {e}")),
+                Err(_) => failures.push(format!("{name}: timeout after 5s")),
+            }
+        }
+        if failures.is_empty() {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some("all configured cloud captioners authenticated".into()),
+            }
+        } else {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(failures.join("; ")),
+            }
+        }
+    }
+}
+
 fn short(p: &Path) -> String {
     if let Some(home) = std::env::var("HOME").ok().map(std::path::PathBuf::from)
         && let Ok(stripped) = p.strip_prefix(&home)
