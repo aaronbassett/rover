@@ -65,3 +65,40 @@ The rate limiter and concurrency semaphores live in process memory, not SQLite. 
 ## Robots.txt fail-closed cache window (M5)
 
 When a robots.txt fetch returns 5xx or times out, Rover caches a `disallow_all` sentinel for `[robots] failure_ttl` (default `5m`). During that window, all fetches to that host are refused with `robots_fetch_failed` / `robots_disallowed`. The short TTL ensures recovered servers are picked up quickly; for hosts whose robots endpoint is chronically broken, raise `failure_ttl` or list the host in `[robots] ignore_domains`.
+
+## Headless asset interception and SSRF (M9)
+
+When the `headless` feature is enabled and a fetch runs in `headless: { mode: "on" }`
+or triggers via `mode: "auto"`, the browser issues sub-requests that Rover doesn't
+directly control. M9 wires every intercepted sub-request URL through the same
+`SsrfLevel` validator the top-level fetch uses.
+
+Sub-requests that would violate the configured `[ssrf] level` are intercepted via
+the CDP Fetch domain and fulfilled with an empty 200 response — they are **never
+aborted**. Aborting causes many SPAs to error out on missing CSS/font/image
+references; an empty 200 keeps the page rendering.
+
+The HAR recorder only records the top-level navigation. Sub-resources (CSS, JS,
+images, fonts, beacons) are not in the HAR file. This keeps HAR files navigable
+and stops sub-resources from masking what Rover actually returned.
+
+**Threat model:** a malicious page cannot use Rover's headless renderer to scan
+internal networks via embedded `<iframe>`, `<img>`, or `fetch()`. The
+always-blocked address set (link-local, multicast, `0.0.0.0`, broadcast) plus
+the `block_third_party = true` default cover the common attack paths. Operators
+who set `[ssrf] level = "none"` opt out of these checks; the WARN line at
+startup documents that choice.
+
+## Local model files (M9)
+
+The `local-inference` and `local-vision` features download model weights from
+HuggingFace on first use (or ahead-of-time via `rover model download`).
+
+- Weights are stored under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
+- Rover does not modify or upload model weights.
+- The default models (`Qwen/Qwen3.5-0.8B`, `HuggingFaceTB/SmolVLM-256M-Instruct`)
+  are public; no authentication required.
+- Users pulling gated/private repos must set `HF_TOKEN` in the environment.
+
+Disk usage: see `rover model list`. Models can be removed with `rover model remove
+<repo_id>`. Weights are not garbage-collected automatically.
