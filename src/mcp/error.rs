@@ -177,6 +177,11 @@ impl McpError {
                             RoverError::new(RoverError::TOKENIZER_UNAVAILABLE, inner.to_string())
                         }
                     },
+                    // Task 19 will assign a dedicated MCP code; for now route
+                    // through SUMMARIZER_BACKEND_UNAVAILABLE as a placeholder.
+                    S::LocalFeatureNotCompiled => {
+                        RoverError::new(RoverError::SUMMARIZER_BACKEND_UNAVAILABLE, e.to_string())
+                    }
                 }
             }
         }

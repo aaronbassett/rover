@@ -51,6 +51,9 @@ pub enum SummarizerError {
     #[error("invalid request to backend {name}: {reason}")]
     InvalidRequest { name: String, reason: String },
 
+    #[error("local-inference backend requires the `local-inference` cargo feature")]
+    LocalFeatureNotCompiled,
+
     #[error("storage error: {0}")]
     Storage(#[from] crate::storage::StorageError),
 
