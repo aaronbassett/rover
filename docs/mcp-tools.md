@@ -26,10 +26,10 @@ Synchronously fetches a URL, runs the M1+M4 extraction pipeline, and returns Mar
 | `tokenizer` | string | from `[tokenizer] default` | `o200k` / `cl100k` / `claude`. |
 | `max_tokens` | integer | unset | Auto-summarize when the extracted body exceeds this. Must be `> 0`. Single-shot: if the summary is still over budget, returns `max_tokens_exceeded`. |
 | `tables` | object | `{mode:"embed"}` | Per-table mode. See below. |
-| `images` | object | `{mode:"alt_text_only"}` | Per-image mode. `{mode:"keep"|"alt_text_only"|"download"|"drop"|"caption_vlm"}`. `caption_vlm` is deferred to M9. |
+| `images` | object | `{mode:"alt_text_only"}` | Per-image mode. See `## images modes` below. |
 | `metadata` | string | `"include"` | `"include"` or `"skip"`. When `skip`, the response's metadata fields are blanked (the cache row still carries them). |
 | `summarize` | object | unset | Inline summarize after extraction. See below. |
-| `headless` | any | unset | Accept-no-op until M9. Logged at `debug` and ignored. |
+| `headless` | object | unset | Browser rendering control (M9). See `## headless` below. |
 
 **`tables` modes:**
 
@@ -43,6 +43,51 @@ Synchronously fetches a URL, runs the M1+M4 extraction pipeline, and returns Mar
 ```
 
 `head_tail` defaults: `head=5`, `tail=5`. `random_seed` defaults: `rows=10`, `seed=42`. `head`/`tail`/`rows` must be `> 0`.
+
+### `images` modes (M9)
+
+```jsonc
+{"mode":"keep"}
+{"mode":"alt_text_only"}
+{"mode":"download"}
+{"mode":"drop"}
+{"mode":"caption"}
+```
+
+- `keep` — preserve all image tags; images appear as `![alt](src)` in the Markdown.
+- `alt_text_only` — replace each image with its alt text only (no image tag).
+- `download` — fetch each image and write to `[output] dir`; Markdown contains local file references.
+- `drop` — remove all image tags.
+- `caption` — replace each image with a generated caption.
+  Requires at least one configured captioner (`[captioners.<name>]`). The
+  default captioner comes from `[image_captions] default`; override per-call
+  via `images.captioner: "<name>"`.
+
+### `headless` (M9)
+
+When the binary is built with `--features headless`, pass:
+
+```json
+{
+  "headless": {
+    "mode": "off" | "on" | "auto",
+    "wait": "domcontentloaded" | "networkidle2",
+    "timeout_secs": 15
+  }
+}
+```
+
+- `mode` (default: derived from `[headless] auto_detect_spa`)
+  - `off` — disable headless for this call (use the reqwest path only)
+  - `on` — render this URL via headless unconditionally
+  - `auto` — try reqwest first; re-render via headless if SPA heuristics fire
+- `wait` (default: `[headless] default_wait`)
+- `timeout_secs` (default: `[headless] timeout`)
+
+When the binary is built **without** the `headless` feature:
+- `mode: "off"` and the absent case work as today (no-op)
+- `mode: "on"` returns the error `headless_feature_not_compiled`
+- `mode: "auto"` keeps the reqwest result silently (no error)
 
 **`summarize` sub-arg** (mirrors the standalone `summarize` tool minus `url`):
 
@@ -77,7 +122,38 @@ When `summarize` is provided, the returned `markdown` is the summary (not the ex
   "summarizer_fallback": {             // present when whichever summarize path ran fell back to extractive
     "from": "fast",
     "reason": "auth_failed"
-  }
+  },
+  "images_processed": [                // present when images.mode includes caption filtering (M9)
+    {
+      "src": "https://example.com/image.jpg",
+      "decision": "captioned",
+      "captioner": "openai",
+      "caption": "A black labrador retriever sitting on a wooden dock."
+    },
+    {
+      "src": "https://example.com/icon.svg",
+      "decision": "skipped",
+      "reason": "below_min_dimensions",
+      "dimensions": { "width": 24, "height": 24 }
+    },
+    {
+      "src": "https://example.com/large.jpg",
+      "decision": "skipped",
+      "reason": "above_max_bytes",
+      "bytes": 18234567
+    },
+    {
+      "src": "https://example.com/photo.jpg",
+      "decision": "skipped",
+      "reason": "per_page_budget"
+    },
+    {
+      "src": "https://example.com/error.jpg",
+      "decision": "skipped",
+      "reason": "captioner_error",
+      "error": "openai: rate limited"
+    }
+  ]
 }
 ```
 
