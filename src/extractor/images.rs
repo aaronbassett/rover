@@ -56,7 +56,7 @@ pub async fn apply(
             .ok_or(ExtractorError::CaptionerNotConfigured)?;
         Some(reg.get(name).map_err(|e| ExtractorError::CaptionerCall {
             name: name.to_string(),
-            reason: e.to_string(),
+            source: Box::new(e),
         })?)
     } else {
         None

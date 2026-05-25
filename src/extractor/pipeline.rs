@@ -59,8 +59,12 @@ pub enum ExtractorError {
         source: url::ParseError,
     },
 
-    #[error("captioner `{name}` failed: {reason}")]
-    CaptionerCall { name: String, reason: String },
+    #[error("captioner `{name}` failed: {source}")]
+    CaptionerCall {
+        name: String,
+        #[source]
+        source: Box<crate::vlm::VlmError>,
+    },
 
     #[error("no captioner configured for images.mode = caption")]
     CaptionerNotConfigured,

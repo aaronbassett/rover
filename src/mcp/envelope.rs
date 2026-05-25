@@ -210,6 +210,15 @@ impl RoverError {
     pub const HEADLESS_RENDER_TIMEOUT: &'static str = "headless_render_timeout";
     pub const HEADLESS_PAGE_CLOSED: &'static str = "headless_page_closed";
     pub const HEADLESS_INTERNAL_ERROR: &'static str = "headless_internal_error";
+    pub const CAPTIONER_NO_SUCH: &'static str = "captioner_no_such";
+    pub const CAPTIONER_NOT_CONFIGURED: &'static str = "captioner_not_configured";
+    pub const CAPTIONER_LOCAL_FEATURE_NOT_COMPILED: &'static str =
+        "captioner_local_feature_not_compiled";
+    pub const CAPTIONER_RATE_LIMITED: &'static str = "captioner_rate_limited";
+    pub const CAPTIONER_AUTH_FAILED: &'static str = "captioner_auth_failed";
+    pub const CAPTIONER_BACKEND_UNAVAILABLE: &'static str = "captioner_backend_unavailable";
+    pub const CAPTIONER_MODEL_ERROR: &'static str = "captioner_model_error";
+    pub const CAPTIONER_IMAGE_DECODE_FAILED: &'static str = "captioner_image_decode_failed";
 
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
