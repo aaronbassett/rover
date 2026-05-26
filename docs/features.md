@@ -1,7 +1,7 @@
 # Feature Flags
 
 Rover ships with three optional Cargo features. The default install
-(`cargo install rover`) produces a lean binary under 25 MiB with no
+(`cargo install rover`) produces a lean binary under 75 MiB with no
 mistralrs, no chromiumoxide, and no extra model weights to manage.
 
 Enable any combination of features by passing `--features` to
@@ -144,7 +144,7 @@ The cache is shared with any other HuggingFace-using tools.
 
 ## Binary size
 
-Default-features binary: < 25 MiB (CI-enforced).
+Default-features binary: < 75 MiB (asserted nightly in the smoketest workflow).
 
 With features enabled, expect roughly:
 

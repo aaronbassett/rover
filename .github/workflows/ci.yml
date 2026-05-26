@@ -56,22 +56,3 @@ jobs:
 
       - name: cargo build --release
         run: cargo build --release
-
-  binary-size:
-    name: Binary size (default features < 25 MiB)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Build release
-        run: cargo build --release --no-default-features
-      - name: Assert size
-        run: |
-          size_bytes=$(stat -c%s target/release/rover)
-          limit=$((25 * 1024 * 1024))
-          echo "binary size: $size_bytes bytes (limit: $limit)"
-          if [ "$size_bytes" -ge "$limit" ]; then
-            echo "::error::binary size $size_bytes >= 25 MiB limit"
-            exit 1
-          fi

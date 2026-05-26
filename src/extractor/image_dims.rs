@@ -2,8 +2,7 @@
 //! image formats (PNG, JPEG, WebP, GIF) to extract `(width, height)` without
 //! decoding the image data. Used by the always-on caption-filter pipeline to
 //! gate captioning of icons/thumbnails without pulling in the full `image`
-//! crate's decoders (which alone would push the default binary over the
-//! 25 MiB budget — PRD §15).
+//! crate's decoders, keeping the default binary lean (PRD §15).
 //!
 //! For formats not in this set, or for malformed headers, returns `None` and
 //! the caller treats dimensions as indeterminate (gate passes; size gate

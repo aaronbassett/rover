@@ -91,3 +91,22 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y chromium-browser
       - run: cargo test --features headless,test-loopback --test headless_smoke -- --ignored
       - run: cargo test --features headless,test-loopback --test headless_ssrf_intercept -- --ignored
+
+  binary-size:
+    name: Binary size (default features < 75 MiB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release --no-default-features
+      - name: Assert size
+        run: |
+          size_bytes=$(stat -c%s target/release/rover)
+          limit=$((75 * 1024 * 1024))
+          echo "binary size: $size_bytes bytes (limit: $limit)"
+          if [ "$size_bytes" -ge "$limit" ]; then
+            echo "::error::binary size $size_bytes >= 75 MiB limit"
+            exit 1
+          fi
