@@ -9,6 +9,14 @@ use rover::extractor::options::{ImageCaptionFilters, ImagesMode};
 use rover::extractor::output::OutputPaths;
 use rover::vlm::{CaptionerRegistry, VlmCaptioner, VlmError};
 
+/// Build a `reqwest::Client` that the test pipeline can drive. Goes through
+/// `rover::fetcher::client::build_http_client` so the ring-rustls provider is
+/// installed before the client is constructed (otherwise reqwest panics with
+/// "No provider set" — see commit a262972).
+fn test_client() -> reqwest::Client {
+    rover::fetcher::client::build_http_client("rover-test/0.1", std::time::Duration::from_secs(5))
+}
+
 /// A captioner that always succeeds with a fixed string. Used to focus
 /// these tests on the filter pipeline, not on captioner behavior.
 struct AlwaysCaption(String);
@@ -55,7 +63,7 @@ async fn below_min_dimensions_skipped() {
         min_height: 200,
         ..Default::default()
     };
-    let client = reqwest::Client::new();
+    let client = test_client();
     let p = paths();
     let r = apply(
         md,
@@ -90,7 +98,7 @@ async fn above_max_bytes_skipped() {
         max_bytes: 10 * 1024 * 1024,
         ..Default::default()
     };
-    let client = reqwest::Client::new();
+    let client = test_client();
     let p = paths();
     let r = apply(
         &md,
@@ -133,7 +141,7 @@ async fn per_page_budget_respected() {
         max_per_page: 3,
         ..Default::default()
     };
-    let client = reqwest::Client::new();
+    let client = test_client();
     let p = paths();
     let r = apply(
         &md,
@@ -184,7 +192,7 @@ async fn dimension_probe_via_partial_fetch() {
     let url = format!("{}/photo.png", server.uri());
     let md = format!("![photo]({url})"); // no width/height attrs
     let filters = ImageCaptionFilters::default();
-    let client = reqwest::Client::new();
+    let client = test_client();
     let p = paths();
     let r = apply(
         &md,
