@@ -64,18 +64,18 @@ pub async fn apply(
     let mut captioned_so_far = 0usize;
 
     // Two-step: enumerate matches, then transform. Async download requires
-    // we can't use `replace_all` directly.
+    // we can't use `replace_all` directly. `filter_map` guards against any
+    // theoretical Captures shape where a named group is absent — the regex
+    // makes every group required, but skipping (vs. panicking) on malformed
+    // input from an adversarial page is the safer default.
     let matches: Vec<(usize, usize, String, String, String)> = INLINE_IMG
         .captures_iter(markdown)
-        .map(|c| {
-            let m = c.get(0).unwrap();
-            (
-                m.start(),
-                m.end(),
-                c["alt"].to_string(),
-                c["src"].to_string(),
-                c["rest"].to_string(),
-            )
+        .filter_map(|c| {
+            let m = c.get(0)?;
+            let alt = c.name("alt")?.as_str().to_string();
+            let src = c.name("src")?.as_str().to_string();
+            let rest = c.name("rest")?.as_str().to_string();
+            Some((m.start(), m.end(), alt, src, rest))
         })
         .collect();
 
@@ -105,25 +105,35 @@ pub async fn apply(
                     markdown[start..end].to_string()
                 }
             },
-            ImagesMode::Caption => {
-                // SAFETY: resolved above when mode == Caption.
-                let cap = captioner
-                    .as_ref()
-                    .expect("captioner resolved when mode == Caption");
-                caption_one_image(
-                    cap.as_ref(),
-                    http,
-                    db,
-                    filters,
-                    &alt,
-                    &src,
-                    &rest,
-                    &mut captioned_so_far,
-                    &mut images_failed,
-                    &mut images_processed,
-                )
-                .await
-            }
+            ImagesMode::Caption => match captioner.as_ref() {
+                Some(cap) => {
+                    caption_one_image(
+                        cap.as_ref(),
+                        http,
+                        db,
+                        filters,
+                        &alt,
+                        &src,
+                        &rest,
+                        &mut captioned_so_far,
+                        &mut images_failed,
+                        &mut images_processed,
+                    )
+                    .await
+                }
+                None => {
+                    // Unreachable while the resolution block above stays in
+                    // sync with this match arm; we fall back to keeping the
+                    // original markdown rather than panicking on what would
+                    // be an internal invariant slip.
+                    tracing::error!(
+                        target: "rover::extractor",
+                        "internal: captioner missing in Caption mode; keeping original image"
+                    );
+                    images_failed += 1;
+                    markdown[start..end].to_string()
+                }
+            },
         };
         out.push_str(&replacement);
     }

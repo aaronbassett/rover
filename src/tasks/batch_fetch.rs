@@ -155,8 +155,27 @@ pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, cancel: Cancellation
         let force_refresh = params.force_refresh;
         let cancel_c = cancel.clone();
         let handle = tokio::spawn(async move {
-            let _gh = host_sem.acquire_owned().await.expect("host sem closed");
-            let _gg = global_c.acquire_owned().await.expect("global sem closed");
+            // Nothing in the current codebase calls `Semaphore::close` on
+            // these handles, so `Err` from `acquire_owned` is unreachable
+            // today. Treating a future closure as "shutdown in progress"
+            // and returning early avoids panicking the batch worker mid-run
+            // if cooperative shutdown is added later.
+            let Ok(_gh) = host_sem.acquire_owned().await else {
+                tracing::warn!(
+                    target: "rover::tasks::batch_fetch",
+                    task_id = %task_str, idx,
+                    "per-host semaphore closed; skipping item",
+                );
+                return;
+            };
+            let Ok(_gg) = global_c.acquire_owned().await else {
+                tracing::warn!(
+                    target: "rover::tasks::batch_fetch",
+                    task_id = %task_str, idx,
+                    "global semaphore closed; skipping item",
+                );
+                return;
+            };
             // Re-check cancellation after acquiring the permit so already-queued
             // futures don't fire after the caller asked us to stop.
             if cancel_c.is_cancelled() || is_cancelled(&db_c, &task_str).await.unwrap_or(false) {
@@ -307,7 +326,10 @@ pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, cancel: Cancellation
             &db,
             task_id.as_str(),
             TaskStatus::Cancelled,
-            Some(serde_json::to_string(&result).unwrap()),
+            Some(
+                serde_json::to_string(&result)
+                    .expect("BatchFetchResult serialization is infallible"),
+            ),
             None,
         )
         .await;
@@ -339,7 +361,10 @@ pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, cancel: Cancellation
             &db,
             task_id.as_str(),
             TaskStatus::Completed,
-            Some(serde_json::to_string(&result).unwrap()),
+            Some(
+                serde_json::to_string(&result)
+                    .expect("BatchFetchResult serialization is infallible"),
+            ),
             None,
         )
         .await;
