@@ -81,6 +81,21 @@ pub struct FetchOptions {
     pub headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>>,
     /// M9: per-call mode selection.
     pub headless_mode: HeadlessMode,
+    /// When `true`, the caller opts out of the stale-while-revalidate
+    /// fast-path: on an expired cache entry, `fetch_with_cache` performs
+    /// the network refresh inline rather than serving stale and queueing
+    /// a background `revalidate` task.
+    ///
+    /// Set this from any caller that does NOT have a running task
+    /// scheduler in the same process — chiefly the one-shot CLI. The
+    /// MCP server's tools leave this `false` so the agent gets a fast
+    /// response and the in-process scheduler refreshes the row.
+    ///
+    /// Independently of this flag, the row is also re-fetched
+    /// synchronously when the row expired more than
+    /// `[cache] stale_while_revalidate_window` ago, so callers never
+    /// receive arbitrarily old content.
+    pub synchronous_revalidation: bool,
 }
 
 /// What `fetch_with_cache` needs from the extractor. Defined here as a tiny
@@ -150,14 +165,21 @@ where
 
     // Step 1: cache lookup.
     //
-    // M6 SWR: fresh hits short-circuit; expired entries return *immediately*
-    // and a `revalidate` task is queued in the background. The caller surfaces
-    // the task id in the `revalidation` envelope on the wire.
+    // Three outcomes for an expired row:
+    //  1. Fresh hit (`expires_at > now`) — return immediately.
+    //  2. Expired within the SWR grace window AND caller hasn't opted out
+    //     of SWR → serve stale now, queue a `revalidate` task in the
+    //     background. The agent monitors the task id; the row gets
+    //     refreshed out-of-band.
+    //  3. Expired beyond the grace window, OR caller asked for
+    //     synchronous behaviour (e.g. CLI) → fall through to the network
+    //     refresh path, keeping the stale row threaded down for the
+    //     conditional-GET validators in Step 2.
     //
-    // The only remaining path that runs Step 2+ in practice is `force_refresh`
-    // or a true cache miss. `stale` therefore stays `None` outside the early
-    // return — the network-failure fallback below is reachable only on
-    // `force_refresh = true` (kept for defense in depth).
+    // The grace window stops the SWR path from ever returning arbitrarily
+    // old content; without it, an entry that expired weeks ago would still
+    // be served stale on every fetch (because nothing was refreshing it).
+    let swr_window_secs = cache_cfg.stale_while_revalidate_window.as_secs() as i64;
     let stale: Option<Page> = if opts.force_refresh {
         None
     } else {
@@ -169,24 +191,33 @@ where
                 });
             }
             Some(p) => {
-                // SWR fast-path: queue a revalidate task, return stale now.
-                let task_id = insert_revalidate_task(db, url, &p).await;
-                return Ok(CachedFetch {
-                    page: p,
-                    cache_status: CacheStatus::Stale {
-                        revalidation_task_id: task_id,
-                    },
-                });
+                let within_swr_window = p
+                    .expires_at
+                    .is_some_and(|e| now.saturating_sub(e) <= swr_window_secs);
+                if within_swr_window && !opts.synchronous_revalidation {
+                    // SWR fast-path: queue a revalidate task, return stale now.
+                    let task_id = insert_revalidate_task(db, url, &p).await;
+                    return Ok(CachedFetch {
+                        page: p,
+                        cache_status: CacheStatus::Stale {
+                            revalidation_task_id: task_id,
+                        },
+                    });
+                }
+                // Treat as a miss. The stale row is kept around so Step 2
+                // can build conditional validators from it.
+                Some(p)
             }
             None => None,
         }
     };
 
-    // Step 2: build conditional validators from any stale entry.
-    // With the M6 SWR fast-path above, `stale` is always `None` here on the
-    // non-`force_refresh` branch, so this collapses to `ConditionalGet::default()`.
-    // The match is kept verbatim for the `force_refresh = true` edge case
-    // where a future change might surface validators differently.
+    // Step 2: build conditional validators from any stale entry. `stale`
+    // is Some when we're synchronously revalidating an expired row (either
+    // because the caller opted out of SWR or the row expired beyond the
+    // grace window) — in that case we forward `If-None-Match` /
+    // `If-Modified-Since` so a 304 lets us extend the freshness on the
+    // existing row instead of re-extracting.
     let cond = match &stale {
         Some(p) => ConditionalGet {
             if_none_match: p.etag.clone(),
@@ -222,20 +253,30 @@ where
             {
                 Ok(f) => f,
                 Err(e) => {
-                    // Network failure with a stale entry available → return stale and
-                    // queue a revalidate task (defense-in-depth; with SWR this only
-                    // fires on `force_refresh = true`, since the no-force_refresh path
-                    // returned stale eagerly above).
+                    // Network failure with a stale entry available. Serve the
+                    // stale row only if it's still within the SWR grace
+                    // window — beyond that we'd rather propagate the error
+                    // than misrepresent very old content as a successful
+                    // fetch. Caller can retry with `--force-refresh` or wait
+                    // for the upstream to recover.
                     if let Some(s) = stale {
+                        let within_window = s
+                            .expires_at
+                            .is_some_and(|exp| now.saturating_sub(exp) <= swr_window_secs);
+                        if within_window {
+                            tracing::warn!(target: "rover::fetcher::cached",
+                                error = %e, url = url.as_str(), "fetch failed; serving stale within SWR window");
+                            let task_id = insert_revalidate_task(db, url, &s).await;
+                            return Ok(CachedFetch {
+                                page: s,
+                                cache_status: CacheStatus::Stale {
+                                    revalidation_task_id: task_id,
+                                },
+                            });
+                        }
                         tracing::warn!(target: "rover::fetcher::cached",
-                            error = %e, url = url.as_str(), "fetch failed; serving stale");
-                        let task_id = insert_revalidate_task(db, url, &s).await;
-                        return Ok(CachedFetch {
-                            page: s,
-                            cache_status: CacheStatus::Stale {
-                                revalidation_task_id: task_id,
-                            },
-                        });
+                            error = %e, url = url.as_str(),
+                            "fetch failed; stale entry is beyond SWR window — propagating error rather than serving very old content");
                     }
                     return Err(e);
                 }
@@ -550,6 +591,7 @@ mod tests {
             default_ttl: Duration::from_secs(3600),
             min_ttl: Duration::from_secs(60),
             max_ttl: Duration::from_secs(86400),
+            stale_while_revalidate_window: Duration::from_secs(300),
             override_no_store: false,
             override_no_store_domains: vec![],
             store_raw_html: false,
@@ -580,6 +622,7 @@ mod tests {
                 #[cfg(feature = "headless")]
                 headless: None,
                 headless_mode: HeadlessMode::Off,
+                synchronous_revalidation: false,
             },
             |_, _| {
                 panic!("extract_fn must not be called on cache hit");
@@ -589,5 +632,282 @@ mod tests {
         .unwrap();
         assert_eq!(result.cache_status, CacheStatus::Hit);
         assert_eq!(result.page.title.as_deref(), Some("cached"));
+    }
+
+    // The remaining tests in this module exercise the three new corners of
+    // the SWR / synchronous-revalidation decision matrix introduced
+    // alongside the `stale_while_revalidate_window` config:
+    //
+    //   - expired within window, sync flag off  → SWR (return stale, queue task)
+    //   - expired beyond window, sync flag off  → fall through to sync fetch
+    //   - expired within window, sync flag on   → fall through to sync fetch
+    //
+    // The "cache hit" arm is covered by `cache_hit_within_ttl` above. The
+    // "force_refresh" arm is exercised by tests/fetcher_full_loop.rs and
+    // tests/fetcher_retry.rs and is unchanged by this branch.
+
+    #[cfg(any(test, feature = "test-loopback"))]
+    async fn build_swr_test_fixture(
+        swr_window: std::time::Duration,
+    ) -> (
+        crate::storage::Db,
+        Url,
+        crate::config::CacheConfig,
+        crate::config::RateLimitConfig,
+        crate::config::RobotsConfig,
+        crate::fetcher::concurrency::Pacer,
+        reqwest::Client,
+        tempfile::TempDir,
+    ) {
+        use crate::config::{RateLimitConfig, RobotsConfig};
+        use crate::fetcher::concurrency::Pacer;
+        use crate::storage::Db;
+        use std::time::Duration;
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path().join("rover.db")).await.unwrap();
+        let cache_cfg = CacheConfig {
+            default_ttl: Duration::from_secs(3600),
+            min_ttl: Duration::from_secs(0),
+            max_ttl: Duration::from_secs(86400),
+            stale_while_revalidate_window: swr_window,
+            override_no_store: false,
+            override_no_store_domains: vec![],
+            store_raw_html: false,
+        };
+        let rate_cfg = RateLimitConfig::default();
+        let robots_cfg = RobotsConfig {
+            respect: false,
+            ..RobotsConfig::default()
+        };
+        let pacer = Pacer::new(&rate_cfg);
+        let client = crate::fetcher::client::build_http_client("test/0.1", Duration::from_secs(5));
+        // Concrete URL is supplied by callers (each wiremock server has a
+        // different port).
+        let url = Url::parse("https://placeholder.invalid/").unwrap();
+        (tmp, db, url, cache_cfg, rate_cfg, robots_cfg, pacer, client).into_unzipped()
+    }
+
+    // Helper trait — tuple-swap to escape the borrow checker on the temp dir
+    // (the tempdir handle must outlive the Db).
+    #[cfg(any(test, feature = "test-loopback"))]
+    trait IntoUnzipped {
+        type Output;
+        fn into_unzipped(self) -> Self::Output;
+    }
+    #[cfg(any(test, feature = "test-loopback"))]
+    impl IntoUnzipped
+        for (
+            tempfile::TempDir,
+            crate::storage::Db,
+            Url,
+            crate::config::CacheConfig,
+            crate::config::RateLimitConfig,
+            crate::config::RobotsConfig,
+            crate::fetcher::concurrency::Pacer,
+            reqwest::Client,
+        )
+    {
+        type Output = (
+            crate::storage::Db,
+            Url,
+            crate::config::CacheConfig,
+            crate::config::RateLimitConfig,
+            crate::config::RobotsConfig,
+            crate::fetcher::concurrency::Pacer,
+            reqwest::Client,
+            tempfile::TempDir,
+        );
+        fn into_unzipped(self) -> Self::Output {
+            (
+                self.1, self.2, self.3, self.4, self.5, self.6, self.7, self.0,
+            )
+        }
+    }
+
+    #[cfg(any(test, feature = "test-loopback"))]
+    async fn insert_expired_page(
+        db: &crate::storage::Db,
+        url: &Url,
+        now: i64,
+        expired_secs_ago: i64,
+    ) {
+        let page = Page {
+            url_hash: url_hash(url.as_str()),
+            url: url.to_string(),
+            canonical_url: url.to_string(),
+            title: Some("old".into()),
+            fetched_at: now - expired_secs_ago - 60,
+            expires_at: Some(now - expired_secs_ago),
+            etag: None,
+            last_modified: None,
+            content_hash: "old-hash".into(),
+            extracted_md: "# old".into(),
+            metadata_json: None,
+            raw_html: None,
+        };
+        pages::upsert(db, page).await.unwrap();
+    }
+
+    fn fetch_opts_with_sync(sync: bool) -> FetchOptions {
+        FetchOptions {
+            force_refresh: false,
+            ssrf_level: SsrfLevel::Loopback,
+            ssrf_project_root: None,
+            har_recorder: None,
+            ignore_robots: false,
+            user_agent: "test/0.1".into(),
+            #[cfg(feature = "headless")]
+            headless: None,
+            headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: sync,
+        }
+    }
+
+    #[cfg(any(test, feature = "test-loopback"))]
+    #[tokio::test]
+    async fn expired_within_window_serves_stale_swr() {
+        use std::time::Duration;
+        let (db, _placeholder, cache_cfg, rate_cfg, robots_cfg, pacer, client, _tmp) =
+            build_swr_test_fixture(Duration::from_secs(300)).await;
+        let url = Url::parse("https://example.com/within-window").unwrap();
+        let now = Timestamp::now().as_second();
+        insert_expired_page(&db, &url, now, 10).await; // expired 10s ago, window 300s
+
+        let result = fetch_with_cache(
+            &db,
+            &client,
+            &pacer,
+            &rate_cfg,
+            &robots_cfg,
+            &url,
+            &cache_cfg,
+            fetch_opts_with_sync(false),
+            |_, _| panic!("extract_fn must not be called on SWR stale-serve"),
+        )
+        .await
+        .expect("SWR path must succeed");
+        let task_id = match &result.cache_status {
+            CacheStatus::Stale {
+                revalidation_task_id,
+            } => revalidation_task_id
+                .as_ref()
+                .expect("SWR path must enqueue a revalidate task"),
+            other => panic!("expected CacheStatus::Stale, got {other:?}"),
+        };
+        // Confirm the task row actually landed in storage.
+        let row = crate::storage::tasks::get(&db, task_id)
+            .await
+            .unwrap()
+            .expect("revalidate task row present after SWR fast-path");
+        assert_eq!(row.kind, crate::storage::tasks::TaskKind::Revalidate);
+    }
+
+    #[cfg(any(test, feature = "test-loopback"))]
+    #[tokio::test]
+    async fn expired_beyond_window_falls_through_to_sync_fetch() {
+        use std::time::Duration;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("<html><body>fresh content here</body></html>")
+                    .insert_header("content-type", "text/html; charset=utf-8")
+                    .insert_header("cache-control", "max-age=60"),
+            )
+            .mount(&server)
+            .await;
+
+        let (db, _placeholder, cache_cfg, rate_cfg, robots_cfg, pacer, client, _tmp) =
+            build_swr_test_fixture(Duration::from_secs(300)).await;
+        let url = Url::parse(&format!("{}/x", server.uri())).unwrap();
+        let now = Timestamp::now().as_second();
+        insert_expired_page(&db, &url, now, 3600).await; // expired 1h ago, window 5min
+
+        let result = fetch_with_cache(
+            &db,
+            &client,
+            &pacer,
+            &rate_cfg,
+            &robots_cfg,
+            &url,
+            &cache_cfg,
+            fetch_opts_with_sync(false), // caller did NOT request sync — grace window forces it
+            |_body, _base| {
+                Ok(ExtractResult {
+                    title: Some("fresh".into()),
+                    body_md: "fresh".into(),
+                    content_hash: "fresh-hash".into(),
+                    metadata: crate::extractor::metadata::ExtractedMetadata::default(),
+                })
+            },
+        )
+        .await
+        .expect("beyond-window expired entry must trigger a sync fetch");
+        assert_eq!(result.cache_status, CacheStatus::Miss);
+        // Row should now carry the new content_hash and a fresh fetched_at.
+        let row = pages::get_by_url(&db, url.as_str())
+            .await
+            .unwrap()
+            .expect("row present");
+        assert_eq!(row.content_hash, "fresh-hash");
+        assert!(row.fetched_at >= now);
+        // Wiremock saw exactly one request (no double-fetch).
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+    }
+
+    #[cfg(any(test, feature = "test-loopback"))]
+    #[tokio::test]
+    async fn synchronous_revalidation_bypasses_swr_within_window() {
+        use std::time::Duration;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("<html><body>fresh</body></html>")
+                    .insert_header("content-type", "text/html; charset=utf-8")
+                    .insert_header("cache-control", "max-age=60"),
+            )
+            .mount(&server)
+            .await;
+
+        let (db, _placeholder, cache_cfg, rate_cfg, robots_cfg, pacer, client, _tmp) =
+            build_swr_test_fixture(Duration::from_secs(300)).await;
+        let url = Url::parse(&format!("{}/y", server.uri())).unwrap();
+        let now = Timestamp::now().as_second();
+        insert_expired_page(&db, &url, now, 10).await; // within window…
+
+        let result = fetch_with_cache(
+            &db,
+            &client,
+            &pacer,
+            &rate_cfg,
+            &robots_cfg,
+            &url,
+            &cache_cfg,
+            fetch_opts_with_sync(true), // …but caller (e.g. CLI) opted out of SWR
+            |_body, _base| {
+                Ok(ExtractResult {
+                    title: Some("fresh".into()),
+                    body_md: "fresh".into(),
+                    content_hash: "fresh-hash".into(),
+                    metadata: crate::extractor::metadata::ExtractedMetadata::default(),
+                })
+            },
+        )
+        .await
+        .expect("synchronous opt-out must trigger a sync fetch");
+        assert_eq!(result.cache_status, CacheStatus::Miss);
+        let row = pages::get_by_url(&db, url.as_str())
+            .await
+            .unwrap()
+            .expect("row present");
+        assert!(row.fetched_at >= now);
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 }

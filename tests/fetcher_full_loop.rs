@@ -73,6 +73,7 @@ async fn extraction_failure_routes_to_extract_variant() {
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         |body, base| {
             let extracted = rover::extractor::pipeline::extract(body, Some(base))

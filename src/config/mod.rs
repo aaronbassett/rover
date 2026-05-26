@@ -167,6 +167,15 @@ pub struct CacheConfig {
     #[serde(default = "default_cache_max_ttl", with = "humantime_serde")]
     pub max_ttl: Duration,
 
+    /// Stale-while-revalidate grace window. When a cache entry expired no
+    /// more than this long ago, `fetch_with_cache` may serve the stale row
+    /// and queue a background `revalidate` task. Beyond this window the
+    /// row is treated as a cache miss and re-fetched synchronously, so
+    /// callers never receive arbitrarily old content from the cache.
+    /// Default: 5 minutes.
+    #[serde(default = "default_cache_swr_window", with = "humantime_serde")]
+    pub stale_while_revalidate_window: Duration,
+
     #[serde(default)]
     pub override_no_store: bool,
 
@@ -185,6 +194,7 @@ impl Default for CacheConfig {
             default_ttl: default_cache_default_ttl(),
             min_ttl: default_cache_min_ttl(),
             max_ttl: default_cache_max_ttl(),
+            stale_while_revalidate_window: default_cache_swr_window(),
             override_no_store: false,
             override_no_store_domains: vec![],
             store_raw_html: false,
@@ -202,6 +212,10 @@ fn default_cache_min_ttl() -> Duration {
 
 fn default_cache_max_ttl() -> Duration {
     Duration::from_secs(7 * 86400)
+}
+
+fn default_cache_swr_window() -> Duration {
+    Duration::from_secs(5 * 60)
 }
 
 /// Tokenizer configuration. The `default` family is used for token counting

@@ -70,6 +70,7 @@ async fn stale_path_inserts_revalidate_task() {
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         |_b, _u| panic!("extract_fn should not run on stale-served path"),
     )

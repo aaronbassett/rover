@@ -148,6 +148,12 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
             #[cfg(feature = "headless")]
             headless: headless.clone(),
             headless_mode,
+            // The one-shot CLI has no background scheduler to process a
+            // queued `revalidate` task — so on an expired entry we must
+            // refresh inline. Otherwise the row would stay at its old
+            // `fetched_at` indefinitely (the task we enqueued would
+            // outlive the process).
+            synchronous_revalidation: true,
         },
         |body, base| {
             let extracted =

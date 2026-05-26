@@ -133,6 +133,7 @@ impl RoverHandler {
                 #[cfg(feature = "headless")]
                 headless: None,
                 headless_mode: crate::fetcher::HeadlessMode::Off,
+                synchronous_revalidation: false,
             },
             |body, base| {
                 let extracted =

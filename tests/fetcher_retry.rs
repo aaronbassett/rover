@@ -72,6 +72,7 @@ fn opts() -> FetchOptions {
         #[cfg(feature = "headless")]
         headless: None,
         headless_mode: HeadlessMode::Off,
+        synchronous_revalidation: false,
     }
 }
 
