@@ -169,7 +169,13 @@ fn classify_non_2xx(page: FetchedPage) -> Class {
 fn classify_err(e: FetcherError) -> Class {
     match &e {
         FetcherError::Http(re) => {
-            if re.is_timeout() || re.is_connect() {
+            // SSRF policy blocking a dial-time address resolution surfaces as
+            // a `reqwest::Error` (typically `is_connect() == true`) with a
+            // `DialBlocked` somewhere in the source chain. Treat as Fatal so
+            // we don't burn retries on a destination we will never reach.
+            if crate::fetcher::dns::dial_blocked_cause(re).is_some() {
+                Class::Fatal(e)
+            } else if re.is_timeout() || re.is_connect() {
                 Class::Backoff(e)
             } else {
                 Class::Fatal(e)

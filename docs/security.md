@@ -30,11 +30,17 @@ The SSRF policy is governed by `[ssrf] level`. Every outbound URL is checked twi
 
 If *any* address in the resolution set fails the policy, the entire request is rejected with a typed `SsrfError::Address`. Code: `ssrf_denied`.
 
-## DNS rebinding (v2 limitation)
+## DNS rebinding
 
-Per design supplement §2.4: Rover resolves a hostname, validates the resulting addresses against the active SSRF policy, then performs the actual HTTPS connection via the system resolver. **A TOCTOU window exists between validation and the connection.** A malicious authoritative DNS server that returns different addresses on subsequent queries (low TTL, then a private/loopback answer) could route a "safe" hostname's later requests to an unsafe IP.
+Rover validates DNS resolution twice per request. A cheap pre-flight in `fetcher::fetch` rejects obviously-bad addresses before TLS is set up. The dial-time enforcement that actually closes the TOCTOU window lives in `fetcher::dns::SsrfValidatingResolver` — a custom [`reqwest::dns::Resolve`] installed on every `reqwest::Client` Rover builds. The active `SsrfLevel` is carried into the resolver via a `tokio::task_local!` (`SSRF_LEVEL`) populated by the fetch entry point, so the same policy is re-applied to:
 
-**Mitigation in v2:** pin the resolution through `reqwest::ClientBuilder::resolve` so the validated addresses are the addresses dialled. Until then, deploy Rover behind a trusted recursive resolver in adversarial environments, or operate at the most restrictive `level` your workflow allows.
+- the initial connection,
+- every redirect hop reqwest follows internally,
+- any new connection reqwest opens after the pre-flight has already returned.
+
+A malicious authoritative DNS server that returns a public address to the pre-flight and a private/loopback address to the dial-time resolver is rejected with a `DialBlocked` error (wrapping the same `SsrfError::Address` variant) before any bytes leave the host. The retry classifier promotes `DialBlocked` to a fatal failure so retries do not burn against a forbidden destination.
+
+**Limitation:** the image-fetch helpers in `extractor::images` (`download_image_bytes`, `partial_fetch_dimensions`, `fetch_content_length`, `download_one`) do not currently set an `SSRF_LEVEL` scope on their `reqwest::Client` calls. Image URLs are not validated against the SSRF policy today; this matches pre-existing behaviour and is tracked for a follow-up.
 
 ## `file://` symlink handling
 

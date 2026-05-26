@@ -5,9 +5,12 @@
 //!   no broadcast, no unspecified)
 //! - `http://` or `https://` schemes only
 //!
-//! Per design supplement §2.4, DNS-rebinding-resistant fetching is deferred
-//! to v2: we validate the addresses returned from initial resolution but do
-//! not pin them through the connection.
+//! Validation happens twice per request: this module's `validate_addresses`
+//! runs as a pre-flight check on the initial DNS resolution, and
+//! [`crate::fetcher::dns::SsrfValidatingResolver`] re-applies the same
+//! policy at dial time (carrying the level via the `SSRF_LEVEL` task-local).
+//! The dial-time enforcement closes the rebinding TOCTOU window for both
+//! the initial connection and any redirect targets.
 
 use std::net::IpAddr;
 use thiserror::Error;
