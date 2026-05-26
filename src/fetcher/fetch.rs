@@ -9,6 +9,7 @@ use super::{
     FetcherError,
     canonical::extract_canonical_url,
     charset::{Detected, decode_to_utf8},
+    dns::SSRF_LEVEL,
     ssrf::{self, SsrfLevel},
 };
 
@@ -108,8 +109,11 @@ pub async fn fetch_url_conditional(
         .ok_or(FetcherError::Ssrf(ssrf::SsrfError::NoHost))?;
     let port = url.port_or_known_default().unwrap_or(0);
 
-    // Resolve and validate. Note: this is best-effort — see design §2.4 about
-    // the deferred TOCTOU/DNS-rebinding hardening.
+    // Pre-flight resolve+validate. Cheap rejection of obviously-bad addresses
+    // before we set up TLS. The dial-time enforcement below (via the
+    // task-local `SSRF_LEVEL` consumed by `dns::SsrfValidatingResolver`)
+    // is what actually closes the DNS-rebinding TOCTOU window, including for
+    // hosts reached via redirects.
     let addrs = resolve_host(host, port).await?;
     ssrf::validate_addresses(&addrs, level)?;
 
@@ -126,7 +130,12 @@ pub async fn fetch_url_conditional(
         req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm);
         request_headers_pairs.push(("if-modified-since".into(), lm.clone()));
     }
-    let response = req.send().await?;
+    // Carry the SSRF level into the resolver so every dial (initial + each
+    // redirect hop) is re-validated against the policy. Without this, a
+    // malicious authoritative DNS server could return a benign address to
+    // our pre-flight `resolve_host` and a private/loopback address to
+    // reqwest's internal dial-time resolver.
+    let response = SSRF_LEVEL.scope(level, req.send()).await?;
     let status = response.status().as_u16();
     let final_url = Url::parse(response.url().as_str())?;
 

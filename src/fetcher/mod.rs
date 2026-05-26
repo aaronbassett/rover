@@ -5,6 +5,7 @@ pub mod cached;
 pub mod canonical;
 pub mod charset;
 pub mod client;
+pub mod dns;
 pub mod fetch;
 pub mod har;
 #[cfg(feature = "headless")]

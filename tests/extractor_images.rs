@@ -32,6 +32,11 @@ async fn download_writes_to_disk_and_rewrites_markdown() {
     let paths = OutputPaths::resolve(None).unwrap();
 
     let md = format!("![pixel]({}/pixel.png)", server.uri());
+    // Rover's ring-rustls switch (commit a262972) means a freshly-built
+    // `reqwest::Client::new()` panics with "No provider set" unless the
+    // ring provider has been installed for the process. The helper is a
+    // `OnceLock`-guarded idempotent install.
+    rover::fetcher::client::install_ring_provider();
     let client = reqwest::Client::new();
     let filters = ImageCaptionFilters::default();
     let r = images::apply(

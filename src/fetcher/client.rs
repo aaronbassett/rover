@@ -4,6 +4,8 @@ use reqwest::redirect::Policy;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use crate::fetcher::dns::shared_resolver;
+
 /// Install the ring-backed rustls crypto provider exactly once per process.
 ///
 /// Must be called before any `reqwest::Client` (or other rustls consumer) is
@@ -24,12 +26,19 @@ pub fn install_ring_provider() {
 /// Build a `reqwest::Client` configured for Rover's fetch defaults.
 ///
 /// Per PRD §5.2: max 10 redirects.
+///
+/// Installs a custom DNS resolver ([`crate::fetcher::dns::SsrfValidatingResolver`])
+/// that re-runs the SSRF address policy at dial time, closing the
+/// resolve-then-dial TOCTOU window. Callers that should be policed must
+/// wrap their `send().await` in
+/// [`crate::fetcher::dns::SSRF_LEVEL`]`.scope(level, ...)`.
 pub fn build_http_client(user_agent: &str, timeout: Duration) -> reqwest::Client {
     install_ring_provider();
     reqwest::Client::builder()
         .user_agent(user_agent)
         .timeout(timeout)
         .redirect(Policy::limited(10))
+        .dns_resolver(shared_resolver())
         .build()
         .expect("reqwest::Client::builder() should not fail with these defaults")
 }
