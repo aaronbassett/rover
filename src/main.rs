@@ -4,8 +4,24 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
+/// ASCII banner shown above the auto-generated help on `rover --help` and
+/// `rover help`. Subcommand `--help` pages are intentionally banner-free so
+/// the user isn't re-greeted every time they look up flags.
+const HELP_BANNER: &str = r#"
+             .--~~,__       ____
+:-....,-------`~~'._.'     / __ \____ _   _____  _____
+ `-,,,  ,_      ;'~U'     / /_/ / __ \ | / / _ \/ ___/
+  _,-' ,'`-__; '--.      / _, _/ /_/ / |/ /  __/ /
+ (_/'~~      ''''(;     /_/ |_|\____/|___/\___/_/
+"#;
+
 #[derive(Debug, Parser)]
-#[command(name = "rover", version, about = "Web fetch & prep for LLM agents")]
+#[command(
+    name = "rover",
+    version,
+    about = "Web fetch & prep for LLM agents",
+    before_help = HELP_BANNER,
+)]
 struct Cli {
     /// Path to a TOML config file. If absent, defaults are used.
     #[arg(long, global = true)]
