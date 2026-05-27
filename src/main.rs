@@ -222,8 +222,20 @@ async fn build_summarizer_service(
 
 fn main() -> ExitCode {
     rover::fetcher::client::install_ring_provider();
-    rover::telemetry::init("info,rover=debug");
     let cli = Cli::parse();
+
+    // Per-subcommand log defaults. `rover mcp` is a long-running server
+    // where observability is the point, so it keeps a chatty default. The
+    // one-shot CLI subcommands write to a user's terminal next to their
+    // actual output, so they default to `warn` — quiet on success but
+    // real diagnostics (stale serves, HAR flush failures, etc.) still
+    // surface. `RUST_LOG` overrides either default.
+    let default_filter = match &cli.command {
+        Command::Mcp(_) => "info,rover=debug",
+        _ => "warn",
+    };
+    rover::telemetry::init(default_filter);
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
