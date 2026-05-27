@@ -45,14 +45,61 @@ jobs:
       - name: cargo clippy --all-targets --features test-loopback -- -D warnings
         run: cargo clippy --all-targets --features test-loopback -- -D warnings
 
-      # Blocking PR validation runs lib unit tests only (the inline
-      # `#[cfg(test)] mod tests` blocks under `src/`). The integration
-      # suite under `tests/*.rs` lives in the nightly `smoketest.yml`
-      # workflow — it spawns wiremock servers, subprocess-tests CLI
-      # binaries, and sleeps for HAR flush intervals, so we keep it off
-      # the merge path.
       - name: cargo test --lib --features test-loopback
         run: cargo test --lib --features test-loopback
+
+      # Fast subset of the integration suite. Curated by exclusion:
+      # anything that spawns a subprocess (CLI smoke tests via
+      # `assert_cmd`), sleeps on a real timer (HAR flush waits,
+      # cooperative-cancellation timing, server lifecycle), or starts
+      # `rover mcp` end-to-end stays in the nightly `smoketest.yml`.
+      # Wiremock-only tests are included — they run in-process and are
+      # fast. The set covers SSRF policy + dial-time enforcement, the
+      # fetcher end-to-end loop, robots / rate-limit / retry classifier,
+      # the MCP tool surface (excluding the lifecycle tests), the
+      # extractor pipeline, summarizer backends, and cache + revalidate
+      # plumbing. Keep the list explicit (vs. e.g. globbing on test
+      # filename) so every addition is a deliberate review-the-runtime
+      # decision.
+      - name: cargo test (fast integration subset)
+        run: |
+          cargo test --features test-loopback \
+            --test cli_batch_snapshot \
+            --test cross_process_notify \
+            --test extractor_images \
+            --test extractor_links \
+            --test extractor_metadata \
+            --test extractor_tables \
+            --test fetch_max_tokens_auto_summarize \
+            --test fetch_summarize_arg \
+            --test fetcher_full_loop \
+            --test fetcher_integration \
+            --test fetcher_rate_limit \
+            --test fetcher_retry \
+            --test fetcher_robots \
+            --test fetcher_ssrf_dial_pinning \
+            --test images_caption_filters \
+            --test mcp_batch_fetch \
+            --test mcp_count_tokens_estimates \
+            --test mcp_fetch_caption_override \
+            --test mcp_get_metadata \
+            --test mcp_summarize \
+            --test redact_logs \
+            --test ssrf_project_file \
+            --test summarizer_cloud \
+            --test summarizer_extractive \
+            --test summary_cache_lifecycle \
+            --test tables_summarize_mode \
+            --test tasks_retry_deferred \
+            --test tasks_revalidate \
+            --test tokenizer_integration \
+            --test vlm_cloud_smoke
+
+      # The remaining integration files (sleep-bound or subprocess-bound
+      # cli/* tests, cache_lifecycle, har_output, mcp_smoke,
+      # servers_lifecycle, tables_summarize_parallel, tasks_cancellation,
+      # tasks_lifecycle, plus the `#[ignore]`'d feature-gated smokes)
+      # still run nightly via `smoketest.yml`.
 
       - name: cargo build --release
         run: cargo build --release
