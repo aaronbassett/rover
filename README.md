@@ -316,10 +316,10 @@ Full reference: [`docs/cli.md`](docs/cli.md).
 
 ## Security & privacy
 
-Rover defaults to **strict SSRF** (public IPs only, `http`/`https` only) and a conservative rate-limit profile. Secret-shaped values in URL query strings (`api_key`, `token`, `secret`, `password`) are redacted from the tracing layer before they hit any log destination.
+Rover defaults to **strict SSRF** (public IPs only, `http`/`https` only) and a conservative rate-limit profile. The tracing layer scrubs both URL query-string secrets (`api_key`, `token`, `secret`, `password`) and HTTP `Authorization`-style credentials (`Bearer …` / `Basic …`, plus any field literally named `authorization`) before events hit any log destination.
 
 > [!CAUTION]
-> Two known caveats worth reading before you handle adversarial upstreams or sensitive credentials: (1) the HAR recorder, when enabled via `[debug] har_path`, writes request and response bodies to disk *unredacted* — protect the file with filesystem permissions; (2) `Authorization` headers are not currently inspected by the tracing layer. Full threat model: [`docs/security.md`](docs/security.md).
+> The HAR recorder, when enabled via `[debug] har_path`, writes request and response bodies to disk *unredacted by design* — HAR is opt-in debug instrumentation for inspecting raw traffic. Protect the HAR file with filesystem permissions and treat it as sensitive material. Full threat model: [`docs/security.md`](docs/security.md).
 
 ## License
 

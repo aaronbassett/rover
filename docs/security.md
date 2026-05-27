@@ -48,11 +48,15 @@ When `[ssrf] level` is `project`, `lan`, or `none`, `file://` URLs are allowed. 
 
 ## Secret redaction
 
-Rover redacts URL query-string values whose key name contains any of the following substrings (case-insensitive): `api_key`, `token`, `secret`, `password`. Redaction runs on every field value written by the custom tracing formatter (`RedactingFormatEvent`), so any URL logged via `tracing` is filtered before it hits the console or log file.
+The custom tracing formatter (`RedactingFormatEvent`) scrubs two classes of secrets from every field value before it hits any log destination:
 
-**Not redacted:**
-- Authorization headers (`Authorization: Bearer ...`) — Rover does not currently inspect headers in the tracing layer.
-- Request and response bodies in HAR files (`[debug] har_path`) — HAR is intended for debugging private traffic; protect the file with filesystem permissions.
+1. **URL query-string values** whose key name contains any of the following substrings (case-insensitive): `api_key`, `token`, `secret`, `password`.
+2. **HTTP `Authorization`-style credentials**:
+   - A field literally named `authorization` (case-insensitive) has its **entire value** replaced with `<redacted>`.
+   - Any value that embeds a `Bearer <token>` or `Basic <token>` shape (regardless of field name — catches debug-printed `HeaderMap`s and similar) has the **credential portion** replaced with `<redacted>`.
+
+**Deliberately not redacted:**
+- Request and response bodies in HAR files (`[debug] har_path`). HAR is opt-in debug instrumentation for inspecting raw traffic; redacting the bytes the user enabled HAR to inspect would defeat the purpose. Protect the HAR file with filesystem permissions and treat it as sensitive material.
 - Environment variables. The `api_key_env` config field is a pointer; the resolved value is held in memory and never logged.
 
 ## Cache poisoning
