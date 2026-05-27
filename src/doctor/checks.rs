@@ -178,10 +178,23 @@ impl Check for ExtractiveSynthesis {
     }
     async fn run(&self, _ctx: &CheckCtx) -> CheckReport {
         use crate::summarizer::backend::{CompactMode, CompactOpts, Style, SummarizerBackend};
-        let be = crate::summarizer::extractive::ExtractiveBackend::new(
-            "doctor",
-            crate::tokenizer::Tokenizer::O200k,
-        );
+        // The extractive backend's `target_tokens` budget code uses the
+        // tokenizer for per-sentence accounting. If the tokenizer isn't
+        // loaded it falls back to a chars/4 heuristic and emits a warn —
+        // accurate defense-in-depth signalling, but confusing as a user
+        // experience ("why am I seeing a WARN above a green ✓?"). Every
+        // other caller in the codebase (cli::fetch, the mcp tools) loads
+        // the tokenizer first; the doctor check should follow the same
+        // contract so the synthesis path runs at full fidelity.
+        let family = crate::tokenizer::Tokenizer::O200k;
+        if let Err(e) = crate::tokenizer::ensure_loaded(family).await {
+            return CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("tokenizer {family:?} load failed: {e}")),
+            };
+        }
+        let be = crate::summarizer::extractive::ExtractiveBackend::new("doctor", family);
         let opts = CompactOpts {
             mode: CompactMode::Extractive,
             style: Style::Prose,

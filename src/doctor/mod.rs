@@ -134,6 +134,33 @@ mod tests {
         assert_eq!(r.status, CheckStatus::Ok, "{:?}", r.detail);
     }
 
+    /// Regression: the check used to invoke the extractive backend without
+    /// loading the tokenizer first, which made the `target_tokens` budget
+    /// code fall back to a chars/4 heuristic and emit a confusing
+    /// `tracing::warn!` immediately before printing a green ✓. Clearing
+    /// the registry pre-test then asserting it's repopulated post-test
+    /// proves the fix's `ensure_loaded` call ran.
+    ///
+    /// We hold the tokenizer test mutex across `.await` to keep parallel
+    /// tests out of the process-global registry; this is a test-only path
+    /// with no production callers, and the alternative (dropping then
+    /// re-acquiring the lock) introduces a real race.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn extractive_synthesis_loads_tokenizer() {
+        let _g = crate::tokenizer::_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::tokenizer::_clear_registry_for_tests();
+        let (ctx, _tmp) = fresh_ctx().await;
+        let r = checks::ExtractiveSynthesis.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Ok, "{:?}", r.detail);
+        assert!(
+            crate::tokenizer::count("hello", crate::tokenizer::Tokenizer::O200k).is_ok(),
+            "ExtractiveSynthesis check must leave the tokenizer registry populated",
+        );
+    }
+
     #[tokio::test]
     async fn captioners_authenticate_skips_when_no_cloud_configured() {
         let (ctx, _g) = fresh_ctx().await;
