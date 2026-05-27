@@ -70,10 +70,7 @@ pub fn sha8(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Serializes env-var-touching tests so they don't trample each other
-    /// when cargo runs tests in parallel within this module.
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use crate::extractor::OUTPUT_DIR_TEST_MUTEX as TEST_MUTEX;
 
     fn url() -> Url {
         Url::parse("https://example.com/article").unwrap()

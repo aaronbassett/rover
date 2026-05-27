@@ -455,8 +455,7 @@ fn write_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use crate::extractor::OUTPUT_DIR_TEST_MUTEX as TEST_MUTEX;
 
     fn paths() -> OutputPaths {
         let tmp = tempfile::tempdir().unwrap();
