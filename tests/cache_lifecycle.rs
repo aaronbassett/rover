@@ -153,25 +153,37 @@ async fn cache_hit_then_force_refresh_and_purge() {
 }
 
 #[tokio::test]
-async fn stale_entry_serves_immediately_under_swr() {
-    // M6 SWR semantics: an expired cache row is served immediately and the
-    // CLI does not issue a conditional GET. The (Task 11) revalidate worker
-    // will hit the network later out-of-band; the CLI path observes one HTTP
-    // request total (the initial 200 that populated the cache).
+async fn cli_revalidates_synchronously_on_expired_entry() {
+    // The one-shot CLI has no background scheduler that can process a
+    // queued `revalidate` task, so it must hit the network inline for an
+    // expired entry — otherwise the row would stay at its old fetched_at
+    // indefinitely and the user would see "the cache age never updates".
+    //
+    // Expected sequence:
+    //   1. First fetch: GET /news (no If-None-Match) → 200 + populate cache
+    //      with ETag and max-age=1.
+    //   2. Wait > 1s so the entry expires.
+    //   3. Second fetch: GET /news with If-None-Match: "abc-123" → 304
+    //      Not Modified → `pages::touch` extends the freshness in place.
+    //
+    // Total requests to the server: 2.
     let server = MockServer::start().await;
     let etag = "\"abc-123\"";
 
-    // Defensive: if anything sent a conditional GET we'd see this fire and
-    // bump the recorded-request count past 1.
+    // 304 path for conditional GETs after the initial population.
     Mock::given(method("GET"))
         .and(path("/news"))
         .and(HasHeader("if-none-match"))
-        .respond_with(ResponseTemplate::new(304))
+        .respond_with(
+            ResponseTemplate::new(304)
+                .insert_header("cache-control", "max-age=60")
+                .insert_header("etag", etag),
+        )
         .with_priority(1)
         .mount(&server)
         .await;
 
-    // First response: 200 with short max-age and an ETag.
+    // Initial 200 with a short max-age and an ETag.
     Mock::given(method("GET"))
         .and(path("/news"))
         .and(MissingHeader("if-none-match"))
@@ -189,10 +201,8 @@ async fn stale_entry_serves_immediately_under_swr() {
     let url = format!("{}/news", server.uri());
     let tmp = tempfile::tempdir().unwrap();
 
-    // The default min_ttl floor is 5 minutes, which would dominate the
-    // server's max-age=1 and prevent the entry from going stale within the
-    // test. Drop the floor (and default_ttl, which must stay >= min_ttl) so
-    // the server-supplied max-age=1 wins.
+    // Drop the cache TTL floor below the server's max-age=1 so the entry
+    // actually expires within the test.
     let cfg_path = tmp.path().join("rover.toml");
     std::fs::write(
         &cfg_path,
@@ -214,11 +224,12 @@ async fn stale_entry_serves_immediately_under_swr() {
         .success()
         .stdout(predicate::str::contains("How to do the thing"));
 
-    // Wait so the entry expires (max-age=1).
+    // Let the entry expire.
     std::thread::sleep(std::time::Duration::from_secs(2));
 
-    // Second fetch -- under SWR this returns the stale row directly and
-    // enqueues a revalidate task; no synchronous network request is made.
+    // Second fetch -- expired entry; CLI revalidates synchronously and
+    // gets a 304 (because the entry has a fresh ETag), so the row's
+    // freshness is extended in place.
     rover()
         .env("ROVER_DATA_DIR", tmp.path())
         .args([
@@ -232,19 +243,25 @@ async fn stale_entry_serves_immediately_under_swr() {
         .success()
         .stdout(predicate::str::contains("How to do the thing"));
 
-    // Verify exactly one request reached the server: the initial 200. The
-    // second CLI fetch served stale-from-cache without touching the network.
     let received = server
         .received_requests()
         .await
         .expect("request recording is enabled by default");
     assert_eq!(
         received.len(),
-        1,
-        "expected exactly 1 request (initial); SWR serves stale without network"
+        2,
+        "expected 2 requests: the initial 200 + a conditional GET on expiry",
     );
     assert!(
         received[0].headers.get("if-none-match").is_none(),
         "first request should not include If-None-Match"
+    );
+    assert_eq!(
+        received[1]
+            .headers
+            .get("if-none-match")
+            .and_then(|v| v.to_str().ok()),
+        Some(etag),
+        "second request should be conditional on the stored ETag"
     );
 }

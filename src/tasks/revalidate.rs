@@ -79,6 +79,7 @@ pub async fn run(deps: WorkerDeps, db: Db, task_id: TaskId, _cancel: Cancellatio
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: crate::fetcher::HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         |body, base| {
             let extracted =

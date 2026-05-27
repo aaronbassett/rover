@@ -98,6 +98,7 @@ async fn pacing_at_60_rpm_paces_consecutive_requests() {
                 #[cfg(feature = "headless")]
                 headless: None,
                 headless_mode: HeadlessMode::Off,
+                synchronous_revalidation: false,
             },
             extract_stub(),
         )
@@ -166,6 +167,7 @@ async fn per_host_isolation_does_not_pace_other_hosts() {
                 #[cfg(feature = "headless")]
                 headless: None,
                 headless_mode: HeadlessMode::Off,
+                synchronous_revalidation: false,
             },
             extract_stub(),
         )
@@ -194,6 +196,7 @@ async fn per_host_isolation_does_not_pace_other_hosts() {
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         extract_stub(),
     )

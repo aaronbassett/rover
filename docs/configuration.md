@@ -39,9 +39,19 @@ Unknown level strings are rejected the first time the SSRF policy is consulted (
 | `default_ttl` | duration | `"1h"` | TTL used when an upstream response has no `Cache-Control: max-age`. |
 | `min_ttl` | duration | `"5m"` | Floor for any TTL derived from an upstream header. Must be `<= default_ttl`. |
 | `max_ttl` | duration | `"7d"` | Ceiling for any TTL. Must be `>= default_ttl`. |
+| `stale_while_revalidate_window` | duration | `"5m"` | How long after `expires_at` an entry is still eligible for the stale-while-revalidate fast-path. Inside the window, `fetch` may return the stale row immediately and queue a background `revalidate` task. Beyond it, the row is treated as a cache miss and refetched synchronously, so callers never receive arbitrarily old content. |
 | `override_no_store` | bool | `false` | When `true`, cache responses even if they sent `Cache-Control: no-store`. |
 | `override_no_store_domains` | array<string> | `[]` | Per-domain allowlist for `override_no_store`. Lowercased on load. |
 | `store_raw_html` | bool | `false` | When `true`, store the zstd-compressed raw HTML alongside the extracted Markdown. Enables the `raw_html` field in `count_tokens mode=estimates`. |
+
+### Stale-while-revalidate behaviour
+
+When a cache entry's `expires_at` has passed:
+
+- **Within `stale_while_revalidate_window`:** the MCP server returns the stale row immediately and enqueues a background `revalidate` task. The agent sees `cache_status: "stale"` and a `revalidation_task_id` it can monitor.
+- **Beyond `stale_while_revalidate_window`:** the row is treated as a miss; `fetch` refetches synchronously and writes through the cache.
+
+The CLI (`rover fetch`) **always** revalidates synchronously regardless of the window — a one-shot CLI process has no in-process scheduler to drain the background task queue, so it cannot rely on SWR. Set `default_ttl` and `max_ttl` to reflect how fresh you actually need cached content; set `stale_while_revalidate_window` to bound how stale the SWR fast-path is allowed to serve.
 
 ## `[tokenizer]`
 

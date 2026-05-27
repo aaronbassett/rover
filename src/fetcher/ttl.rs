@@ -108,6 +108,7 @@ mod tests {
             default_ttl: Duration::from_secs(3600),
             min_ttl: Duration::from_secs(300),
             max_ttl: Duration::from_secs(7 * 86400),
+            stale_while_revalidate_window: Duration::from_secs(300),
             override_no_store: false,
             override_no_store_domains: vec![],
             store_raw_html: false,

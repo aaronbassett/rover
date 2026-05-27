@@ -114,6 +114,7 @@ async fn robots_disallow_admin_refuses_fetch() {
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         extract_ok(),
     )
@@ -167,6 +168,7 @@ async fn robots_allow_all_lets_fetch_proceed() {
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         extract_ok(),
     )
@@ -209,6 +211,7 @@ async fn robots_disallow_all_refuses_fetch() {
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         extract_ok(),
     )
@@ -283,6 +286,7 @@ async fn ignore_robots_flag_skips_gate() {
             #[cfg(feature = "headless")]
             headless: None,
             headless_mode: HeadlessMode::Off,
+            synchronous_revalidation: false,
         },
         extract_ok(),
     )

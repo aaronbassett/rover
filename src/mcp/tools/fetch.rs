@@ -512,6 +512,7 @@ impl RoverHandler {
                 #[cfg(feature = "headless")]
                 headless,
                 headless_mode,
+                synchronous_revalidation: false,
             },
             |body, base| {
                 let extracted =
