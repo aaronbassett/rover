@@ -67,6 +67,7 @@ jobs:
             --test cli_batch_snapshot \
             --test cross_process_notify \
             --test extractor_images \
+            --test extractor_images_ssrf \
             --test extractor_links \
             --test extractor_metadata \
             --test extractor_tables \
