@@ -4867,8 +4867,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rover"
-version = "0.1.0"
+name = "rover-mcp"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "assert_cmd",

@@ -1,11 +1,17 @@
 [package]
-name = "rover"
-version = "0.1.0"
+# `rover` is taken on crates.io by an unrelated Cosmos project, so the crate
+# is published as `rover-mcp`. The installed binary is still `rover` (see the
+# `[[bin]]` section) and the library is still imported as `rover` (`[lib]`),
+# so only the crates.io package name differs.
+name = "rover-mcp"
+version = "0.1.0-alpha.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "An MCP server for fetching and prepping web content for LLM agents."
 repository = "https://github.com/aaronbassett/rover"
 readme = "README.md"
+keywords = ["mcp", "web", "scraping", "markdown", "llm"]
+categories = ["command-line-utilities", "web-programming"]
 rust-version = "1.85"
 
 [lib]
@@ -82,6 +88,13 @@ test-loopback = []
 headless = ["dep:chromiumoxide"]
 local-vision = ["dep:mistralrs", "dep:image"]
 local-inference = ["dep:mistralrs"]
+
+[profile.release]
+# Strip symbols at link time so release artefacts (and the prebuilt release
+# tarballs) ship lean without a platform-specific `strip` step in CI — this
+# matters most for the cross-compiled aarch64-linux build where the host
+# `strip` cannot operate on the foreign ELF.
+strip = "symbols"
 
 [lints.rust]
 warnings = "deny"
