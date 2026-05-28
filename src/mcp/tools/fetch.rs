@@ -626,6 +626,7 @@ impl RoverHandler {
             captioners_opt,
             &caption_filters,
             Some(&self.db),
+            self.ssrf_level,
         )
         .await
         .map_err(McpError::Extractor)?;

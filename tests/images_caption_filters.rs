@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use rover::extractor::images::apply;
 use rover::extractor::options::{ImageCaptionFilters, ImagesMode};
 use rover::extractor::output::OutputPaths;
+use rover::fetcher::ssrf::SsrfLevel;
 use rover::vlm::{CaptionerRegistry, VlmCaptioner, VlmError};
 
 /// Build a `reqwest::Client` that the test pipeline can drive. Goes through
@@ -73,6 +74,7 @@ async fn below_min_dimensions_skipped() {
         Some(&reg),
         &filters,
         None,
+        SsrfLevel::Loopback,
     )
     .await
     .unwrap();
@@ -108,6 +110,7 @@ async fn above_max_bytes_skipped() {
         Some(&reg),
         &filters,
         None,
+        SsrfLevel::Loopback,
     )
     .await
     .unwrap();
@@ -151,6 +154,7 @@ async fn per_page_budget_respected() {
         Some(&reg),
         &filters,
         None,
+        SsrfLevel::Loopback,
     )
     .await
     .unwrap();
@@ -202,6 +206,7 @@ async fn dimension_probe_via_partial_fetch() {
         Some(&reg),
         &filters,
         None,
+        SsrfLevel::Loopback,
     )
     .await
     .unwrap();

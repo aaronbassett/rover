@@ -3,6 +3,7 @@ mod common;
 use rover::extractor::images;
 use rover::extractor::options::{ImageCaptionFilters, ImagesMode};
 use rover::extractor::output::OutputPaths;
+use rover::fetcher::ssrf::SsrfLevel;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -47,6 +48,7 @@ async fn download_writes_to_disk_and_rewrites_markdown() {
         None,
         &filters,
         None,
+        SsrfLevel::Loopback,
     )
     .await
     .unwrap();

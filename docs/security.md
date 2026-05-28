@@ -40,7 +40,7 @@ Rover validates DNS resolution twice per request. A cheap pre-flight in `fetcher
 
 A malicious authoritative DNS server that returns a public address to the pre-flight and a private/loopback address to the dial-time resolver is rejected with a `DialBlocked` error (wrapping the same `SsrfError::Address` variant) before any bytes leave the host. The retry classifier promotes `DialBlocked` to a fatal failure so retries do not burn against a forbidden destination.
 
-**Limitation:** the image-fetch helpers in `extractor::images` (`download_image_bytes`, `partial_fetch_dimensions`, `fetch_content_length`, `download_one`) do not currently set an `SSRF_LEVEL` scope on their `reqwest::Client` calls. Image URLs are not validated against the SSRF policy today; this matches pre-existing behaviour and is tracked for a follow-up.
+The image-fetch helpers in `extractor::images` (`download_image_bytes`, `partial_fetch_dimensions`, `fetch_content_length`, `download_one`) thread the active `SsrfLevel` down from `images::apply` and police every request exactly like the primary fetch path: a pre-flight `validate_url_for_level` resolves the host and checks each address before connecting (this is what rejects literal-IP targets such as the cloud-metadata `169.254.169.254`, since reqwest skips the custom resolver for literal IPs), and the send itself is wrapped in the `SSRF_LEVEL` scope so hostname targets are re-validated at dial time. So image downloads and caption-filter probes (dimension/size HEAD+range requests) are subject to the same policy as the page fetch that referenced them.
 
 ## `file://` symlink handling
 
