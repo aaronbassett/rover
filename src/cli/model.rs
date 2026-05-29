@@ -35,11 +35,18 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
 
 async fn download(repo_id: &str) -> anyhow::Result<()> {
     use anyhow::Context as _;
-    use hf_hub::api::tokio::Api;
+    use hf_hub::api::tokio::ApiBuilder;
 
     eprintln!("downloading {repo_id} from HuggingFace");
 
-    let api = Api::new().context("building hf-hub api client")?;
+    // `with_progress(true)` makes hf-hub render a per-file indicatif progress
+    // bar (bytes downloaded / total, labelled with the filename) during each
+    // `get()`. indicatif draws to stderr and degrades gracefully when stderr
+    // is not a TTY, so piped/redirected output stays clean.
+    let api = ApiBuilder::new()
+        .with_progress(true)
+        .build()
+        .context("building hf-hub api client")?;
     let repo = api.model(repo_id.to_string());
 
     // We fetch the standard ML-model file set. Order matters: cheap files
@@ -61,11 +68,8 @@ async fn download(repo_id: &str) -> anyhow::Result<()> {
     let mut downloaded = 0usize;
     for filename in manifest {
         match repo.get(filename).await {
-            Ok(path) => {
-                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                eprintln!("  {filename:<36} {} bytes", size);
-                downloaded += 1;
-            }
+            // The progress bar already reported this file; just count it.
+            Ok(_) => downloaded += 1,
             Err(_) => {
                 // Not every model has every file (e.g. vision-only models
                 // skip text-tokenizer files). Skip quietly.
@@ -89,11 +93,7 @@ async fn download(repo_id: &str) -> anyhow::Result<()> {
         }
         for shard in &shards {
             match repo.get(shard).await {
-                Ok(path) => {
-                    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    eprintln!("  {shard:<36} {} bytes", size);
-                    downloaded += 1;
-                }
+                Ok(_) => downloaded += 1,
                 Err(e) => eprintln!("  {shard:<36} FAILED: {e}"),
             }
         }

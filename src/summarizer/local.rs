@@ -101,8 +101,14 @@ impl SummarizerBackend for LocalMistralRs {
         let messages = mistralrs::TextMessages::new()
             .add_message(mistralrs::TextMessageRole::System, &parts.system)
             .add_message(mistralrs::TextMessageRole::User, &parts.user);
+        // Honour the caller's token budget: cap generation length so the model
+        // does not run on past `target_tokens`. Without this the request used
+        // the engine default and `target_tokens` was silently ignored. 4096 is
+        // a sane ceiling when the caller leaves the budget unset.
+        let max_len = opts.target_tokens.unwrap_or(4096);
+        let request = mistralrs::RequestBuilder::from(messages).set_sampler_max_len(max_len);
         let resp = model
-            .send_chat_request(messages)
+            .send_chat_request(request)
             .await
             .map_err(|e| BackendError::ModelError(format!("inference failed: {e}")))?;
         let text = resp
