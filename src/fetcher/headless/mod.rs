@@ -241,17 +241,99 @@ async fn wait_dom_content_loaded(
     Ok(())
 }
 
+/// Wait until the page reaches `domcontentloaded` and then settles to a
+/// network-quiet window: at most 2 in-flight requests continuously for at
+/// least 500 ms (Puppeteer's `networkidle2` definition). Bounded by the
+/// overall `timeout`.
+///
+/// In-flight requests are tracked by `RequestId` in a set — inserted on
+/// `Network.requestWillBeSent`, removed on `loadingFinished`/`loadingFailed`.
+/// (`responseReceived` is *not* a completion: the body is still streaming, so
+/// counting it would under-count in-flight work and return too early.)
 async fn wait_network_idle2(
     page: &chromiumoxide::Page,
     timeout: Duration,
 ) -> Result<(), HeadlessError> {
-    // v1 approximation: wait for domcontentloaded then sleep 500ms. The
-    // chromiumoxide 0.9 API does not expose a built-in `networkidle2`
-    // helper; open item §7.3 #5 tracks the proper implementation against
-    // Network domain in-flight counts.
-    wait_dom_content_loaded(page, timeout).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    Ok(())
+    use std::collections::HashSet;
+    use std::sync::Mutex as StdMutex;
+    use std::time::Instant;
+
+    use chromiumoxide::cdp::browser_protocol::network::{
+        EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
+        EventRequestWillBeSent, RequestId,
+    };
+
+    page.execute(NetworkEnableParams::default())
+        .await
+        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+
+    let inflight: Arc<StdMutex<HashSet<RequestId>>> = Arc::new(StdMutex::new(HashSet::new()));
+
+    let mut will = page
+        .event_listener::<EventRequestWillBeSent>()
+        .await
+        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+    let mut finished = page
+        .event_listener::<EventLoadingFinished>()
+        .await
+        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+    let mut failed = page
+        .event_listener::<EventLoadingFailed>()
+        .await
+        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+
+    let started = inflight.clone();
+    let t_will: JoinHandle<()> = tokio::spawn(async move {
+        while let Some(e) = will.next().await {
+            started.lock().unwrap().insert(e.request_id.clone());
+        }
+    });
+    let done = inflight.clone();
+    let t_finished: JoinHandle<()> = tokio::spawn(async move {
+        while let Some(e) = finished.next().await {
+            done.lock().unwrap().remove(&e.request_id);
+        }
+    });
+    let errored = inflight.clone();
+    let t_failed: JoinHandle<()> = tokio::spawn(async move {
+        while let Some(e) = failed.next().await {
+            errored.lock().unwrap().remove(&e.request_id);
+        }
+    });
+
+    let poll = inflight.clone();
+    let waited = tokio::time::timeout(timeout, async {
+        // Reach domcontentloaded first so the initial document's subresource
+        // requests have a chance to start before we judge the page "quiet".
+        page.wait_for_navigation()
+            .await
+            .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+        let mut quiet_since: Option<Instant> = None;
+        loop {
+            let n = poll.lock().unwrap().len();
+            if n <= 2 {
+                let since = *quiet_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_millis(500) {
+                    return Ok::<(), HeadlessError>(());
+                }
+            } else {
+                quiet_since = None;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await;
+
+    t_will.abort();
+    t_finished.abort();
+    t_failed.abort();
+
+    match waited {
+        Ok(inner) => inner,
+        // The caller maps any Err here into HeadlessError::Timeout with the
+        // url + configured timeout_secs.
+        Err(_elapsed) => Err(HeadlessError::Cdp("network idle2 wait timed out".into())),
+    }
 }
 
 #[cfg(test)]
