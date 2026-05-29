@@ -38,16 +38,42 @@ Rover fixes all three. The extraction layer is the battle-tested [`readabilityrs
 
 ## Install
 
-> [!IMPORTANT]
-> The `rover` name on crates.io is held by an unrelated project. Install from this repository directly.
+Pick whichever channel fits. All of them install a binary named `rover`.
+
+**Homebrew (macOS):**
 
 ```sh
-cargo install --git https://github.com/aaronbassett/rover
+brew install aaronbassett/tap/rover
 ```
 
-This builds the default-features binary (~28 MiB) under `~/.cargo/bin/rover`. No model downloads, no Chrome required, no extra runtime dependencies.
+The `rover` formula is the lean `basic` build. Variants with optional features
+are separate formulas — `rover-complete` (everything), `rover-headless`,
+`rover-local-inference`, `rover-local-vision`. Homebrew only lets one be
+installed at a time (they all provide `rover`).
 
-Need a build from source for hacking?
+**Prebuilt binary (Linux & macOS):**
+
+Download the tarball for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify it against `SHA256SUMS`, and drop `rover` on your `PATH`:
+
+```sh
+tar xzf rover-<version>-<target>-basic.tar.gz
+install rover-*/rover ~/.local/bin/rover
+```
+
+Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. Each
+target ships in five feature variants (`basic`, `local-inference`,
+`local-vision`, `headless`, `complete`).
+
+**crates.io:**
+
+```sh
+cargo install rover-mcp          # crate is rover-mcp; binary is rover
+```
+
+> [!NOTE]
+> The crate is published as `rover-mcp` because the `rover` name on crates.io is held by an unrelated project. The installed binary is still `rover`.
+
+**From source (for hacking):**
 
 ```sh
 git clone https://github.com/aaronbassett/rover
@@ -56,7 +82,10 @@ cargo build --release
 # binary lands at target/release/rover
 ```
 
-**Requirements:** Rust 1.85+ (edition 2024).
+The default build (~28 MiB) needs no model downloads, no Chrome, and no extra
+runtime dependencies.
+
+**Requirements:** Rust 1.85+ (edition 2024). See [`docs/versioning.md`](docs/versioning.md) for the stability and MSRV policy.
 
 ## Quick start
 
@@ -217,13 +246,13 @@ Three independent features for users who want more than the default:
 | `local-vision` | Local image captioning via SmolVLM (shares `mistral.rs` with `local-inference`) | ~5 MB additional |
 | `headless` | JavaScript-rendered SPA support via [`chromiumoxide`](https://github.com/mattsse/chromiumoxide) (uses system Chrome) | ~32 MB |
 
-Install with any combination:
+Install with any combination via crates.io (or use the matching Homebrew
+formula / prebuilt variant tarball):
 
 ```sh
-cargo install --git https://github.com/aaronbassett/rover --features local-inference
-cargo install --git https://github.com/aaronbassett/rover --features headless
-cargo install --git https://github.com/aaronbassett/rover \
-  --features local-inference,local-vision,headless
+cargo install rover-mcp --features local-inference
+cargo install rover-mcp --features headless
+cargo install rover-mcp --features local-inference,local-vision,headless
 ```
 
 Local models are downloaded on first use (or ahead of time with `rover model download <repo_id>`) and live under `$HF_HOME/hub`. Manage the cache with `rover model {list,download,remove}`.

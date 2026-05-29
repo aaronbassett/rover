@@ -1,0 +1,244 @@
+name: Release
+
+# Builds the 4 targets × 5 feature variants (20 tarballs), publishes a GitHub
+# Release with SHA256SUMS, publishes the crate to crates.io, and bumps the
+# Homebrew tap formulas.
+#
+# Triggered by a `v*` tag push (e.g. `v0.1.0`, `v0.1.0-alpha.1`). The
+# `workflow_dispatch` entry point builds and uploads the artefacts but skips
+# every publishing job — use it to validate the build matrix end-to-end before
+# cutting a real release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build artefacts only; skip GitHub Release, crates.io, and Homebrew."
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }} / ${{ matrix.variant }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+        variant: [basic, local-inference, local-vision, headless, complete]
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cross: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ matrix.variant }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
+
+      - name: Resolve version and feature flags
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dryrun.${{ github.run_number }}"
+          fi
+          case "${{ matrix.variant }}" in
+            basic)           features="--no-default-features" ;;
+            local-inference) features="--no-default-features --features local-inference" ;;
+            local-vision)    features="--no-default-features --features local-vision" ;;
+            headless)        features="--no-default-features --features headless" ;;
+            complete)        features="--no-default-features --features local-inference,local-vision,headless" ;;
+            *) echo "::error::unknown variant ${{ matrix.variant }}"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "features=$features" >> "$GITHUB_OUTPUT"
+          echo "dist=rover-$version-${{ matrix.target }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags="${{ steps.vars.outputs.features }}"
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --locked --target ${{ matrix.target }} $flags
+          else
+            cargo build --release --locked --target ${{ matrix.target }} $flags
+          fi
+
+      - name: Assemble tarball
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist="${{ steps.vars.outputs.dist }}"
+          stage="staging/$dist"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.target }}/release/rover" "$stage/"
+          cp LICENSE-MIT LICENSE-APACHE "$stage/"
+          cat > "$stage/README.md" <<EOF
+          # rover ${{ steps.vars.outputs.version }} (${{ matrix.variant }})
+
+          MCP server and CLI for fetching and prepping web content for LLM agents.
+          Built for ${{ matrix.target }} with the \`${{ matrix.variant }}\` feature set.
+
+          Full documentation: https://github.com/aaronbassett/rover
+          Run \`rover --help\` to get started.
+          EOF
+          mkdir -p artifacts
+          tar -C staging -czf "artifacts/$dist.tar.gz" "$dist"
+          echo "tarball=artifacts/$dist.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.vars.outputs.dist }}
+          path: ${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: rover-*
+          merge-multiple: true
+
+      - name: Compute SHA256SUMS
+        working-directory: artifacts
+        run: |
+          set -euo pipefail
+          sha256sum *.tar.gz | tee SHA256SUMS
+
+      - name: Sign SHA256SUMS (optional)
+        id: sign
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "no GPG_PRIVATE_KEY secret; skipping signature (documented v2 follow-up)"
+            exit 0
+          fi
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --batch --yes --detach-sign --armor -o artifacts/SHA256SUMS.asc artifacts/SHA256SUMS
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          # A pre-release tag carries a hyphen (e.g. v0.1.0-alpha.1); a final
+          # release does not (e.g. v0.1.0).
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/SHA256SUMS
+            artifacts/SHA256SUMS.asc
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish
+        run: cargo publish -p rover-mcp --locked --token "${{ secrets.CRATES_IO_TOKEN }}"
+
+  bump-homebrew:
+    name: Bump Homebrew tap
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rover (for the generator script)
+        uses: actions/checkout@v4
+
+      - name: Download SHA256SUMS from the release
+        run: |
+          set -euo pipefail
+          gh release download "${GITHUB_REF_NAME}" \
+            --repo "${{ github.repository }}" \
+            --pattern SHA256SUMS \
+            --dir .
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Checkout the Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: aaronbassett/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: tap
+
+      - name: Render formulas
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          ./scripts/render-homebrew-formulas.sh "$version" SHA256SUMS tap/Formula
+
+      - name: Commit and push tap update
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula
+          if git diff --cached --quiet; then
+            echo "no formula changes"
+            exit 0
+          fi
+          git commit -m "rover ${GITHUB_REF_NAME#v}"
+          git push
