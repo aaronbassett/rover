@@ -11,6 +11,8 @@ use crate::extractor::options::ImageCaptionFilters;
 use crate::extractor::options::ImagesMode;
 use crate::extractor::output::OutputPaths;
 use crate::extractor::pipeline::ExtractorError;
+use crate::fetcher::dns::SSRF_LEVEL;
+use crate::fetcher::ssrf::{SsrfLevel, validate_url_for_level};
 use crate::storage::Db;
 use crate::vlm::{CaptionerRegistry, VlmCaptioner};
 
@@ -30,6 +32,7 @@ pub struct ImagesApplied {
     pub images_processed: Vec<ImageProcessed>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn apply(
     markdown: &str,
     mode: &ImagesMode,
@@ -38,6 +41,7 @@ pub async fn apply(
     captioners: Option<&CaptionerRegistry>,
     filters: &ImageCaptionFilters,
     db: Option<&Db>,
+    ssrf_level: SsrfLevel,
 ) -> Result<ImagesApplied, ExtractorError> {
     let mut images_seen = 0usize;
     let mut images_downloaded = 0usize;
@@ -89,22 +93,24 @@ pub async fn apply(
             ImagesMode::Keep => markdown[start..end].to_string(),
             ImagesMode::Drop => String::new(),
             ImagesMode::AltTextOnly => alt.clone(),
-            ImagesMode::Download => match download_one(http, &src, output_paths).await {
-                Ok(local) => {
-                    images_downloaded += 1;
-                    format!("![{alt}]({local}{rest})")
+            ImagesMode::Download => {
+                match download_one(http, &src, output_paths, ssrf_level).await {
+                    Ok(local) => {
+                        images_downloaded += 1;
+                        format!("![{alt}]({local}{rest})")
+                    }
+                    Err(e) => {
+                        images_failed += 1;
+                        tracing::warn!(
+                            target: "rover::extractor",
+                            url = %src,
+                            err = %e,
+                            "image download failed; keeping original"
+                        );
+                        markdown[start..end].to_string()
+                    }
                 }
-                Err(e) => {
-                    images_failed += 1;
-                    tracing::warn!(
-                        target: "rover::extractor",
-                        url = %src,
-                        err = %e,
-                        "image download failed; keeping original"
-                    );
-                    markdown[start..end].to_string()
-                }
-            },
+            }
             ImagesMode::Caption => match captioner.as_ref() {
                 Some(cap) => {
                     caption_one_image(
@@ -118,6 +124,7 @@ pub async fn apply(
                         &mut captioned_so_far,
                         &mut images_failed,
                         &mut images_processed,
+                        ssrf_level,
                     )
                     .await
                 }
@@ -164,8 +171,9 @@ async fn caption_one_image(
     captioned_so_far: &mut usize,
     images_failed: &mut usize,
     processed: &mut Vec<ImageProcessed>,
+    ssrf_level: SsrfLevel,
 ) -> String {
-    let decision = classify(src, rest, http, *captioned_so_far, filters).await;
+    let decision = classify(src, rest, http, *captioned_so_far, filters, ssrf_level).await;
     match decision {
         CaptionDecision::Skip {
             reason,
@@ -188,7 +196,7 @@ async fn caption_one_image(
             alt.to_string()
         }
         CaptionDecision::Caption { dims } => {
-            let bytes = match download_image_bytes(http, src).await {
+            let bytes = match download_image_bytes(http, src, ssrf_level).await {
                 Ok(b) => b,
                 Err(e) => {
                     *images_failed += 1;
@@ -291,17 +299,34 @@ fn skip_reason_to_str(r: &SkipReason) -> &'static str {
     }
 }
 
+/// Pre-flight SSRF check for an image URL, mirroring the primary fetch path
+/// (`fetcher::fetch_url_conditional`): resolve the host and validate every
+/// address before connecting. This is what blocks literal-IP targets such as
+/// cloud-metadata `169.254.169.254` — reqwest skips the custom dial-time
+/// resolver for literal IPs, so the `SSRF_LEVEL.scope` wrapping alone would
+/// not catch them. The scope wrapping is still applied at each send so that
+/// hostname targets are re-validated at dial time (DNS-rebinding TOCTOU).
+async fn ssrf_preflight(url: &Url, src: &str, level: SsrfLevel) -> Result<(), ExtractorError> {
+    validate_url_for_level(url, level, None)
+        .await
+        .map_err(|source| ExtractorError::ImageSsrf {
+            url: src.to_string(),
+            source,
+        })
+}
+
 async fn download_image_bytes(
     http: &reqwest::Client,
     src: &str,
+    ssrf_level: SsrfLevel,
 ) -> Result<Vec<u8>, ExtractorError> {
     let url = Url::parse(src).map_err(|source| ExtractorError::ImageUrlInvalid {
         url: src.to_string(),
         source,
     })?;
-    let resp = http
-        .get(url.clone())
-        .send()
+    ssrf_preflight(&url, src, ssrf_level).await?;
+    let resp = SSRF_LEVEL
+        .scope(ssrf_level, http.get(url.clone()).send())
         .await
         .map_err(|source| ExtractorError::ImageDownload {
             url: src.to_string(),
@@ -326,19 +351,20 @@ async fn download_one(
     http: &reqwest::Client,
     src: &str,
     output_paths: &OutputPaths,
+    ssrf_level: SsrfLevel,
 ) -> Result<String, ExtractorError> {
     let url = Url::parse(src).map_err(|source| ExtractorError::ImageUrlInvalid {
         url: src.to_string(),
         source,
     })?;
-    let resp =
-        http.get(url.clone())
-            .send()
-            .await
-            .map_err(|source| ExtractorError::ImageDownload {
-                url: src.to_string(),
-                source,
-            })?;
+    ssrf_preflight(&url, src, ssrf_level).await?;
+    let resp = SSRF_LEVEL
+        .scope(ssrf_level, http.get(url.clone()).send())
+        .await
+        .map_err(|source| ExtractorError::ImageDownload {
+            url: src.to_string(),
+            source,
+        })?;
     let resp = resp
         .error_for_status()
         .map_err(|source| ExtractorError::ImageDownload {
@@ -399,15 +425,20 @@ pub(crate) fn html_attr_dims(rest: &str) -> Option<(u32, u32)> {
 pub(crate) async fn partial_fetch_dimensions(
     http: &reqwest::Client,
     src: &str,
+    ssrf_level: SsrfLevel,
 ) -> Result<Option<(u32, u32)>, ExtractorError> {
     let url = Url::parse(src).map_err(|source| ExtractorError::ImageUrlInvalid {
         url: src.to_string(),
         source,
     })?;
-    let resp = http
-        .get(url.clone())
-        .header(reqwest::header::RANGE, "bytes=0-2047")
-        .send()
+    ssrf_preflight(&url, src, ssrf_level).await?;
+    let resp = SSRF_LEVEL
+        .scope(
+            ssrf_level,
+            http.get(url.clone())
+                .header(reqwest::header::RANGE, "bytes=0-2047")
+                .send(),
+        )
         .await
         .map_err(|source| ExtractorError::ImageDownload {
             url: src.to_string(),
@@ -432,12 +463,16 @@ pub(crate) async fn partial_fetch_dimensions(
 pub(crate) async fn fetch_content_length(
     http: &reqwest::Client,
     src: &str,
+    ssrf_level: SsrfLevel,
 ) -> Result<Option<u64>, ExtractorError> {
     let url = Url::parse(src).map_err(|source| ExtractorError::ImageUrlInvalid {
         url: src.to_string(),
         source,
     })?;
-    let resp = http.head(url.clone()).send().await;
+    ssrf_preflight(&url, src, ssrf_level).await?;
+    let resp = SSRF_LEVEL
+        .scope(ssrf_level, http.head(url.clone()).send())
+        .await;
     match resp {
         Ok(r) if r.status().is_success() => {
             // reqwest's content_length() returns 0 for HEAD responses (no body).
@@ -451,10 +486,13 @@ pub(crate) async fn fetch_content_length(
             Ok(from_header)
         }
         _ => {
-            let r = http
-                .get(url)
-                .header(reqwest::header::RANGE, "bytes=0-0")
-                .send()
+            let r = SSRF_LEVEL
+                .scope(
+                    ssrf_level,
+                    http.get(url)
+                        .header(reqwest::header::RANGE, "bytes=0-0")
+                        .send(),
+                )
                 .await
                 .map_err(|source| ExtractorError::ImageDownload {
                     url: src.to_string(),
@@ -500,11 +538,12 @@ pub(crate) async fn classify(
     http: &reqwest::Client,
     captioned_so_far: usize,
     filters: &ImageCaptionFilters,
+    ssrf_level: SsrfLevel,
 ) -> CaptionDecision {
     // Step 1: dimensions.
     let dims = match html_attr_dims(rest) {
         Some(d) => Some(d),
-        None => match partial_fetch_dimensions(http, src).await {
+        None => match partial_fetch_dimensions(http, src, ssrf_level).await {
             Ok(Some(d)) => Some(d),
             Ok(None) => None,
             Err(_) => None,
@@ -521,7 +560,9 @@ pub(crate) async fn classify(
     }
 
     // Step 2: size.
-    let bytes: Option<u64> = fetch_content_length(http, src).await.unwrap_or_default();
+    let bytes: Option<u64> = fetch_content_length(http, src, ssrf_level)
+        .await
+        .unwrap_or_default();
     if let Some(n) = bytes {
         if n > filters.max_bytes {
             return CaptionDecision::Skip {
@@ -596,9 +637,18 @@ mod tests {
         let p = setup_paths();
         let md = "Look ![alt](https://x/img.png) at this.";
         let f = ImageCaptionFilters::default();
-        let r = apply(md, &ImagesMode::Keep, &p, &client(), None, &f, None)
-            .await
-            .unwrap();
+        let r = apply(
+            md,
+            &ImagesMode::Keep,
+            &p,
+            &client(),
+            None,
+            &f,
+            None,
+            SsrfLevel::Strict,
+        )
+        .await
+        .unwrap();
         assert_eq!(r.markdown, md);
         assert_eq!(r.images_seen, 1);
         assert_eq!(r.images_downloaded, 0);
@@ -609,9 +659,18 @@ mod tests {
         let p = setup_paths();
         let md = "Look ![hello](https://x/img.png) at this.";
         let f = ImageCaptionFilters::default();
-        let r = apply(md, &ImagesMode::AltTextOnly, &p, &client(), None, &f, None)
-            .await
-            .unwrap();
+        let r = apply(
+            md,
+            &ImagesMode::AltTextOnly,
+            &p,
+            &client(),
+            None,
+            &f,
+            None,
+            SsrfLevel::Strict,
+        )
+        .await
+        .unwrap();
         assert_eq!(r.markdown, "Look hello at this.");
     }
 
@@ -620,9 +679,18 @@ mod tests {
         let p = setup_paths();
         let md = "Look ![](https://x/img.png) at this.";
         let f = ImageCaptionFilters::default();
-        let r = apply(md, &ImagesMode::AltTextOnly, &p, &client(), None, &f, None)
-            .await
-            .unwrap();
+        let r = apply(
+            md,
+            &ImagesMode::AltTextOnly,
+            &p,
+            &client(),
+            None,
+            &f,
+            None,
+            SsrfLevel::Strict,
+        )
+        .await
+        .unwrap();
         assert_eq!(r.markdown, "Look  at this.");
     }
 
@@ -631,9 +699,18 @@ mod tests {
         let p = setup_paths();
         let md = "Look ![alt](https://x/img.png) at this.";
         let f = ImageCaptionFilters::default();
-        let r = apply(md, &ImagesMode::Drop, &p, &client(), None, &f, None)
-            .await
-            .unwrap();
+        let r = apply(
+            md,
+            &ImagesMode::Drop,
+            &p,
+            &client(),
+            None,
+            &f,
+            None,
+            SsrfLevel::Strict,
+        )
+        .await
+        .unwrap();
         assert_eq!(r.markdown, "Look  at this.");
     }
 
@@ -642,9 +719,18 @@ mod tests {
         let p = setup_paths();
         let md = "No images here.";
         let f = ImageCaptionFilters::default();
-        let r = apply(md, &ImagesMode::Download, &p, &client(), None, &f, None)
-            .await
-            .unwrap();
+        let r = apply(
+            md,
+            &ImagesMode::Download,
+            &p,
+            &client(),
+            None,
+            &f,
+            None,
+            SsrfLevel::Strict,
+        )
+        .await
+        .unwrap();
         assert_eq!(r.markdown, md);
         assert_eq!(r.images_seen, 0);
     }
@@ -654,9 +740,18 @@ mod tests {
         let p = setup_paths();
         let md = "Look ![alt](https://x/img.png) at this.";
         let f = ImageCaptionFilters::default();
-        let err = apply(md, &ImagesMode::Caption, &p, &client(), None, &f, None)
-            .await
-            .unwrap_err();
+        let err = apply(
+            md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            None,
+            &f,
+            None,
+            SsrfLevel::Strict,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, ExtractorError::CaptionerNotConfigured));
     }
 
@@ -674,6 +769,7 @@ mod tests {
             Some(&reg),
             &f,
             None,
+            SsrfLevel::Strict,
         )
         .await
         .unwrap_err();
@@ -707,6 +803,7 @@ mod tests {
             &client,
             0,
             &f,
+            SsrfLevel::Strict,
         )
         .await;
         assert!(matches!(
@@ -740,7 +837,15 @@ mod tests {
         };
         let url = format!("{}/photo.png", server.uri());
         // captioned_so_far == max_per_page → skip
-        let d = classify(&url, r#" width="500" height="500""#, &client, 3, &f).await;
+        let d = classify(
+            &url,
+            r#" width="500" height="500""#,
+            &client,
+            3,
+            &f,
+            SsrfLevel::Loopback,
+        )
+        .await;
         assert!(matches!(
             d,
             CaptionDecision::Skip {
@@ -771,7 +876,34 @@ mod tests {
         crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let url = format!("{}/img.png", server.uri());
-        let dims = partial_fetch_dimensions(&client, &url).await.unwrap();
+        let dims = partial_fetch_dimensions(&client, &url, SsrfLevel::Loopback)
+            .await
+            .unwrap();
         assert_eq!(dims, Some((1, 1)));
+    }
+
+    /// The image-fetch helpers must enforce the active `SsrfLevel` before
+    /// connecting. `localhost` resolves to loopback, which `Strict` rejects
+    /// — the pre-flight (`validate_url_for_level`) catches it and no dial is
+    /// attempted. Closes the gap where these helpers issued un-policed
+    /// requests (see `docs/security.md` §"DNS rebinding").
+    #[tokio::test]
+    async fn download_one_blocks_loopback_under_strict() {
+        use crate::fetcher::ssrf::SsrfError;
+
+        let p = setup_paths();
+        let err = download_one(&client(), "http://localhost:9/x.png", &p, SsrfLevel::Strict)
+            .await
+            .expect_err("strict must reject the loopback target");
+        assert!(
+            matches!(
+                err,
+                ExtractorError::ImageSsrf {
+                    source: SsrfError::Address { .. },
+                    ..
+                }
+            ),
+            "expected ImageSsrf(Address), got: {err:?}",
+        );
     }
 }

@@ -59,6 +59,13 @@ pub enum ExtractorError {
         source: url::ParseError,
     },
 
+    #[error("ssrf policy blocked image url {url}: {source}")]
+    ImageSsrf {
+        url: String,
+        #[source]
+        source: crate::fetcher::ssrf::SsrfError,
+    },
+
     #[error("captioner `{name}` failed: {source}")]
     CaptionerCall {
         name: String,
