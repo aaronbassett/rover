@@ -27,6 +27,15 @@ struct Cli {
     #[arg(long, global = true)]
     config: Option<PathBuf>,
 
+    /// SECURITY: skip integrity verification of cached local model files
+    /// against their `.rover-integrity.toml` manifest before loading. This
+    /// disables tamper detection for downloaded weights — only use it if you
+    /// understand the risk. Equivalent to setting
+    /// `ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`.
+    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[arg(long, global = true)]
+    unsafe_disable_model_integrity_check: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -251,6 +260,27 @@ fn main() -> ExitCode {
         _ => "warn",
     };
     rover::telemetry::init(default_filter);
+
+    // Surface the model-integrity bypass loudly at startup. The CLI flag and
+    // the env var converge here: setting the flag exports the env var (read by
+    // the verification path), and either path triggers the warning. Done before
+    // the runtime spawns any threads so the `set_var` is sound.
+    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    {
+        if cli.unsafe_disable_model_integrity_check {
+            // SAFETY: still single-threaded — the tokio runtime is built below.
+            unsafe { std::env::set_var(rover::model_integrity::DISABLE_ENV, "1") };
+        }
+        if rover::model_integrity::check_disabled() {
+            tracing::warn!(
+                target: "rover::model_integrity",
+                "model integrity verification is DISABLED \
+                 (--unsafe-disable-model-integrity-check / {}); cached model files will NOT be \
+                 checked for tampering before loading",
+                rover::model_integrity::DISABLE_ENV,
+            );
+        }
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

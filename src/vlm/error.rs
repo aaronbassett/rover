@@ -25,6 +25,16 @@ pub enum VlmError {
     #[error("captioner {name} model error: {reason}")]
     ModelError { name: String, reason: String },
 
+    #[error(
+        "captioner {name}: model file {file} has been modified (expected {expected}, got {actual})"
+    )]
+    ModelIntegrityFailure {
+        name: String,
+        file: String,
+        expected: String,
+        actual: String,
+    },
+
     #[cfg(feature = "local-vision")]
     #[error("image decode failed: {0}")]
     ImageDecode(#[from] image::ImageError),

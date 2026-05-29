@@ -246,6 +246,18 @@ fn vlm_error_to_rover_error(e: &crate::vlm::VlmError) -> RoverError {
             RoverError::CAPTIONER_MODEL_ERROR,
             format!("captioner {name} model error: {reason}"),
         ),
+        V::ModelIntegrityFailure {
+            name,
+            file,
+            expected,
+            actual,
+        } => RoverError::new(
+            RoverError::CAPTIONER_MODEL_ERROR,
+            format!(
+                "captioner {name}: model file {file} has been modified \
+                 (expected {expected}, got {actual})"
+            ),
+        ),
         #[cfg(feature = "local-vision")]
         V::ImageDecode(_) => {
             RoverError::new(RoverError::CAPTIONER_IMAGE_DECODE_FAILED, e.to_string())

@@ -61,6 +61,9 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: hf-cache-local-inference-${{ runner.os }}-smollm2-135m
+      # Model-integrity tests use synthetic caches and do not download a model.
+      - run: cargo test --features local-inference,test-loopback --lib model_integrity
+      - run: cargo test --features local-inference,test-loopback --test model_integrity
       - run: cargo test --features local-inference,test-loopback --test local_inference_smoke -- --ignored
         env:
           # CI uses a tiny model to keep run time bounded.

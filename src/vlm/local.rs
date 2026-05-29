@@ -56,12 +56,19 @@ impl MistralRsCaptioner {
         if let Some(m) = self.model.get() {
             return Ok(m.clone());
         }
-        if !hf_cache_has(&self.repo_id) {
+        let was_cached = hf_cache_has(&self.repo_id);
+        if !was_cached {
             eprintln!(
                 "downloading {} from HuggingFace; cached at {} — this may take several minutes",
                 self.repo_id,
                 hf_cache_root().display(),
             );
+        }
+        // Verify an already-cached model before loading; record a fresh
+        // download afterwards (trust-on-first-use).
+        if was_cached {
+            crate::model_integrity::enforce(&self.repo_id)
+                .map_err(|e| self.integrity_to_vlm_error(e))?;
         }
         let arc = self
             .model
@@ -78,7 +85,29 @@ impl MistralRsCaptioner {
                 Ok::<Arc<mistralrs::Model>, VlmError>(Arc::new(model))
             })
             .await?;
+        if !was_cached {
+            crate::model_integrity::record_fresh_download(&self.repo_id);
+        }
         Ok(arc.clone())
+    }
+
+    fn integrity_to_vlm_error(&self, e: crate::model_integrity::IntegrityError) -> VlmError {
+        match e {
+            crate::model_integrity::IntegrityError::ModelIntegrityFailure {
+                file,
+                expected,
+                actual,
+            } => VlmError::ModelIntegrityFailure {
+                name: self.name.clone(),
+                file,
+                expected,
+                actual,
+            },
+            other => VlmError::Unavailable {
+                name: self.name.clone(),
+                reason: format!("model integrity check failed: {other}"),
+            },
+        }
     }
 }
 

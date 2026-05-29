@@ -455,6 +455,15 @@ mod service_tests {
                     BackendError::AuthFailed(s) => BackendError::AuthFailed(s.clone()),
                     BackendError::ModelError(s) => BackendError::ModelError(s.clone()),
                     BackendError::Invalid(s) => BackendError::Invalid(s.clone()),
+                    BackendError::ModelIntegrityFailure {
+                        file,
+                        expected,
+                        actual,
+                    } => BackendError::ModelIntegrityFailure {
+                        file: file.clone(),
+                        expected: expected.clone(),
+                        actual: actual.clone(),
+                    },
                 })
             } else {
                 Ok(format!("(from {})", self.name))
