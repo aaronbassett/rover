@@ -203,7 +203,11 @@ impl Default for CacheConfig {
 }
 
 fn default_cache_default_ttl() -> Duration {
-    Duration::from_secs(3600)
+    // 15 minutes. Tightened from 1h so that, absent an explicit `Cache-Control`
+    // max-age, a cache poisoned with stale or attacker-influenced content has a
+    // short blast radius before the next revalidation. Origins that want longer
+    // caching can still say so via response headers.
+    Duration::from_secs(15 * 60)
 }
 
 fn default_cache_min_ttl() -> Duration {
@@ -941,8 +945,8 @@ mod tests {
         assert!(cfg.fetch.user_agent.starts_with("Rover/"));
         assert_eq!(cfg.fetch.timeout_secs, 15);
 
-        // Cache defaults per PRD §12.
-        assert_eq!(cfg.cache.default_ttl, Duration::from_secs(3600));
+        // Cache defaults per PRD §12 (default_ttl tightened to 15m).
+        assert_eq!(cfg.cache.default_ttl, Duration::from_secs(15 * 60));
         assert_eq!(cfg.cache.min_ttl, Duration::from_secs(300));
         assert_eq!(cfg.cache.max_ttl, Duration::from_secs(7 * 86400));
         assert!(!cfg.cache.override_no_store);

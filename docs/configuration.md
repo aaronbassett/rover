@@ -36,7 +36,7 @@ Unknown level strings are rejected the first time the SSRF policy is consulted (
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `default_ttl` | duration | `"1h"` | TTL used when an upstream response has no `Cache-Control: max-age`. |
+| `default_ttl` | duration | `"15m"` | TTL used when an upstream response has no `Cache-Control: max-age`. Kept short so cache-poisoned or stale content has a small blast radius; origins can opt into longer caching via response headers. |
 | `min_ttl` | duration | `"5m"` | Floor for any TTL derived from an upstream header. Must be `<= default_ttl`. |
 | `max_ttl` | duration | `"7d"` | Ceiling for any TTL. Must be `>= default_ttl`. |
 | `stale_while_revalidate_window` | duration | `"5m"` | How long after `expires_at` an entry is still eligible for the stale-while-revalidate fast-path. Inside the window, `fetch` may return the stale row immediately and queue a background `revalidate` task. Beyond it, the row is treated as a cache miss and refetched synchronously, so callers never receive arbitrarily old content. |
