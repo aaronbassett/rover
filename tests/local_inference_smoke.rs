@@ -37,6 +37,48 @@ async fn loads_qwen_and_summarizes_short_input() {
     );
 }
 
+/// `target_tokens` must actually cap generation length (regression: it was
+/// dropped before reaching mistralrs, so the model ran to its own default).
+/// A tiny cap should produce a markedly shorter completion than a large one
+/// on the same prompt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn respects_explicit_target_tokens_cap() {
+    let model_id =
+        std::env::var("ROVER_CI_TEST_MODEL").unwrap_or_else(|_| "Qwen/Qwen3.5-0.8B".to_string());
+    let be = LocalMistralRs::new("test", &model_id, Tokenizer::O200k);
+    let content = "Rover is a polite scraper that fetches web pages and turns them into \
+                   clean Markdown for LLM agents. It caches what it fetches, honours \
+                   robots.txt and per-domain rate limits, optionally renders SPAs with a \
+                   headless browser, and summarises long pages on demand using either an \
+                   offline extractive backend or a cloud LLM.";
+    let mk = |cap: usize| CompactOpts {
+        mode: CompactMode::Abstractive,
+        style: Style::Prose,
+        target_tokens: Some(cap),
+        focus: None,
+        preserve: vec![],
+        backend_name: "test".to_string(),
+    };
+
+    let tiny = be
+        .compact(content, &mk(16))
+        .await
+        .expect("compact ok (tiny)");
+    let large = be
+        .compact(content, &mk(256))
+        .await
+        .expect("compact ok (large)");
+
+    // A 16-token cap should be observably shorter than a 256-token cap.
+    assert!(
+        tiny.split_whitespace().count() < large.split_whitespace().count(),
+        "tiny cap ({} words) should be shorter than large cap ({} words)",
+        tiny.split_whitespace().count(),
+        large.split_whitespace().count(),
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn bogus_repo_id_yields_unavailable_error() {
