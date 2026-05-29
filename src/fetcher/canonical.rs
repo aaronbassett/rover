@@ -21,10 +21,10 @@ pub fn extract_canonical_url(html: &str, final_url: &Url, link_header: Option<&s
     if let Some(url) = canonical_from_html(html, final_url) {
         return url;
     }
-    if let Some(header) = link_header {
-        if let Some(url) = canonical_from_link_header(header, final_url) {
-            return url;
-        }
+    if let Some(header) = link_header
+        && let Some(url) = canonical_from_link_header(header, final_url)
+    {
+        return url;
     }
     final_url.clone()
 }

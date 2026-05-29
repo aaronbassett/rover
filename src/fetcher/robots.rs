@@ -80,10 +80,10 @@ pub async fn ensure_entry(
     let _ = user_agent;
 
     let now = Timestamp::now().as_second();
-    if let Some(entry) = storage_robots::lookup(db, host).await? {
-        if entry.expires_at > now {
-            return Ok(entry);
-        }
+    if let Some(entry) = storage_robots::lookup(db, host).await?
+        && entry.expires_at > now
+    {
+        return Ok(entry);
     }
 
     let robots_url =

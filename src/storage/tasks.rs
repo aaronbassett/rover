@@ -160,16 +160,15 @@ pub async fn insert(db: &Db, input: TaskInsert) -> Result<(), StorageError> {
     // (MCP tool, fetcher SWR, deferred retry, retry chain) benefits.
     // A poisoned mutex or a closed channel is non-fatal: the orphan scan
     // will pick the row up eventually if the inserting process dies.
-    if let Ok(guard) = db.new_task_tx.lock() {
-        if let Some(tx) = guard.as_ref() {
-            if let Err(e) = tx.send(id_for_notify) {
-                tracing::debug!(
-                    target: "rover::storage",
-                    error = ?e,
-                    "new-task notify channel closed",
-                );
-            }
-        }
+    if let Ok(guard) = db.new_task_tx.lock()
+        && let Some(tx) = guard.as_ref()
+        && let Err(e) = tx.send(id_for_notify)
+    {
+        tracing::debug!(
+            target: "rover::storage",
+            error = ?e,
+            "new-task notify channel closed",
+        );
     }
     Ok(())
 }

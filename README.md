@@ -85,7 +85,7 @@ cargo build --release
 The default build (~28 MiB) needs no model downloads, no Chrome, and no extra
 runtime dependencies.
 
-**Requirements:** Rust 1.85+ (edition 2024). See [`docs/versioning.md`](docs/versioning.md) for the stability and MSRV policy.
+**Requirements:** Rust 1.96+ (edition 2024). See [`docs/versioning.md`](docs/versioning.md) for the stability and MSRV policy.
 
 ## Quick start
 

@@ -258,10 +258,10 @@ pub async fn serve_stdio(
 
     // Final HAR flush on shutdown so a clean client disconnect leaves a
     // complete file on disk (rather than depending on the next interval tick).
-    if let Some(r) = &har_recorder_for_shutdown {
-        if let Err(e) = r.flush().await {
-            tracing::warn!(target: "rover::fetcher", error = ?e, "har shutdown flush failed");
-        }
+    if let Some(r) = &har_recorder_for_shutdown
+        && let Err(e) = r.flush().await
+    {
+        tracing::warn!(target: "rover::fetcher", error = ?e, "har shutdown flush failed");
     }
 
     // M9 fix C1: stop the headless browser if it was ever launched. We've
