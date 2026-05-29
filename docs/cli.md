@@ -179,9 +179,10 @@ rover config set headless.max_concurrent 8
 rover model download <repo_id>
 rover model list
 rover model remove <repo_id>
+rover model verify [<repo_id>]
 ```
 
-Download, list, and remove cached local models from HuggingFace Hub. Requires one of the `local-inference` or `local-vision` features at compile time; the subcommand is absent when neither feature is enabled.
+Download, list, remove, and verify cached local models from HuggingFace Hub. Requires one of the `local-inference` or `local-vision` features at compile time; the subcommand is absent when neither feature is enabled.
 
 Models are cached under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`). All three subcommands work with this cache directory.
 
@@ -232,5 +233,31 @@ Example output:
 ```
 removed ~/.cache/huggingface/hub/models--Qwen--Qwen3.5-0.8B (1.6 GB freed)
 ```
+
+### `rover model verify`
+
+```text
+rover model verify [<repo_id>]
+```
+
+Re-hash cached model files and compare them against the integrity manifest
+(`.rover-integrity.toml`) recorded at download time. With a `<repo_id>`, verifies
+that one model; without, verifies every cached model. Exits non-zero if any file
+has been modified or is missing. See [`docs/security.md`](security.md) §"Local
+model files" for the full integrity model.
+
+Example output:
+
+```
+OK    Qwen/Qwen3.5-0.8B  (4 files, revision a1b2c3d)
+FAIL  HuggingFaceTB/SmolVLM-256M-Instruct  (revision e4f5a6b)
+        model.safetensors: modified (expected sha256:…, got sha256:…)
+```
+
+A model integrity verification also runs before any local model is loaded for
+inference; the `local_model_integrity` check in `rover doctor` reports the same
+status. Bypass with `--unsafe-disable-model-integrity-check` (or
+`ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`) — a security-sensitive escape
+hatch that logs a warning at startup.
 
 **Note:** Gated by `any(local-inference, local-vision)`. When neither feature is compiled, `rover model --help` returns an unrecognized subcommand error.

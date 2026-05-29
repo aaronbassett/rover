@@ -23,6 +23,11 @@ pub enum ModelCmd {
         /// Repo id, e.g. `Qwen/Qwen3.5-0.8B`.
         repo_id: String,
     },
+    /// Verify cached model files against their integrity manifest.
+    Verify {
+        /// Repo id to verify. Omit to verify every cached model.
+        repo_id: Option<String>,
+    },
 }
 
 pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
@@ -30,6 +35,7 @@ pub async fn run(cmd: ModelCmd) -> anyhow::Result<()> {
         ModelCmd::Download { repo_id } => download(&repo_id).await,
         ModelCmd::List => list().await,
         ModelCmd::Remove { repo_id } => remove(&repo_id).await,
+        ModelCmd::Verify { repo_id } => verify(repo_id.as_deref()).await,
     }
 }
 
@@ -104,6 +110,67 @@ async fn download(repo_id: &str) -> anyhow::Result<()> {
     }
     let cache_dir = hf_cache_root().join(format!("models--{}", repo_id.replace('/', "--")));
     eprintln!("cached at {}", cache_dir.display());
+
+    // Record the integrity manifest so later loads can detect tampering. This
+    // resolves and records the downloaded revision (the snapshot commit sha).
+    match crate::model_integrity::bootstrap(repo_id) {
+        Ok(crate::model_integrity::RepoStatus::Ok { revision, files }) => {
+            eprintln!("recorded integrity manifest: {files} files at revision {revision}");
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("warning: could not record integrity manifest: {e}"),
+    }
+    Ok(())
+}
+
+/// Verify cached model files against their `.rover-integrity.toml` manifests.
+/// With a repo id, verifies that one model; without, verifies every cached
+/// model. Exits non-zero (via `bail`) if any file fails.
+async fn verify(repo_id: Option<&str>) -> anyhow::Result<()> {
+    use crate::model_integrity::{FileStatus, RepoStatus, verify_repo};
+
+    let repos: Vec<String> = match repo_id {
+        Some(r) => vec![r.to_string()],
+        None => crate::model_integrity::cached_repos()?,
+    };
+    if repos.is_empty() {
+        eprintln!("(no cached models to verify)");
+        return Ok(());
+    }
+
+    let mut any_failed = false;
+    for repo in &repos {
+        match verify_repo(repo)? {
+            RepoStatus::Ok { revision, files } => {
+                eprintln!("OK    {repo}  ({files} files, revision {revision})");
+            }
+            RepoStatus::NoManifest => {
+                eprintln!("?     {repo}  (no integrity manifest; will bootstrap on next load)");
+            }
+            RepoStatus::NotCached => {
+                eprintln!("?     {repo}  (not cached)");
+            }
+            RepoStatus::Mismatch { revision, files } => {
+                any_failed = true;
+                eprintln!("FAIL  {repo}  (revision {revision})");
+                for (file, status) in files {
+                    match status {
+                        FileStatus::Mismatch { expected, actual } => {
+                            eprintln!(
+                                "        {file}: modified (expected {expected}, got {actual})"
+                            );
+                        }
+                        FileStatus::Missing { expected } => {
+                            eprintln!("        {file}: missing (expected {expected})");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if any_failed {
+        anyhow::bail!("model integrity verification failed");
+    }
     Ok(())
 }
 

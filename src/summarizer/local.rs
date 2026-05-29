@@ -58,12 +58,19 @@ impl LocalMistralRs {
         if let Some(m) = self.model.get() {
             return Ok(m.clone());
         }
-        if !hf_cache_has(&self.repo_id) {
+        let was_cached = hf_cache_has(&self.repo_id);
+        if !was_cached {
             eprintln!(
                 "downloading {} from HuggingFace; cached at {} — this may take several minutes",
                 self.repo_id,
                 hf_cache_root().display(),
             );
+        }
+        // Verify the integrity manifest of an already-cached model *before*
+        // the inference engine reads any weights. A fresh download is recorded
+        // afterwards (trust-on-first-use).
+        if was_cached {
+            crate::model_integrity::enforce(&self.repo_id).map_err(integrity_to_backend_error)?;
         }
         let arc = self
             .model
@@ -77,6 +84,9 @@ impl LocalMistralRs {
                 Ok::<Arc<mistralrs::Model>, BackendError>(Arc::new(model))
             })
             .await?;
+        if !was_cached {
+            crate::model_integrity::record_fresh_download(&self.repo_id);
+        }
         Ok(arc.clone())
     }
 }
@@ -115,6 +125,24 @@ impl SummarizerBackend for LocalMistralRs {
     }
 }
 
+/// Map an integrity error onto the typed `BackendError` so the caller sees a
+/// clear "model file X has been modified" message; other (I/O) failures fall
+/// back to `Unavailable`.
+fn integrity_to_backend_error(e: crate::model_integrity::IntegrityError) -> BackendError {
+    match e {
+        crate::model_integrity::IntegrityError::ModelIntegrityFailure {
+            file,
+            expected,
+            actual,
+        } => BackendError::ModelIntegrityFailure {
+            file,
+            expected,
+            actual,
+        },
+        other => BackendError::Unavailable(format!("model integrity check failed: {other}")),
+    }
+}
+
 /// Does `~/.cache/huggingface/hub/models--<owner>--<repo>/` exist with
 /// at least one entry? Used by the cold-load banner and by the M9 doctor
 /// check.
@@ -143,6 +171,9 @@ mod tests {
 
     #[test]
     fn hf_cache_root_respects_hf_home_env() {
+        let _g = crate::model_integrity::HF_HOME_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let prior = std::env::var("HF_HOME").ok();
         unsafe { std::env::set_var("HF_HOME", tmp.path()) };
@@ -159,6 +190,9 @@ mod tests {
 
     #[test]
     fn hf_cache_has_returns_false_for_missing_repo() {
+        let _g = crate::model_integrity::HF_HOME_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let prior = std::env::var("HF_HOME").ok();
         unsafe { std::env::set_var("HF_HOME", tmp.path()) };

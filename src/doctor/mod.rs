@@ -60,6 +60,8 @@ pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
     checks.push(Box::new(checks::LocalInferenceModelCached));
     #[cfg(feature = "local-vision")]
     checks.push(Box::new(checks::LocalVisionModelCached));
+    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    checks.push(Box::new(checks::LocalModelIntegrity));
     #[cfg(feature = "headless")]
     checks.push(Box::new(checks::HeadlessBrowserLaunches));
     let mut reports = Vec::with_capacity(checks.len());
@@ -174,5 +176,64 @@ mod tests {
         let (ctx, _g) = fresh_ctx().await;
         let r = checks::LocalInferenceModelCached.run(&ctx).await;
         assert_eq!(r.status, CheckStatus::Skip);
+    }
+
+    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn local_model_integrity_passes_intact_and_fails_tampered() {
+        // Serialised against other HF_HOME-mutating tests.
+        let _lock = crate::model_integrity::HF_HOME_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let prior = std::env::var("HF_HOME").ok();
+        // SAFETY: serialised by HF_HOME_TEST_MUTEX; restored before return.
+        unsafe { std::env::set_var("HF_HOME", tmp.path()) };
+
+        // Build a minimal cache and record its manifest.
+        let snap = tmp
+            .path()
+            .join("hub")
+            .join("models--Acme--tiny")
+            .join("snapshots")
+            .join("rev1");
+        std::fs::create_dir_all(
+            tmp.path()
+                .join("hub")
+                .join("models--Acme--tiny")
+                .join("refs"),
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path()
+                .join("hub")
+                .join("models--Acme--tiny")
+                .join("refs")
+                .join("main"),
+            "rev1",
+        )
+        .unwrap();
+        std::fs::create_dir_all(&snap).unwrap();
+        std::fs::write(snap.join("model.safetensors"), b"weights").unwrap();
+        crate::model_integrity::bootstrap("Acme/tiny").unwrap();
+
+        let (ctx, _g) = fresh_ctx().await;
+        let r = checks::LocalModelIntegrity.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Ok, "intact: {:?}", r.detail);
+
+        // Tamper → Fail, with the failing file named in the detail.
+        std::fs::write(snap.join("model.safetensors"), b"tampered").unwrap();
+        let r = checks::LocalModelIntegrity.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Fail, "tampered: {:?}", r.detail);
+        assert!(r.detail.unwrap().contains("model.safetensors"));
+
+        // SAFETY: serialised by HF_HOME_TEST_MUTEX.
+        unsafe {
+            match prior {
+                Some(p) => std::env::set_var("HF_HOME", p),
+                None => std::env::remove_var("HF_HOME"),
+            }
+        }
     }
 }

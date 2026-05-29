@@ -110,5 +110,35 @@ HuggingFace on first use (or ahead-of-time via `rover model download`).
   are public; no authentication required.
 - Users pulling gated/private repos must set `HF_TOKEN` in the environment.
 
+### Integrity verification
+
+A model file on disk is part of Rover's trust boundary: a tampered weight or
+tokenizer is executed/loaded with whatever privileges the agent has. Rover
+defends this with a per-file integrity manifest.
+
+- **Recording.** After a download (`rover model download`, or a fresh
+  first-use download triggered by inference), Rover hashes every file in the
+  resolved snapshot and writes a sidecar manifest,
+  `<snapshot>/.rover-integrity.toml`, recording the SHA256 of each file and the
+  resolved revision (the snapshot commit sha — this also pins reproducibility
+  after first download even without an explicit revision).
+- **Verification.** Before a cached model is loaded, every recorded file is
+  re-hashed and compared. A mismatch aborts the load with a typed
+  `ModelIntegrityFailure { file, expected, actual }` error surfaced as a clear
+  "model file X has been modified" message — the weights are never handed to
+  the inference engine.
+- **Trust-on-first-bootstrap.** A cache populated before this feature existed
+  (or by `mistralrs`' own internal downloader, which Rover does not intercept)
+  has no manifest. On first encounter Rover hashes the files in place, writes
+  the manifest, and emits a `warn`. Rover cannot know whether those bytes were
+  already tampered with — only that they will not change afterwards.
+- **On demand.** `rover model verify [<repo_id>]` re-runs verification for one
+  repo or every cached model; `rover doctor` includes a `local_model_integrity`
+  check (only when a local-model feature is compiled in).
+- **Escape hatch.** `--unsafe-disable-model-integrity-check` (or
+  `ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`) skips verification entirely
+  and logs a `warn` at startup. The name is deliberately long — it is a
+  security-sensitive bypass.
+
 Disk usage: see `rover model list`. Models can be removed with `rover model remove
 <repo_id>`. Weights are not garbage-collected automatically.

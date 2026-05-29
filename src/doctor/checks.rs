@@ -519,6 +519,71 @@ impl Check for LocalVisionModelCached {
     }
 }
 
+/// Verifies the integrity manifest of every cached HuggingFace model. Present
+/// only when a local-model feature is compiled in.
+#[cfg(any(feature = "local-inference", feature = "local-vision"))]
+pub struct LocalModelIntegrity;
+
+#[cfg(any(feature = "local-inference", feature = "local-vision"))]
+#[async_trait]
+impl Check for LocalModelIntegrity {
+    fn name(&self) -> &'static str {
+        "local_model_integrity"
+    }
+    async fn run(&self, _ctx: &CheckCtx) -> CheckReport {
+        use crate::model_integrity::{RepoStatus, cached_repos, verify_repo};
+
+        let repos = match cached_repos() {
+            Ok(r) => r,
+            Err(e) => {
+                return CheckReport {
+                    check: self.name(),
+                    status: CheckStatus::Fail,
+                    detail: Some(format!("could not enumerate cached models: {e}")),
+                };
+            }
+        };
+        if repos.is_empty() {
+            return CheckReport {
+                check: self.name(),
+                status: CheckStatus::Skip,
+                detail: Some("no models cached".into()),
+            };
+        }
+
+        let mut ok = 0usize;
+        let mut bootstrapped = 0usize;
+        let mut failures: Vec<String> = Vec::new();
+        for repo in &repos {
+            match verify_repo(repo) {
+                Ok(RepoStatus::Ok { .. }) => ok += 1,
+                Ok(RepoStatus::NoManifest) | Ok(RepoStatus::NotCached) => bootstrapped += 1,
+                Ok(RepoStatus::Mismatch { files, .. }) => {
+                    let names: Vec<&str> = files.iter().map(|(f, _)| f.as_str()).collect();
+                    failures.push(format!("{repo}: {}", names.join(", ")));
+                }
+                Err(e) => failures.push(format!("{repo}: {e}")),
+            }
+        }
+
+        if failures.is_empty() {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some(format!(
+                    "{ok} model(s) verified, {bootstrapped} without a manifest yet"
+                )),
+            }
+        } else {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!("integrity failures — {}", failures.join("; "))),
+            }
+        }
+    }
+}
+
 fn short(p: &Path) -> String {
     if let Some(home) = std::env::var("HOME").ok().map(std::path::PathBuf::from)
         && let Ok(stripped) = p.strip_prefix(&home)

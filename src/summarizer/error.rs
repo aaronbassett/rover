@@ -17,6 +17,13 @@ pub enum BackendError {
     #[error("model error: {0}")]
     ModelError(String),
 
+    #[error("model file {file} has been modified (expected {expected}, got {actual})")]
+    ModelIntegrityFailure {
+        file: String,
+        expected: String,
+        actual: String,
+    },
+
     /// Invalid request or misuse — both startup-time (e.g. missing
     /// `base_url` in `CloudBackend::new`) and compact-time (e.g. empty
     /// content). Distinct from network errors so the service doesn't
@@ -84,6 +91,16 @@ impl SummarizerError {
             BackendError::ModelError(r) => SummarizerError::ModelError {
                 name: name.to_string(),
                 reason: r,
+            },
+            BackendError::ModelIntegrityFailure {
+                file,
+                expected,
+                actual,
+            } => SummarizerError::ModelError {
+                name: name.to_string(),
+                reason: format!(
+                    "model file {file} has been modified (expected {expected}, got {actual})"
+                ),
             },
         }
     }
