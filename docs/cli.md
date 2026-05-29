@@ -216,8 +216,8 @@ Example output:
 
 ```
 ~/.cache/huggingface/hub
-  Qwen/Qwen3.5-0.8B               1.6 GB
-  HuggingFaceTB/SmolVLM-256M-Instruct   240 MB
+  Qwen/Qwen3.5-0.8B          1.6 GB
+  Qwen/Qwen2-VL-2B-Instruct  4.4 GB
 ```
 
 ### `rover model remove`
@@ -250,7 +250,7 @@ Example output:
 
 ```
 OK    Qwen/Qwen3.5-0.8B  (4 files, revision a1b2c3d)
-FAIL  HuggingFaceTB/SmolVLM-256M-Instruct  (revision e4f5a6b)
+FAIL  Qwen/Qwen2-VL-2B-Instruct  (revision e4f5a6b)
         model.safetensors: modified (expected sha256:…, got sha256:…)
 ```
 

@@ -10,7 +10,7 @@ Enable any combination of features by passing `--features` to
 | Feature | Enables | Approx. binary size add |
 | --- | --- | --- |
 | `local-inference` | Local LLM summarization via `mistral.rs` (default model: Qwen 3.5 0.8B) | ~80 MB |
-| `local-vision` | Local image captioning via `mistral.rs` (default model: SmolVLM 256M) | shared with `local-inference`; ~5 MB additional |
+| `local-vision` | Local image captioning via `mistral.rs` (default model: Qwen2-VL 2B) | shared with `local-inference`; ~5 MB additional |
 | `headless` | SPA rendering via `chromiumoxide` (system Chrome required) | ~32 MB |
 
 Cloud image captioners (OpenAI, Anthropic, Gemini, anything `genai`
@@ -49,7 +49,7 @@ seconds depending on hardware); subsequent calls warm.
 
 ```
 cargo install rover --features local-vision
-rover model download HuggingFaceTB/SmolVLM-256M-Instruct
+rover model download Qwen/Qwen2-VL-2B-Instruct
 ```
 
 Configure under `[captioners.<name>]`:
@@ -57,16 +57,21 @@ Configure under `[captioners.<name>]`:
 ```toml
 [captioners.local]
 kind = "local"
-model = "HuggingFaceTB/SmolVLM-256M-Instruct"
+model = "Qwen/Qwen2-VL-2B-Instruct"
 
 [image_captions]
 default = "local"
 ```
 
 Available variants (swap via the `model` field):
-- `HuggingFaceTB/SmolVLM-256M-Instruct` — smallest, fastest
-- `HuggingFaceTB/SmolVLM-500M-Instruct` — better quality
-- `HuggingFaceTB/SmolVLM2-2.2B-Instruct` — best quality
+- `Qwen/Qwen2-VL-2B-Instruct` — smallest, runs on the CPU backend
+- `Qwen/Qwen2.5-VL-3B-Instruct` — larger, better quality
+
+> The smaller SmolVLM/Idefics3 family is **not** recommended: on the CPU
+> backend mistralrs uses, its vision attention feeds candle a non-contiguous
+> matmul input and its encoder cache panics when image-splitting is enabled
+> (upstream [PR #2074](https://github.com/EricLBuehler/mistral.rs/pull/2074)
+> covers only the latter). Qwen2-VL's vision path is contiguity-safe.
 
 ---
 

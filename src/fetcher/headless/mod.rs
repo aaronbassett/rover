@@ -66,7 +66,9 @@ pub enum HeadlessError {
     SemaphoreClosed,
 }
 
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
@@ -74,6 +76,10 @@ use tokio::task::JoinHandle;
 use chromiumoxide::Browser;
 use chromiumoxide::cdp::browser_protocol::fetch::{
     EnableParams as FetchEnableParams, EventRequestPaused,
+};
+use chromiumoxide::cdp::browser_protocol::network::{
+    EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
+    EventRequestWillBeSent, RequestId,
 };
 use futures::StreamExt;
 
@@ -89,6 +95,10 @@ pub struct HeadlessRenderer {
     handler_task: JoinHandle<()>,
     permit: Arc<Semaphore>,
     asset_cfg: HeadlessConfig,
+    /// Per-instance Chrome user-data directory. Held for the browser's
+    /// lifetime and removed on drop; keeping it here is what prevents
+    /// concurrent renderers from sharing (and deadlocking on) one profile.
+    _profile_dir: tempfile::TempDir,
 }
 
 impl std::fmt::Debug for HeadlessRenderer {
@@ -104,7 +114,7 @@ impl HeadlessRenderer {
     /// a background tokio task that drives chromiumoxide's event loop; call
     /// [`HeadlessRenderer::shutdown`] to stop it cleanly.
     pub async fn new(cfg: &HeadlessConfig) -> Result<Self, HeadlessError> {
-        let (browser, handler_task) = browser::launch(cfg).await?;
+        let (browser, handler_task, profile_dir) = browser::launch(cfg).await?;
         let permits = if cfg.max_concurrent == 0 {
             4
         } else {
@@ -115,6 +125,7 @@ impl HeadlessRenderer {
             handler_task,
             permit: Arc::new(Semaphore::new(permits)),
             asset_cfg: cfg.clone(),
+            _profile_dir: profile_dir,
         })
     }
 
@@ -167,6 +178,23 @@ impl HeadlessRenderer {
             }
         });
 
+        // Start network-idle tracking *before* navigating. chromiumoxide's
+        // event listeners only deliver events emitted after they attach, so a
+        // tracker created after `goto()` races the page's own subresource
+        // requests and can miss the very XHR a `networkidle0` wait exists for.
+        let idle_tracker = if self.asset_cfg.default_wait == "networkidle0" {
+            match NetworkIdleTracker::start(&page).await {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    intercept_task.abort();
+                    let _ = page.close().await;
+                    return Err(e);
+                }
+            }
+        } else {
+            None
+        };
+
         let url_str = url.to_string();
 
         // Navigate. The wait phase below is what enforces the per-render
@@ -180,9 +208,9 @@ impl HeadlessRenderer {
 
         let timeout = self.asset_cfg.timeout();
         let timeout_secs = timeout.as_secs() as u32;
-        let wait_result = match self.asset_cfg.default_wait.as_str() {
-            "networkidle2" => wait_network_idle2(&page, timeout).await,
-            _ => wait_dom_content_loaded(&page, timeout).await,
+        let wait_result = match &idle_tracker {
+            Some(tracker) => tracker.wait_until_idle(&page, timeout).await,
+            None => wait_dom_content_loaded(&page, timeout).await,
         };
         if wait_result.is_err() {
             intercept_task.abort();
@@ -241,98 +269,123 @@ async fn wait_dom_content_loaded(
     Ok(())
 }
 
-/// Wait until the page reaches `domcontentloaded` and then settles to a
-/// network-quiet window: at most 2 in-flight requests continuously for at
-/// least 500 ms (Puppeteer's `networkidle2` definition). Bounded by the
-/// overall `timeout`.
+/// Tracks in-flight network requests for a `networkidle0` wait.
+///
+/// **Must be started before navigation.** chromiumoxide's `event_listener`
+/// subscriptions only deliver events emitted after they attach; a tracker
+/// created after `page.goto()` races the page's own subresource requests and
+/// can miss the very XHR a `networkidle0` wait exists to wait for.
 ///
 /// In-flight requests are tracked by `RequestId` in a set — inserted on
 /// `Network.requestWillBeSent`, removed on `loadingFinished`/`loadingFailed`.
 /// (`responseReceived` is *not* a completion: the body is still streaming, so
 /// counting it would under-count in-flight work and return too early.)
-async fn wait_network_idle2(
-    page: &chromiumoxide::Page,
-    timeout: Duration,
-) -> Result<(), HeadlessError> {
-    use std::collections::HashSet;
-    use std::sync::Mutex as StdMutex;
-    use std::time::Instant;
+struct NetworkIdleTracker {
+    inflight: Arc<StdMutex<HashSet<RequestId>>>,
+    tasks: Vec<JoinHandle<()>>,
+}
 
-    use chromiumoxide::cdp::browser_protocol::network::{
-        EnableParams as NetworkEnableParams, EventLoadingFailed, EventLoadingFinished,
-        EventRequestWillBeSent, RequestId,
-    };
-
-    page.execute(NetworkEnableParams::default())
-        .await
-        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
-
-    let inflight: Arc<StdMutex<HashSet<RequestId>>> = Arc::new(StdMutex::new(HashSet::new()));
-
-    let mut will = page
-        .event_listener::<EventRequestWillBeSent>()
-        .await
-        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
-    let mut finished = page
-        .event_listener::<EventLoadingFinished>()
-        .await
-        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
-    let mut failed = page
-        .event_listener::<EventLoadingFailed>()
-        .await
-        .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
-
-    let started = inflight.clone();
-    let t_will: JoinHandle<()> = tokio::spawn(async move {
-        while let Some(e) = will.next().await {
-            started.lock().unwrap().insert(e.request_id.clone());
-        }
-    });
-    let done = inflight.clone();
-    let t_finished: JoinHandle<()> = tokio::spawn(async move {
-        while let Some(e) = finished.next().await {
-            done.lock().unwrap().remove(&e.request_id);
-        }
-    });
-    let errored = inflight.clone();
-    let t_failed: JoinHandle<()> = tokio::spawn(async move {
-        while let Some(e) = failed.next().await {
-            errored.lock().unwrap().remove(&e.request_id);
-        }
-    });
-
-    let poll = inflight.clone();
-    let waited = tokio::time::timeout(timeout, async {
-        // Reach domcontentloaded first so the initial document's subresource
-        // requests have a chance to start before we judge the page "quiet".
-        page.wait_for_navigation()
+impl NetworkIdleTracker {
+    /// Enable the Network domain and begin tracking in-flight requests. Call
+    /// this *before* `page.goto()`.
+    async fn start(page: &chromiumoxide::Page) -> Result<Self, HeadlessError> {
+        page.execute(NetworkEnableParams::default())
             .await
             .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
-        let mut quiet_since: Option<Instant> = None;
-        loop {
-            let n = poll.lock().unwrap().len();
-            if n <= 2 {
-                let since = *quiet_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= Duration::from_millis(500) {
-                    return Ok::<(), HeadlessError>(());
-                }
-            } else {
-                quiet_since = None;
+
+        let inflight: Arc<StdMutex<HashSet<RequestId>>> = Arc::new(StdMutex::new(HashSet::new()));
+
+        let mut will = page
+            .event_listener::<EventRequestWillBeSent>()
+            .await
+            .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+        let mut finished = page
+            .event_listener::<EventLoadingFinished>()
+            .await
+            .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+        let mut failed = page
+            .event_listener::<EventLoadingFailed>()
+            .await
+            .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+
+        let started = inflight.clone();
+        let t_will: JoinHandle<()> = tokio::spawn(async move {
+            while let Some(e) = will.next().await {
+                started.lock().unwrap().insert(e.request_id.clone());
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        });
+        let done = inflight.clone();
+        let t_finished: JoinHandle<()> = tokio::spawn(async move {
+            while let Some(e) = finished.next().await {
+                done.lock().unwrap().remove(&e.request_id);
+            }
+        });
+        let errored = inflight.clone();
+        let t_failed: JoinHandle<()> = tokio::spawn(async move {
+            while let Some(e) = failed.next().await {
+                errored.lock().unwrap().remove(&e.request_id);
+            }
+        });
+
+        Ok(Self {
+            inflight,
+            tasks: vec![t_will, t_finished, t_failed],
+        })
+    }
+
+    /// Wait until the page reaches `domcontentloaded` and the network then
+    /// settles to zero in-flight requests for a continuous 500 ms (Puppeteer's
+    /// `networkidle0`). Captures content loaded by a post-load XHR — the common
+    /// SPA pattern — which the looser `networkidle2` (≤2 in-flight) would skip,
+    /// since a single pending request already counts as "idle". Bounded by
+    /// `timeout`, so a page holding a persistent connection
+    /// (websocket/SSE/analytics beacon) returns at the timeout rather than
+    /// hanging.
+    async fn wait_until_idle(
+        &self,
+        page: &chromiumoxide::Page,
+        timeout: Duration,
+    ) -> Result<(), HeadlessError> {
+        use std::time::Instant;
+
+        let poll = self.inflight.clone();
+        let waited = tokio::time::timeout(timeout, async {
+            // Reach domcontentloaded first so the initial document's
+            // subresource requests have a chance to start before we judge the
+            // page "quiet".
+            page.wait_for_navigation()
+                .await
+                .map_err(|e| HeadlessError::Cdp(e.to_string()))?;
+            let mut quiet_since: Option<Instant> = None;
+            loop {
+                let n = poll.lock().unwrap().len();
+                if n == 0 {
+                    let since = *quiet_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= Duration::from_millis(500) {
+                        return Ok::<(), HeadlessError>(());
+                    }
+                } else {
+                    quiet_since = None;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+
+        match waited {
+            Ok(inner) => inner,
+            // The caller maps any Err here into HeadlessError::Timeout with the
+            // url + configured timeout_secs.
+            Err(_elapsed) => Err(HeadlessError::Cdp("network idle0 wait timed out".into())),
         }
-    })
-    .await;
+    }
+}
 
-    t_will.abort();
-    t_finished.abort();
-    t_failed.abort();
-
-    match waited {
-        Ok(inner) => inner,
-        // The caller maps any Err here into HeadlessError::Timeout with the
-        // url + configured timeout_secs.
-        Err(_elapsed) => Err(HeadlessError::Cdp("network idle2 wait timed out".into())),
+impl Drop for NetworkIdleTracker {
+    fn drop(&mut self) {
+        for t in &self.tasks {
+            t.abort();
+        }
     }
 }
 

@@ -106,7 +106,7 @@ HuggingFace on first use (or ahead-of-time via `rover model download`).
 
 - Weights are stored under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 - Rover does not modify or upload model weights.
-- The default models (`Qwen/Qwen3.5-0.8B`, `HuggingFaceTB/SmolVLM-256M-Instruct`)
+- The default models (`Qwen/Qwen3.5-0.8B`, `Qwen/Qwen2-VL-2B-Instruct`)
   are public; no authentication required.
 - Users pulling gated/private repos must set `HF_TOKEN` in the environment.
 

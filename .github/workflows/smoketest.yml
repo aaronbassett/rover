@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-cache-local-vision-${{ runner.os }}-smolvlm-256m
+          key: hf-cache-local-vision-${{ runner.os }}-qwen2vl-2b
       - run: cargo test --features local-vision,test-loopback --test vlm_local_smoke -- --ignored
 
   feature-headless:

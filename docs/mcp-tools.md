@@ -71,7 +71,7 @@ When the binary is built with `--features headless`, pass:
 {
   "headless": {
     "mode": "off" | "on" | "auto",
-    "wait": "domcontentloaded" | "networkidle2",
+    "wait": "domcontentloaded" | "networkidle0",
     "timeout_secs": 15
   }
 }
