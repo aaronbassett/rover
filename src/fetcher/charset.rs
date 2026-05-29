@@ -52,15 +52,14 @@ pub fn detect_encoding(content_type: Option<&str>, bytes: &[u8]) -> Detected {
     }
 
     // 2. HTTP Content-Type charset
-    if let Some(ct) = content_type {
-        if let Some(label) = parse_charset_param(ct) {
-            if let Some(enc) = Encoding::for_label(label.as_bytes()) {
-                return Detected {
-                    encoding: enc,
-                    source: DetectionSource::HttpHeader,
-                };
-            }
-        }
+    if let Some(ct) = content_type
+        && let Some(label) = parse_charset_param(ct)
+        && let Some(enc) = Encoding::for_label(label.as_bytes())
+    {
+        return Detected {
+            encoding: enc,
+            source: DetectionSource::HttpHeader,
+        };
     }
 
     // 3. <meta> sniff in first 1024 bytes

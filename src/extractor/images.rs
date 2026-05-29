@@ -549,28 +549,28 @@ pub(crate) async fn classify(
             Err(_) => None,
         },
     };
-    if let Some((w, h)) = dims {
-        if w < filters.min_width || h < filters.min_height {
-            return CaptionDecision::Skip {
-                reason: SkipReason::BelowMinDimensions,
-                dims: Some((w, h)),
-                bytes: None,
-            };
-        }
+    if let Some((w, h)) = dims
+        && (w < filters.min_width || h < filters.min_height)
+    {
+        return CaptionDecision::Skip {
+            reason: SkipReason::BelowMinDimensions,
+            dims: Some((w, h)),
+            bytes: None,
+        };
     }
 
     // Step 2: size.
     let bytes: Option<u64> = fetch_content_length(http, src, ssrf_level)
         .await
         .unwrap_or_default();
-    if let Some(n) = bytes {
-        if n > filters.max_bytes {
-            return CaptionDecision::Skip {
-                reason: SkipReason::AboveMaxBytes,
-                dims,
-                bytes: Some(n),
-            };
-        }
+    if let Some(n) = bytes
+        && n > filters.max_bytes
+    {
+        return CaptionDecision::Skip {
+            reason: SkipReason::AboveMaxBytes,
+            dims,
+            bytes: Some(n),
+        };
     }
 
     // Step 3: budget.
@@ -586,22 +586,21 @@ pub(crate) async fn classify(
 }
 
 fn sniff_ext(resp: &reqwest::Response, url: &Url) -> String {
-    if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE) {
-        if let Ok(s) = ct.to_str() {
-            let mime = s.split(';').next().unwrap_or("").trim();
-            if let Some(ext) =
-                mime_guess::get_mime_extensions_str(mime).and_then(|exts| exts.first())
-            {
-                return (*ext).to_string();
-            }
+    if let Some(ct) = resp.headers().get(reqwest::header::CONTENT_TYPE)
+        && let Ok(s) = ct.to_str()
+    {
+        let mime = s.split(';').next().unwrap_or("").trim();
+        if let Some(ext) = mime_guess::get_mime_extensions_str(mime).and_then(|exts| exts.first()) {
+            return (*ext).to_string();
         }
     }
-    if let Some(path_seg) = url.path_segments().and_then(|mut s| s.next_back()) {
-        if let Some((_, ext)) = path_seg.rsplit_once('.') {
-            if !ext.is_empty() && ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
-                return ext.to_lowercase();
-            }
-        }
+    if let Some(path_seg) = url.path_segments().and_then(|mut s| s.next_back())
+        && let Some((_, ext)) = path_seg.rsplit_once('.')
+        && !ext.is_empty()
+        && ext.len() <= 5
+        && ext.chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return ext.to_lowercase();
     }
     "bin".to_string()
 }

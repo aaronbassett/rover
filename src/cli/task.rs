@@ -59,15 +59,15 @@ pub async fn run_with_writers<W: Write>(
     let row = get(&db, &args.id)
         .await?
         .ok_or_else(|| anyhow!("task {} not found", args.id))?;
-    if let Some(want) = args.expect_kind {
-        if row.kind.as_str() != want {
-            return Err(anyhow!(
-                "task {} is kind={}, expected {}",
-                args.id,
-                row.kind.as_str(),
-                want
-            ));
-        }
+    if let Some(want) = args.expect_kind
+        && row.kind.as_str() != want
+    {
+        return Err(anyhow!(
+            "task {} is kind={}, expected {}",
+            args.id,
+            row.kind.as_str(),
+            want
+        ));
     }
 
     if args.cancel {

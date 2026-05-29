@@ -201,15 +201,15 @@ pub async fn fetch_url_conditional(
 
     let (body, charset) = decode_to_utf8(content_type.as_deref(), &bytes);
 
-    if let Some(ref ct) = content_type {
-        if ct.to_ascii_lowercase().contains("charset=") {
-            debug!(
-                target: "rover::fetcher::charset",
-                http_charset = ct.as_str(),
-                detected = %charset.encoding.name(),
-                "charset detection complete"
-            );
-        }
+    if let Some(ref ct) = content_type
+        && ct.to_ascii_lowercase().contains("charset=")
+    {
+        debug!(
+            target: "rover::fetcher::charset",
+            http_charset = ct.as_str(),
+            detected = %charset.encoding.name(),
+            "charset detection complete"
+        );
     }
 
     let canonical_url = extract_canonical_url(&body, &final_url, link_header.as_deref());

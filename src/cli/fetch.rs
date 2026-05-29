@@ -235,10 +235,10 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     let envelope = render(&meta);
     print!("{envelope}");
 
-    if let Some(r) = &har_recorder {
-        if let Err(e) = r.flush().await {
-            tracing::warn!(target: "rover::fetcher", error = ?e, "har flush failed");
-        }
+    if let Some(r) = &har_recorder
+        && let Err(e) = r.flush().await
+    {
+        tracing::warn!(target: "rover::fetcher", error = ?e, "har flush failed");
     }
 
     // M9 fix C1: tear down the renderer cleanly so chromiumoxide's handler

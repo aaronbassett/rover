@@ -283,10 +283,10 @@ fn scalar_or_person_name(node: &Value, key: &str) -> Option<String> {
     if let Some(s) = v.as_str() {
         return (!s.is_empty()).then(|| s.to_string());
     }
-    if let Some(obj) = v.as_object() {
-        if let Some(name) = obj.get("name").and_then(|n| n.as_str()) {
-            return Some(name.to_string());
-        }
+    if let Some(obj) = v.as_object()
+        && let Some(name) = obj.get("name").and_then(|n| n.as_str())
+    {
+        return Some(name.to_string());
     }
     if let Some(arr) = v.as_array() {
         for item in arr {

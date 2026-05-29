@@ -12,7 +12,7 @@ repository = "https://github.com/aaronbassett/rover"
 readme = "README.md"
 keywords = ["mcp", "web", "scraping", "markdown", "llm"]
 categories = ["command-line-utilities", "web-programming"]
-rust-version = "1.85"
+rust-version = "1.96.0"
 
 [lib]
 name = "rover"

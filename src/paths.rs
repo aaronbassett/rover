@@ -14,10 +14,10 @@ use std::path::PathBuf;
 /// 3. `./.rover` (last-resort relative fallback; only hit when the platform
 ///    helper fails, which is rare on supported OSes).
 pub fn data_dir() -> PathBuf {
-    if let Ok(env) = std::env::var("ROVER_DATA_DIR") {
-        if !env.is_empty() {
-            return PathBuf::from(env);
-        }
+    if let Ok(env) = std::env::var("ROVER_DATA_DIR")
+        && !env.is_empty()
+    {
+        return PathBuf::from(env);
     }
     dirs::data_local_dir()
         .map(|p| p.join("rover"))

@@ -104,3 +104,14 @@ jobs:
 
       - name: cargo build --release
         run: cargo build --release
+
+  msrv:
+    name: MSRV (1.96.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      # `cargo check`, not `cargo test`: the MSRV contract is "the code
+      # compiles on 1.96.0", not "the environment-dependent tests pass".
+      - run: cargo check --all-targets --features test-loopback

@@ -49,12 +49,11 @@ async fn already_processed_indices(db: &Db, task_id: &str) -> HashSet<u32> {
             break;
         }
         for r in &rows {
-            if r.kind == "item_done" || r.kind == "item_failed" {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.payload_json) {
-                    if let Some(idx) = v.get("index").and_then(|x| x.as_u64()) {
-                        seen.insert(idx as u32);
-                    }
-                }
+            if (r.kind == "item_done" || r.kind == "item_failed")
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&r.payload_json)
+                && let Some(idx) = v.get("index").and_then(|x| x.as_u64())
+            {
+                seen.insert(idx as u32);
             }
         }
         cursor = rows.last().map(|r| r.id).unwrap_or(cursor);
