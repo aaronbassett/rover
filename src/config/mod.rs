@@ -533,7 +533,8 @@ pub struct HeadlessConfig {
     #[serde(default = "default_block_service_workers")]
     pub block_service_workers: bool,
 
-    /// Default wait condition: `"domcontentloaded"` or `"networkidle2"`.
+    /// Default wait condition: `"domcontentloaded"` or `"networkidle0"`
+    /// (wait for the network to fully settle — captures post-load XHR content).
     #[serde(default = "default_headless_wait")]
     pub default_wait: String,
 

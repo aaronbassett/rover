@@ -175,7 +175,7 @@ Configuration for the headless browser renderer when the `headless` feature is c
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `auto_detect_spa` | bool | `true` | When true and MCP `fetch` does not specify `headless.mode`, auto-detect single-page apps via heuristics and render via headless. |
-| `default_wait` | string | `"domcontentloaded"` | When to consider a render done. `domcontentloaded` returns as soon as the initial HTML is parsed. `networkidle2` additionally waits until at most 2 requests are in flight for a continuous 500 ms (bounded by `timeout_secs`) — slower, but the right choice for SPAs that fetch their content over XHR after load. |
+| `default_wait` | string | `"domcontentloaded"` | When to consider a render done. `domcontentloaded` returns as soon as the initial HTML is parsed. `networkidle0` additionally waits until the network fully settles — zero requests in flight for a continuous 500 ms (bounded by `timeout_secs`) — slower, but the right choice for SPAs that fetch their content over XHR after load (a single pending XHR still blocks completion). |
 | `timeout` | duration | `"30s"` | Per-render timeout. |
 | `max_concurrent` | integer | `4` | Number of concurrent headless render tasks. |
 | `chrome_executable` | string | unset | Path to the Chrome/Chromium executable. When unset, attempts auto-detection (searches PATH, common install locations). |

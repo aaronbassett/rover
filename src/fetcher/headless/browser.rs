@@ -4,20 +4,36 @@
 //! Linux/macOS/Windows (PATH lookup + standard install paths). The
 //! `chrome_executable` config key overrides that path explicitly.
 
+use std::path::Path;
+
 use chromiumoxide::browser::{Browser, BrowserConfig, BrowserConfigBuilder};
 use futures::StreamExt;
+use tempfile::TempDir;
 use tokio::task::JoinHandle;
 
 use crate::config::HeadlessConfig;
 use crate::fetcher::headless::HeadlessError;
 
 /// Build a `BrowserConfig` from the Rover headless config block.
-pub fn build_browser_config(cfg: &HeadlessConfig) -> Result<BrowserConfig, HeadlessError> {
+///
+/// `profile_dir` is the throwaway Chrome user-data directory for this
+/// instance. It must be unique per launch: without an explicit
+/// `user_data_dir`, chromiumoxide points every browser at a single shared
+/// `<tmp>/chromiumoxide-runner` profile, and Chrome's `ProcessSingleton`
+/// then refuses to start a second instance against the same profile
+/// (`Failed to create .../SingletonLock: File exists`). That aborts every
+/// renderer but the first whenever two launch concurrently — e.g. the
+/// parallel headless smoketests, or concurrent renders in one process.
+pub fn build_browser_config(
+    cfg: &HeadlessConfig,
+    profile_dir: &Path,
+) -> Result<BrowserConfig, HeadlessError> {
     let mut builder: BrowserConfigBuilder = BrowserConfig::builder();
     if !cfg.chrome_executable.is_empty() {
         builder = builder.chrome_executable(&cfg.chrome_executable);
     }
     builder = builder.enable_request_intercept();
+    builder = builder.user_data_dir(profile_dir);
     builder
         .build()
         .map_err(|e| HeadlessError::ConfigInvalid(e.to_string()))
@@ -25,10 +41,20 @@ pub fn build_browser_config(cfg: &HeadlessConfig) -> Result<BrowserConfig, Headl
 
 /// Launch the browser and spawn the background handler task. The handler
 /// task drives `chromiumoxide::Browser`'s event loop for the browser's
-/// lifetime. Returns `(Browser, JoinHandle)` — callers must `abort()` the
-/// handle on shutdown.
-pub async fn launch(cfg: &HeadlessConfig) -> Result<(Browser, JoinHandle<()>), HeadlessError> {
-    let bc = build_browser_config(cfg)?;
+/// lifetime. Returns `(Browser, JoinHandle, TempDir)` — callers must
+/// `abort()` the handle on shutdown and keep the `TempDir` alive for the
+/// browser's lifetime (it is the per-instance profile directory and is
+/// removed when dropped).
+pub async fn launch(
+    cfg: &HeadlessConfig,
+) -> Result<(Browser, JoinHandle<()>, TempDir), HeadlessError> {
+    let profile_dir = tempfile::Builder::new()
+        .prefix("rover-headless-")
+        .tempdir()
+        .map_err(|e| {
+            HeadlessError::LaunchFailed(format!("could not create browser profile dir: {e}"))
+        })?;
+    let bc = build_browser_config(cfg, profile_dir.path())?;
     let (browser, mut handler) = Browser::launch(bc)
         .await
         .map_err(|e| HeadlessError::LaunchFailed(e.to_string()))?;
@@ -38,7 +64,7 @@ pub async fn launch(cfg: &HeadlessConfig) -> Result<(Browser, JoinHandle<()>), H
             // chromiumoxide internally dispatches them to the page.
         }
     });
-    Ok((browser, task))
+    Ok((browser, task, profile_dir))
 }
 
 #[cfg(test)]
@@ -51,7 +77,8 @@ mod tests {
             chrome_executable: String::new(),
             ..HeadlessConfig::default()
         };
-        let bc = build_browser_config(&cfg);
+        let profile_dir = tempfile::tempdir().expect("tempdir");
+        let bc = build_browser_config(&cfg, profile_dir.path());
         assert!(
             bc.is_ok(),
             "config builds even without chrome installed; launch is the failing step"
