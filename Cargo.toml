@@ -66,7 +66,6 @@ unicode-segmentation = "1"
 genai = "0.4"
 zstd = { version = "0.13", default-features = false }
 futures = "0.3"
-image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 base64 = "0.22"
 chromiumoxide = { version = "0.9.1", optional = true, default-features = false }
 mistralrs = { version = "0.8.1", optional = true, default-features = false }
@@ -86,7 +85,6 @@ rmcp = { version = "1", features = ["client", "transport-child-process"] }
 default = []
 test-loopback = []
 headless = ["dep:chromiumoxide"]
-local-vision = ["dep:mistralrs", "dep:image"]
 local-inference = ["dep:mistralrs"]
 
 [profile.release]

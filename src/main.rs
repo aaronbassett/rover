@@ -32,7 +32,7 @@ struct Cli {
     /// disables tamper detection for downloaded weights — only use it if you
     /// understand the risk. Equivalent to setting
     /// `ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`.
-    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[cfg(feature = "local-inference")]
     #[arg(long, global = true)]
     unsafe_disable_model_integrity_check: bool,
 
@@ -88,7 +88,7 @@ enum Command {
     Config(ConfigCmd),
 
     /// Manage local HuggingFace model cache (M9).
-    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[cfg(feature = "local-inference")]
     #[command(subcommand)]
     Model(rover::cli::model::ModelCmd),
 }
@@ -265,7 +265,7 @@ fn main() -> ExitCode {
     // the env var converge here: setting the flag exports the env var (read by
     // the verification path), and either path triggers the warning. Done before
     // the runtime spawns any threads so the `set_var` is sound.
-    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[cfg(feature = "local-inference")]
     {
         if cli.unsafe_disable_model_integrity_check {
             // SAFETY: still single-threaded — the tokio runtime is built below.
@@ -392,7 +392,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
                 };
             }
         },
-        #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+        #[cfg(feature = "local-inference")]
         Command::Model(cmd) => rover::cli::model::run(cmd).await,
     };
 

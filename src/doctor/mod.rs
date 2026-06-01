@@ -58,9 +58,7 @@ pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
     ];
     #[cfg(feature = "local-inference")]
     checks.push(Box::new(checks::LocalInferenceModelCached));
-    #[cfg(feature = "local-vision")]
-    checks.push(Box::new(checks::LocalVisionModelCached));
-    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[cfg(feature = "local-inference")]
     checks.push(Box::new(checks::LocalModelIntegrity));
     #[cfg(feature = "headless")]
     checks.push(Box::new(checks::HeadlessBrowserLaunches));
@@ -178,7 +176,7 @@ mod tests {
         assert_eq!(r.status, CheckStatus::Skip);
     }
 
-    #[cfg(any(feature = "local-inference", feature = "local-vision"))]
+    #[cfg(feature = "local-inference")]
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn local_model_integrity_passes_intact_and_fails_tampered() {

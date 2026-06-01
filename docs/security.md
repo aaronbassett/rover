@@ -101,13 +101,12 @@ startup documents that choice.
 
 ## Local model files (M9)
 
-The `local-inference` and `local-vision` features download model weights from
-HuggingFace on first use (or ahead-of-time via `rover model download`).
+The `local-inference` feature downloads model weights from HuggingFace on
+first use (or ahead-of-time via `rover model download`).
 
 - Weights are stored under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 - Rover does not modify or upload model weights.
-- The default models (`Qwen/Qwen3.5-0.8B`, `HuggingFaceTB/SmolVLM-256M-Instruct`)
-  are public; no authentication required.
+- The default model (`Qwen/Qwen3.5-0.8B`) is public; no authentication required.
 - Users pulling gated/private repos must set `HF_TOKEN` in the environment.
 
 ### Integrity verification

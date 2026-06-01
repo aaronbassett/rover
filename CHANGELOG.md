@@ -25,6 +25,16 @@ Pre-1.0 stability expectations are spelled out in [`docs/versioning.md`](docs/ve
   still named `rover`.
 - Release builds now strip symbols (`[profile.release] strip = "symbols"`).
 
+### Removed
+
+- The `local-vision` Cargo feature and its `mistralrs`/SmolVLM image-captioning
+  backend (`kind = "local"` captioners). It was unusable on the CPU backend the
+  nightly runs on (vision-attention contiguity and encoder-cache bugs in
+  mistralrs 0.8.x). Use a cloud captioner (`kind = "cloud"`) instead — including
+  local OpenAI-compatible servers (ollama, LM Studio, …) via
+  `provider = "openai_compat"`. Local *text* summarization (`local-inference`)
+  is unaffected. See git history to restore the backend.
+
 ### Security
 
 - Image-fetch helpers (`download_image_bytes`, `partial_fetch_dimensions`,

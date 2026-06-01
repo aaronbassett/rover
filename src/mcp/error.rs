@@ -258,10 +258,6 @@ fn vlm_error_to_rover_error(e: &crate::vlm::VlmError) -> RoverError {
                  (expected {expected}, got {actual})"
             ),
         ),
-        #[cfg(feature = "local-vision")]
-        V::ImageDecode(_) => {
-            RoverError::new(RoverError::CAPTIONER_IMAGE_DECODE_FAILED, e.to_string())
-        }
         V::Storage(inner) => RoverError::new(RoverError::STORAGE_ERROR, inner.to_string()),
     }
 }
@@ -642,21 +638,6 @@ mod tests {
         let r = e.into_rover_error();
         assert_eq!(r.code, RoverError::CAPTIONER_MODEL_ERROR);
         assert!(r.message.contains("model not found"));
-    }
-
-    #[cfg(feature = "local-vision")]
-    #[test]
-    fn captioner_image_decode_routes_to_typed_code() {
-        use crate::extractor::ExtractorError;
-        use crate::vlm::VlmError;
-        // Construct an image::ImageError via a decode attempt on bad bytes.
-        let img_err = image::load_from_memory(b"not an image").unwrap_err();
-        let e = McpError::Extractor(ExtractorError::CaptionerCall {
-            name: "openai".into(),
-            source: Box::new(VlmError::ImageDecode(img_err)),
-        });
-        let r = e.into_rover_error();
-        assert_eq!(r.code, RoverError::CAPTIONER_IMAGE_DECODE_FAILED);
     }
 
     #[test]

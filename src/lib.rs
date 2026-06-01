@@ -10,7 +10,7 @@ pub mod error;
 pub mod extractor;
 pub mod fetcher;
 pub mod mcp;
-#[cfg(any(feature = "local-inference", feature = "local-vision"))]
+#[cfg(feature = "local-inference")]
 pub mod model_integrity;
 pub mod paths;
 pub mod storage;

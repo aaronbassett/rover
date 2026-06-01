@@ -465,66 +465,12 @@ impl Check for LocalInferenceModelCached {
     }
 }
 
-#[cfg(feature = "local-vision")]
-pub struct LocalVisionModelCached;
-
-#[cfg(feature = "local-vision")]
-#[async_trait]
-impl Check for LocalVisionModelCached {
-    fn name(&self) -> &'static str {
-        "local_vision_model_cached"
-    }
-    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
-        let locals: Vec<(&String, &crate::config::CaptionerConfig)> = ctx
-            .config
-            .captioners
-            .iter()
-            .filter(|(_, c)| c.kind == "local")
-            .collect();
-        if locals.is_empty() {
-            return CheckReport {
-                check: self.name(),
-                status: CheckStatus::Skip,
-                detail: Some("no [captioners.<name>] kind = \"local\" configured".into()),
-            };
-        }
-        let mut missing: Vec<String> = Vec::new();
-        for (name, cfg) in locals {
-            let model = match cfg.model.as_deref() {
-                Some(m) => m,
-                None => {
-                    missing.push(format!("{name}: model missing in config"));
-                    continue;
-                }
-            };
-            if !crate::vlm::local::hf_cache_has(model) {
-                missing.push(format!(
-                    "{name}: model {model} not cached. Run `rover model download {model}`"
-                ));
-            }
-        }
-        if missing.is_empty() {
-            CheckReport {
-                check: self.name(),
-                status: CheckStatus::Ok,
-                detail: Some("all configured local-vision captioners have cached weights".into()),
-            }
-        } else {
-            CheckReport {
-                check: self.name(),
-                status: CheckStatus::Fail,
-                detail: Some(missing.join("; ")),
-            }
-        }
-    }
-}
-
 /// Verifies the integrity manifest of every cached HuggingFace model. Present
 /// only when a local-model feature is compiled in.
-#[cfg(any(feature = "local-inference", feature = "local-vision"))]
+#[cfg(feature = "local-inference")]
 pub struct LocalModelIntegrity;
 
-#[cfg(any(feature = "local-inference", feature = "local-vision"))]
+#[cfg(feature = "local-inference")]
 #[async_trait]
 impl Check for LocalModelIntegrity {
     fn name(&self) -> &'static str {

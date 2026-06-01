@@ -1,6 +1,6 @@
 # Feature Flags
 
-Rover ships with three optional Cargo features. The default install
+Rover ships with two optional Cargo features. The default install
 (`cargo install rover`) produces a lean binary under 75 MiB with no
 mistralrs, no chromiumoxide, and no extra model weights to manage.
 
@@ -10,11 +10,12 @@ Enable any combination of features by passing `--features` to
 | Feature | Enables | Approx. binary size add |
 | --- | --- | --- |
 | `local-inference` | Local LLM summarization via `mistral.rs` (default model: Qwen 3.5 0.8B) | ~80 MB |
-| `local-vision` | Local image captioning via `mistral.rs` (default model: SmolVLM 256M) | shared with `local-inference`; ~5 MB additional |
 | `headless` | SPA rendering via `chromiumoxide` (system Chrome required) | ~32 MB |
 
-Cloud image captioners (OpenAI, Anthropic, Gemini, anything `genai`
-supports) are **always compiled in** and don't require any feature flag.
+Image captioning is **always compiled in** via cloud / OpenAI-compatible
+providers (OpenAI, Anthropic, Gemini, plus local servers like ollama and
+LM Studio through `provider = "openai_compat"`) — no feature flag required.
+There is no local mistralrs vision backend; see "Image captioning" below.
 
 ---
 
@@ -45,34 +46,10 @@ seconds depending on hardware); subsequent calls warm.
 
 ---
 
-## `local-vision`
+## Image captioning (always-on)
 
-```
-cargo install rover --features local-vision
-rover model download HuggingFaceTB/SmolVLM-256M-Instruct
-```
-
-Configure under `[captioners.<name>]`:
-
-```toml
-[captioners.local]
-kind = "local"
-model = "HuggingFaceTB/SmolVLM-256M-Instruct"
-
-[image_captions]
-default = "local"
-```
-
-Available variants (swap via the `model` field):
-- `HuggingFaceTB/SmolVLM-256M-Instruct` — smallest, fastest
-- `HuggingFaceTB/SmolVLM-500M-Instruct` — better quality
-- `HuggingFaceTB/SmolVLM2-2.2B-Instruct` — best quality
-
----
-
-## Cloud captioners (always-on)
-
-No feature flag required:
+No feature flag required — captioning runs through `genai`-backed cloud or
+OpenAI-compatible providers:
 
 ```toml
 [captioners.openai]
@@ -88,6 +65,26 @@ default = "openai"
 Supported providers: `openai`, `anthropic`, `gemini`, `openai_compat`
 (LM Studio, Ollama, vLLM, etc.). The `genai` crate documents the full
 list.
+
+### Local captioning via an OpenAI-compatible server
+
+For fully-local captioning, point `provider = "openai_compat"` at a local
+server running a vision-capable model:
+
+```toml
+[captioners.ollama]
+kind = "cloud"
+provider = "openai_compat"
+model = "llama3.2-vision"                 # any vision model the server hosts
+base_url = "http://localhost:11434/v1"    # LM Studio: http://localhost:1234/v1
+# api_key_env optional — keyless local servers need no key
+```
+
+> A native local backend (`mistralrs`/SmolVLM, behind a `local-vision` feature)
+> previously existed but was removed: it was unusable on the CPU backend the
+> nightly runs on (vision-attention contiguity + encoder-cache bugs in
+> mistralrs 0.8.x). The OpenAI-compatible path above replaces it and offloads
+> inference to a server built for it. See git history to restore the old code.
 
 ---
 
@@ -129,7 +126,7 @@ for the full `[headless]` block reference.
 
 ## `rover model` cache management
 
-When either `local-inference` or `local-vision` is compiled in:
+When `local-inference` is compiled in:
 
 ```
 rover model download <repo_id>      # download to HF_HOME cache
@@ -151,7 +148,6 @@ With features enabled, expect roughly:
 | Combination | Approx. size |
 | --- | --- |
 | `local-inference` | ~105 MB |
-| `local-vision` | ~105 MB (shares mistralrs with local-inference) |
 | `headless` | ~57 MB |
 | `local-inference + headless` | ~135 MB |
 | All features | ~140 MB |

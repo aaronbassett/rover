@@ -22,9 +22,8 @@ Rover ships through three channels, all driven by one workflow
 | ------- | ------------- |
 | `basic` | `--no-default-features` |
 | `local-inference` | `--no-default-features --features local-inference` |
-| `local-vision` | `--no-default-features --features local-vision` |
 | `headless` | `--no-default-features --features headless` |
-| `complete` | `--no-default-features --features local-inference,local-vision,headless` |
+| `complete` | `--no-default-features --features local-inference,headless` |
 
 Tarballs are named `rover-<version>-<target>-<variant>.tar.gz` and contain the
 `rover` binary, both licenses, and a short README.
@@ -67,8 +66,8 @@ time; each installs a `rover` binary.
 
 - `rover` — the `basic` variant (default `brew install aaronbassett/tap/rover`).
 - `rover-complete` — all features (`depends_on "chromium"`).
-- `rover-local-inference`, `rover-local-vision` — single-feature; models
-  download on first use, no extra system deps.
+- `rover-local-inference` — single-feature; models download on first use, no
+  extra system deps.
 - `rover-headless` — `depends_on "chromium"`.
 
 Formulas are rendered by
