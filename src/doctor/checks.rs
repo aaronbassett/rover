@@ -605,7 +605,7 @@ impl Check for HeadlessBrowserLaunches {
     async fn run(&self, ctx: &CheckCtx) -> CheckReport {
         let result = crate::fetcher::headless::browser::launch(&ctx.config.headless).await;
         match result {
-            Ok((browser, handler)) => {
+            Ok((browser, handler, _profile_dir)) => {
                 let exec = format!(
                     "(launched via {})",
                     if ctx.config.headless.chrome_executable.is_empty() {
@@ -616,6 +616,8 @@ impl Check for HeadlessBrowserLaunches {
                 );
                 drop(browser);
                 handler.abort();
+                // `_profile_dir` (the throwaway Chrome profile) is removed
+                // when it drops at the end of this scope.
                 CheckReport {
                     check: self.name(),
                     status: CheckStatus::Ok,
