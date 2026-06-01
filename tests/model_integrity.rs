@@ -7,7 +7,7 @@
 //! Each integration test runs in its own process, so mutating `HF_HOME` /
 //! the disable env var here is isolated.
 
-#![cfg(any(feature = "local-inference", feature = "local-vision"))]
+#![cfg(feature = "local-inference")]
 
 use std::sync::Mutex;
 

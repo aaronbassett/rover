@@ -1,7 +1,7 @@
 //! Integrity verification for locally-cached HuggingFace model files (M9
 //! hardening; red-team finding #6).
 //!
-//! Compile-gated on `any(feature = "local-inference", feature = "local-vision")`.
+//! Compile-gated on `feature = "local-inference"`.
 //!
 //! After a model is downloaded, Rover records the SHA256 of every file in the
 //! resolved snapshot to a sidecar manifest (`.rover-integrity.toml`) inside the
@@ -32,7 +32,7 @@
 //! `*_at(root, …)` helpers. Tests drive the `*_at` helpers against a temp
 //! directory so they never mutate the process-global `HF_HOME`.
 
-#![cfg(any(feature = "local-inference", feature = "local-vision"))]
+#![cfg(feature = "local-inference")]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

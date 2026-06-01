@@ -182,7 +182,7 @@ rover model remove <repo_id>
 rover model verify [<repo_id>]
 ```
 
-Download, list, remove, and verify cached local models from HuggingFace Hub. Requires one of the `local-inference` or `local-vision` features at compile time; the subcommand is absent when neither feature is enabled.
+Download, list, remove, and verify cached local models from HuggingFace Hub. Requires the `local-inference` feature at compile time; the subcommand is absent without it.
 
 Models are cached under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`). All three subcommands work with this cache directory.
 
@@ -216,8 +216,8 @@ Example output:
 
 ```
 ~/.cache/huggingface/hub
-  Qwen/Qwen3.5-0.8B               1.6 GB
-  HuggingFaceTB/SmolVLM-256M-Instruct   240 MB
+  Qwen/Qwen3.5-0.8B   1.6 GB
+  Qwen/Qwen3-4B       8.1 GB
 ```
 
 ### `rover model remove`
@@ -250,7 +250,7 @@ Example output:
 
 ```
 OK    Qwen/Qwen3.5-0.8B  (4 files, revision a1b2c3d)
-FAIL  HuggingFaceTB/SmolVLM-256M-Instruct  (revision e4f5a6b)
+FAIL  Qwen/Qwen3-4B  (revision e4f5a6b)
         model.safetensors: modified (expected sha256:…, got sha256:…)
 ```
 
@@ -260,4 +260,4 @@ status. Bypass with `--unsafe-disable-model-integrity-check` (or
 `ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`) — a security-sensitive escape
 hatch that logs a warning at startup.
 
-**Note:** Gated by `any(local-inference, local-vision)`. When neither feature is compiled, `rover model --help` returns an unrecognized subcommand error.
+**Note:** Gated by `local-inference`. When it is not compiled, `rover model --help` returns an unrecognized subcommand error.

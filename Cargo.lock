@@ -4887,7 +4887,6 @@ dependencies = [
  "hf-hub",
  "httpdate",
  "humantime-serde",
- "image",
  "jiff",
  "mime_guess",
  "mistralrs",

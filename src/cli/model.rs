@@ -1,9 +1,9 @@
 //! `rover model {download|list|remove}` — HuggingFace cache management.
 //!
-//! Compile-gated on `any(feature = "local-inference", feature = "local-vision")`.
+//! Compile-gated on `feature = "local-inference"`.
 //! Wraps the existing `hf-hub` dep (M3) with explicit stderr progress.
 
-#![cfg(any(feature = "local-inference", feature = "local-vision"))]
+#![cfg(feature = "local-inference")]
 
 use std::path::PathBuf;
 

@@ -1,11 +1,11 @@
 //! Image captioning subsystem.
 //!
-//! Exposes a `VlmCaptioner` trait (Task 3) with two implementations:
-//! - `CloudCaptioner` (Task 6) — always compiled, wraps `genai::Client` for
-//!   vision-capable cloud models (OpenAI gpt-4o, Anthropic Claude with vision,
-//!   Gemini, ...).
-//! - `MistralRsCaptioner` (Task 23) — gated by the `local-vision` feature,
-//!   wraps `mistralrs` for local SmolVLM inference.
+//! Exposes a `VlmCaptioner` trait (Task 3). The sole implementation is
+//! `CloudCaptioner` (Task 6) — always compiled, wraps `genai::Client` for
+//! vision-capable cloud models (OpenAI gpt-4o, Anthropic Claude with vision,
+//! Gemini, ...) and any OpenAI-compatible server (ollama, LM Studio, ...) via
+//! `provider = "openai_compat"`. The former `local-vision` mistralrs path
+//! (SmolVLM) was removed; see git history to restore it.
 //!
 //! The `CaptionerRegistry` (Task 5) holds the configured captioners and is
 //! injected into MCP server state (Task 10).
@@ -18,9 +18,6 @@ pub mod cache;
 pub mod cloud;
 pub mod error;
 pub mod prompts;
-
-#[cfg(feature = "local-vision")]
-pub mod local;
 
 pub use error::VlmError;
 
@@ -119,7 +116,8 @@ impl CaptionerRegistry {
 /// 1. Every `[captioners.<name>]` parses into a concrete captioner.
 /// 2. `[image_captions] default` (if set) must refer to a configured captioner.
 /// 3. If unset and exactly one captioner exists, that one becomes the default.
-/// 4. `kind = "local"` without `local-vision` compiled in → `LocalFeatureNotCompiled`.
+/// 4. `kind = "local"` is no longer supported (local mistralrs captioning was
+///    removed) → `LocalFeatureNotCompiled`. Use `kind = "cloud"` instead.
 ///
 /// An empty config (no `[captioners.*]` blocks) returns an empty registry —
 /// `ImagesMode::Caption` calls will then error at fetch time with
@@ -193,24 +191,11 @@ fn build_one(
                 api_key,
             )?))
         }
-        "local" => {
-            #[cfg(not(feature = "local-vision"))]
-            {
-                Err(VlmError::LocalFeatureNotCompiled)
-            }
-            #[cfg(feature = "local-vision")]
-            {
-                let model = cfg.model.as_deref().ok_or_else(|| VlmError::Unavailable {
-                    name: name.to_string(),
-                    reason: "local captioner requires `model`".into(),
-                })?;
-                Ok(Arc::new(local::MistralRsCaptioner::new(
-                    name,
-                    model,
-                    _ic.max_concurrent,
-                )?))
-            }
-        }
+        // Local mistralrs captioning was removed (the SmolVLM/idefics3 path was
+        // broken on the CPU backend). `LocalFeatureNotCompiled` now carries a
+        // message pointing users at a cloud captioner (incl. local
+        // OpenAI-compatible servers via `provider = "openai_compat"`).
+        "local" => Err(VlmError::LocalFeatureNotCompiled),
         other => Err(VlmError::Unavailable {
             name: name.to_string(),
             reason: format!("unknown captioner kind: {other}"),
@@ -284,23 +269,20 @@ mod tests {
     }
 
     #[test]
-    fn build_with_local_kind_without_feature_errors() {
-        #[cfg(not(feature = "local-vision"))]
-        {
-            let mut cfg = crate::config::Config::default();
-            cfg.captioners.insert(
-                "local".to_string(),
-                crate::config::CaptionerConfig {
-                    kind: "local".into(),
-                    provider: None,
-                    model: Some("HuggingFaceTB/SmolVLM-256M-Instruct".into()),
-                    api_key_env: None,
-                    base_url: None,
-                },
-            );
-            let err = build(&cfg).unwrap_err();
-            assert!(matches!(err, VlmError::LocalFeatureNotCompiled));
-        }
+    fn build_with_local_kind_errors_after_removal() {
+        let mut cfg = crate::config::Config::default();
+        cfg.captioners.insert(
+            "local".to_string(),
+            crate::config::CaptionerConfig {
+                kind: "local".into(),
+                provider: None,
+                model: Some("any-model".into()),
+                api_key_env: None,
+                base_url: None,
+            },
+        );
+        let err = build(&cfg).unwrap_err();
+        assert!(matches!(err, VlmError::LocalFeatureNotCompiled));
     }
 
     #[test]
@@ -333,23 +315,5 @@ mod tests {
         // image_captions.default left as None.
         let r = build(&cfg).unwrap();
         assert_eq!(r.default_name(), Some("openai"));
-    }
-
-    #[cfg(feature = "local-vision")]
-    #[test]
-    fn build_with_local_kind_succeeds_with_feature() {
-        let mut cfg = crate::config::Config::default();
-        cfg.captioners.insert(
-            "local".to_string(),
-            crate::config::CaptionerConfig {
-                kind: "local".into(),
-                provider: None,
-                model: Some("HuggingFaceTB/SmolVLM-256M-Instruct".into()),
-                api_key_env: None,
-                base_url: None,
-            },
-        );
-        let r = build(&cfg).unwrap();
-        assert!(r.get("local").is_ok());
     }
 }

@@ -7,7 +7,11 @@ pub enum VlmError {
     #[error("no such captioner: {name}")]
     NoSuchCaptioner { name: String },
 
-    #[error("local captioner requires the `local-vision` cargo feature")]
+    #[error(
+        "local (mistralrs) captioning has been removed; configure a cloud captioner \
+         (kind = \"cloud\") instead — for local inference, point provider = \"openai_compat\" \
+         + base_url at an OpenAI-compatible server such as ollama or LM Studio"
+    )]
     LocalFeatureNotCompiled,
 
     #[error("no captioners configured for image captioning")]
@@ -34,10 +38,6 @@ pub enum VlmError {
         expected: String,
         actual: String,
     },
-
-    #[cfg(feature = "local-vision")]
-    #[error("image decode failed: {0}")]
-    ImageDecode(#[from] image::ImageError),
 
     #[error("captioner semaphore closed")]
     SemaphoreClosed,

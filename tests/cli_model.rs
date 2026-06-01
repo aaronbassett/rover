@@ -5,7 +5,7 @@
 //! `download` is exercised in the smoketest workflow against a tiny real
 //! repo (`HuggingFaceTB/SmolLM2-135M-Instruct`, ~270 MB) — see Task 53.
 
-#![cfg(any(feature = "local-inference", feature = "local-vision"))]
+#![cfg(feature = "local-inference")]
 
 use std::fs;
 

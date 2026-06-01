@@ -42,7 +42,7 @@ jobs:
           - aarch64-unknown-linux-gnu
           - x86_64-apple-darwin
           - aarch64-apple-darwin
-        variant: [basic, local-inference, local-vision, headless, complete]
+        variant: [basic, local-inference, headless, complete]
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -88,9 +88,8 @@ jobs:
           case "${{ matrix.variant }}" in
             basic)           features="--no-default-features" ;;
             local-inference) features="--no-default-features --features local-inference" ;;
-            local-vision)    features="--no-default-features --features local-vision" ;;
             headless)        features="--no-default-features --features headless" ;;
-            complete)        features="--no-default-features --features local-inference,local-vision,headless" ;;
+            complete)        features="--no-default-features --features local-inference,headless" ;;
             *) echo "::error::unknown variant ${{ matrix.variant }}"; exit 1 ;;
           esac
           echo "version=$version" >> "$GITHUB_OUTPUT"

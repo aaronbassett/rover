@@ -148,11 +148,11 @@ Free-form section: repeat for each named captioner. Mirrors the `[backends.<name
 
 | Key | Type | Required | Description |
 | --- | --- | --- | --- |
-| `kind` | string | yes | `cloud` or `local`. |
-| `provider` | string | yes (cloud) | One of `openai`, `anthropic`, `gemini`, `xai`, `groq`, `deepseek`, `together`, `fireworks`, `openai_compat`. Ignored for `kind = "local"`. |
-| `model` | string | yes | For cloud: model id (e.g. `gpt-4-vision`). For local: HuggingFace repo id (requires `local-vision` feature). |
+| `kind` | string | yes | `cloud`. (The former `local` kind — a native mistralrs vision backend — was removed; for local inference use `provider = "openai_compat"` pointed at a local server.) |
+| `provider` | string | yes | One of `openai`, `anthropic`, `gemini`, `xai`, `groq`, `deepseek`, `together`, `fireworks`, `openai_compat`. |
+| `model` | string | yes | Model id — a cloud model (e.g. `gpt-4o-mini`) or the model your `openai_compat` server hosts. |
 | `base_url` | string | yes for `openai_compat`; unused otherwise | Custom endpoint. For `openai_compat`, auto-normalized to end in `/v1/`. |
-| `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var. Unused for `kind = "local"`. |
+| `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var. Keyless local servers can omit it. |
 
 Example:
 
@@ -163,9 +163,12 @@ provider = "openai"
 model = "gpt-4-vision"
 api_key_env = "OPENAI_API_KEY"
 
-[captioners.local-vlm]
-kind = "local"
-model = "HuggingFaceTB/SmolVLM-256M-Instruct"
+# Local inference via an OpenAI-compatible server (ollama, LM Studio, vLLM, ...):
+[captioners.ollama]
+kind = "cloud"
+provider = "openai_compat"
+model = "llama3.2-vision"
+base_url = "http://localhost:11434/v1"
 ```
 
 ## `[headless]` (M9)
