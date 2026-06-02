@@ -509,6 +509,28 @@ impl Guard {
         &self.cfg
     }
 
+    /// A sentence describing, per override field, whether the agent's
+    /// `security` arg is currently honored (granted) or ignored (not granted).
+    /// Appended to covered tools' descriptions.
+    pub fn tool_security_note(&self) -> String {
+        let state = |granted: bool| {
+            if granted {
+                "currently honored (granted in config)"
+            } else {
+                "currently ignored (not granted in config)"
+            }
+        };
+        format!(
+            "Optional `security` arg (prompt-injection guard overrides): \
+             `disable_wrap`: {}; `disable_patterns`: {}; `disable_model`: {}; \
+             `level`: {}.",
+            state(self.cfg.grant_wrap),
+            state(self.cfg.grant_patterns),
+            state(self.cfg.grant_model),
+            state(self.cfg.grant_level),
+        )
+    }
+
     fn scorer(&self) -> Option<&dyn Scorer> {
         self.scorer.as_deref()
     }
@@ -729,6 +751,27 @@ mod tests {
             ..Default::default()
         };
         Guard::from_config(&c).unwrap()
+    }
+
+    #[test]
+    fn tool_security_note_reflects_grants() {
+        let c = crate::config::PromptInjectionConfig {
+            agent_overrides: crate::config::PromptInjectionOverrides {
+                patterns: true, // granted
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let g = Guard::from_config(&c).unwrap();
+        let note = g.tool_security_note();
+        assert!(note.contains("disable_patterns"));
+        assert!(
+            note.to_lowercase().contains("currently honored")
+                || note.to_lowercase().contains("granted")
+        );
+        // Ungranted ones are marked ignored.
+        assert!(note.contains("disable_wrap"));
+        assert!(note.to_lowercase().contains("ignored"));
     }
 
     #[test]
