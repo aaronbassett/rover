@@ -18,6 +18,8 @@ pub struct GetMetadataArgs {
     pub force_refresh: bool,
     #[serde(default)]
     pub tokenizer: Option<String>,
+    #[serde(default)]
+    pub security: Option<crate::guard::SecurityArg>,
 }
 
 impl RoverHandler {
@@ -77,10 +79,31 @@ impl RoverHandler {
             result.page.title.is_some(),
         );
 
+        // Guard the prose metadata fields in place (no wrapper — structured
+        // response). Structured fields (URLs, dates, og_type, language,
+        // schema_types) are left untouched.
+        let mut title = metadata.title.clone();
+        let mut description = metadata.description.clone();
+        let mut author = metadata.author.clone();
+        let metadata_guard = {
+            let mut fields: Vec<&mut String> = Vec::new();
+            if let Some(s) = title.as_mut() {
+                fields.push(s);
+            }
+            if let Some(s) = description.as_mut() {
+                fields.push(s);
+            }
+            if let Some(s) = author.as_mut() {
+                fields.push(s);
+            }
+            self.guard
+                .guard_metadata(url.as_str(), args.security.as_ref(), &mut fields)
+        };
+
         Ok(MetadataResponse {
-            title: metadata.title.clone(),
-            description: metadata.description.clone(),
-            author: metadata.author.clone(),
+            title,
+            description,
+            author,
             published: metadata.published.clone(),
             modified: metadata.modified.clone(),
             image: metadata.image.clone(),
@@ -95,8 +118,8 @@ impl RoverHandler {
                 .map(|t| t.to_string())
                 .unwrap_or_default(),
             cache_status: result.cache_status.into(),
-            prompt_injection: crate::guard::GuardTelemetry::default(),
-            security_notice: None,
+            prompt_injection: metadata_guard.telemetry,
+            security_notice: metadata_guard.notice,
         })
     }
 }
