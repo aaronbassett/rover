@@ -116,6 +116,24 @@ pub struct GuardTelemetry {
     pub overrides_attempted: Vec<String>,
 }
 
+/// Optional MCP `security` arg on each covered tool. Each field is honored
+/// **only if** its corresponding `[prompt_injection.agent_overrides]` grant
+/// is `true`; otherwise it is ignored and recorded in
+/// `GuardTelemetry.overrides_attempted`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecurityArg {
+    #[serde(default)]
+    pub disable_wrap: Option<bool>,
+    #[serde(default)]
+    pub disable_patterns: Option<bool>,
+    #[serde(default)]
+    pub disable_model: Option<bool>,
+    /// Override the output level (e.g. `"low"`). Parsed via `GuardLevel::parse`.
+    #[serde(default)]
+    pub level: Option<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum GuardError {
     #[error(
@@ -162,5 +180,28 @@ mod tests {
         assert_eq!(Method::Wrap.as_str(), "wrap");
         assert_eq!(Method::Patterns.as_str(), "patterns");
         assert_eq!(Method::Model.as_str(), "model");
+    }
+
+    #[test]
+    fn security_arg_parses_partial() {
+        let a: SecurityArg =
+            serde_json::from_str(r#"{"disable_patterns": true, "level": "low"}"#).unwrap();
+        assert_eq!(a.disable_patterns, Some(true));
+        assert_eq!(a.level.as_deref(), Some("low"));
+        assert_eq!(a.disable_wrap, None);
+        assert_eq!(a.disable_model, None);
+    }
+
+    #[test]
+    fn security_arg_rejects_unknown_field() {
+        let r: Result<SecurityArg, _> = serde_json::from_str(r#"{"bogus": 1}"#);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn security_arg_default_is_all_none() {
+        let a = SecurityArg::default();
+        assert!(a.disable_wrap.is_none() && a.disable_patterns.is_none());
+        assert!(a.disable_model.is_none() && a.level.is_none());
     }
 }
