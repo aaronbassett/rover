@@ -9,6 +9,7 @@ pub mod doctor;
 pub mod error;
 pub mod extractor;
 pub mod fetcher;
+pub mod guard;
 pub mod mcp;
 #[cfg(feature = "local-inference")]
 pub mod model_integrity;
