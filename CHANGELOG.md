@@ -35,6 +35,19 @@ Pre-1.0 stability expectations are spelled out in [`docs/versioning.md`](docs/ve
   `provider = "openai_compat"`. Local *text* summarization (`local-inference`)
   is unaffected. See git history to restore the backend.
 
+### Fixed
+
+- Image captioning against OpenAI-compatible servers (ollama, LM Studio, vLLM):
+  the captioner path now normalizes a `provider = "openai_compat"` `base_url` to
+  end in `/v1/` like the summarizer, so the documented
+  `base_url = "http://localhost:11434/v1"` no longer 404s (#32).
+- `rover doctor` now validates keyless local captioners and backends (it
+  previously skipped any backend without an `api_key_env`), and its caption
+  probe uses a non-degenerate image and a usable token budget so it no longer
+  false-fails on models that need more than one output token (#32).
+- Image-caption failures now log a warning, and image-download failures are
+  reported as `download_error` instead of the mislabelled `captioner_error` (#32).
+
 ### Security
 
 - Image-fetch helpers (`download_image_bytes`, `partial_fetch_dimensions`,
