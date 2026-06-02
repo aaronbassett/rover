@@ -4870,6 +4870,7 @@ dependencies = [
 name = "rover-mcp"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "assert_cmd",
  "async-trait",
@@ -4880,6 +4881,7 @@ dependencies = [
  "csv",
  "dirs 5.0.1",
  "encoding_rs",
+ "fancy-regex 0.13.0",
  "futures",
  "genai",
  "governor",

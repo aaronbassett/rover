@@ -45,6 +45,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 readabilityrs = "0.1"
 regex = "1"
+aho-corasick = "1"
+fancy-regex = "0.13"
 rusqlite = { version = "0.37", features = ["hooks"] }
 tokio-rusqlite = { version = "0.7", features = ["bundled"] }
 uuid = { version = "1", features = ["v7", "std"] }

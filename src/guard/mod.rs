@@ -4,6 +4,7 @@
 
 pub mod allowlist;
 pub mod normalize;
+pub mod patterns;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
