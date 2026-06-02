@@ -44,7 +44,7 @@ For native providers, leave `api_key_env` unset to use `genai`'s default env-var
 
 ### `openai_compat` base URL normalization
 
-Rover auto-normalizes the `base_url` for `openai_compat` to ensure it ends in `/v1/`. The normalization is idempotent; if your URL already ends `/v1/`, it is unchanged. When normalization changes the URL, an `info!` line is logged at startup.
+Rover auto-normalizes the `base_url` for `openai_compat` to ensure it ends in `/v1/`. This applies to both `[backends.*]` and `[captioners.*]`. The normalization is idempotent; if your URL already ends `/v1/`, it is unchanged.
 
 | Input | Normalized |
 | --- | --- |

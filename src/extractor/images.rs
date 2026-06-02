@@ -200,10 +200,16 @@ async fn caption_one_image(
                 Ok(b) => b,
                 Err(e) => {
                     *images_failed += 1;
+                    tracing::warn!(
+                        target: "rover::extractor",
+                        url = %src,
+                        err = %e,
+                        "image download failed during captioning; keeping alt text"
+                    );
                     processed.push(ImageProcessed {
                         src: src.to_string(),
                         decision: "skipped".into(),
-                        reason: Some("captioner_error".into()),
+                        reason: Some("download_error".into()),
                         captioner: Some(captioner.name().to_string()),
                         caption: None,
                         dimensions: dims.map(|(w, h)| ImageDims {
@@ -253,6 +259,12 @@ async fn caption_one_image(
                     }
                     Err(e) => {
                         *images_failed += 1;
+                        tracing::warn!(
+                            target: "rover::extractor",
+                            url = %src,
+                            err = %e,
+                            "captioner failed; keeping alt text"
+                        );
                         processed.push(ImageProcessed {
                             src: src.to_string(),
                             decision: "skipped".into(),
@@ -609,6 +621,128 @@ fn sniff_ext(resp: &reqwest::Response, url: &Url) -> String {
 mod tests {
     use super::*;
     use crate::extractor::OUTPUT_DIR_TEST_MUTEX as TEST_MUTEX;
+
+    use crate::vlm::VlmError;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// A captioner whose `caption()` always errors — for exercising the
+    /// caption-failure path.
+    struct FailingCaptioner;
+
+    #[async_trait::async_trait]
+    impl VlmCaptioner for FailingCaptioner {
+        fn name(&self) -> &str {
+            "fail"
+        }
+        fn model_id(&self) -> &str {
+            "fail-model"
+        }
+        async fn caption(
+            &self,
+            _image_bytes: &[u8],
+            _alt: Option<&str>,
+            _max_tokens: usize,
+        ) -> Result<String, VlmError> {
+            Err(VlmError::Unavailable {
+                name: "fail".into(),
+                reason: "boom".into(),
+            })
+        }
+    }
+
+    fn failing_registry() -> CaptionerRegistry {
+        let mut map: HashMap<String, Arc<dyn VlmCaptioner>> = HashMap::new();
+        map.insert("fail".to_string(), Arc::new(FailingCaptioner));
+        CaptionerRegistry::__test_construct(map, Some("fail".to_string()))
+    }
+
+    #[tokio::test]
+    async fn download_failure_is_labelled_download_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // Every request 500s, so the full download fails (classify falls
+        // through to Caption with no dims, then download_image_bytes errors).
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let p = setup_paths();
+        let md = format!("Look ![alt]({}/img.png) here.", server.uri());
+        let f = ImageCaptionFilters::default();
+        let reg = failing_registry();
+        let r = apply(
+            &md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+            SsrfLevel::Loopback,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(r.images_processed.len(), 1);
+        assert_eq!(r.images_processed[0].decision, "skipped");
+        assert_eq!(
+            r.images_processed[0].reason.as_deref(),
+            Some("download_error")
+        );
+    }
+
+    #[tokio::test]
+    async fn captioner_failure_is_labelled_captioner_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // 1x1 transparent PNG; min dims set to 0 so it passes the gate.
+        let png: [u8; 67] = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let server = MockServer::start().await;
+        // Serve the PNG for both classify's probe and the full download.
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(&png[..]))
+            .mount(&server)
+            .await;
+
+        let p = setup_paths();
+        let md = format!("Look ![alt]({}/img.png) here.", server.uri());
+        let f = ImageCaptionFilters {
+            min_width: 0,
+            min_height: 0,
+            ..Default::default()
+        };
+        let reg = failing_registry();
+        let r = apply(
+            &md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+            SsrfLevel::Loopback,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(r.images_processed.len(), 1);
+        assert_eq!(r.images_processed[0].decision, "skipped");
+        assert_eq!(
+            r.images_processed[0].reason.as_deref(),
+            Some("captioner_error")
+        );
+    }
 
     fn paths() -> OutputPaths {
         let tmp = tempfile::tempdir().unwrap();

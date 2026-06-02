@@ -5,6 +5,21 @@ use std::path::Path;
 
 use super::{Check, CheckCtx, CheckReport, CheckStatus};
 
+/// Non-degenerate probe image for the caption check: an 8x8 solid-colour PNG.
+/// A 1x1 transparent pixel makes some models emit zero tokens, which genai
+/// surfaces as an error even though captioning works.
+pub(crate) const CAPTION_PROBE_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08, 0x08, 0x02, 0x00, 0x00, 0x00, 0x4b, 0x6d, 0x29,
+    0xdc, 0x00, 0x00, 0x00, 0x11, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xd0, 0x88, 0x3a, 0x81,
+    0x15, 0x31, 0x0c, 0x2d, 0x09, 0x00, 0x14, 0xa8, 0x52, 0x81, 0xea, 0x01, 0xcb, 0xb1, 0x00, 0x00,
+    0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+/// Token budget for the caption probe. Must be > 1: a 1-token budget makes
+/// thinking models (e.g. Gemini 2.5) emit no content and report an error.
+pub(crate) const CAPTION_PROBE_MAX_TOKENS: usize = 64;
+
 pub struct SqliteOpen;
 
 #[async_trait]
@@ -239,18 +254,27 @@ impl Check for BackendsAuthenticate {
             .iter()
             .filter(|(_, c)| c.kind == "cloud")
             .filter(|(_, c)| {
-                c.api_key_env
+                let has_key = c
+                    .api_key_env
                     .as_deref()
                     .and_then(|e| std::env::var(e).ok())
                     .map(|v| !v.is_empty())
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+                let keyless_local = c.provider.as_deref() == Some("openai_compat")
+                    && c.base_url
+                        .as_deref()
+                        .map(|b| !b.is_empty())
+                        .unwrap_or(false);
+                has_key || keyless_local
             })
             .collect();
         if cloud.is_empty() {
             return CheckReport {
                 check: self.name(),
                 status: CheckStatus::Skip,
-                detail: Some("no configured cloud backends with non-empty api_key_env".to_string()),
+                detail: Some(
+                    "no configured cloud backends with credentials or a local base_url".to_string(),
+                ),
             };
         }
         // Trivial completion per cloud backend. Each gets a 5s timeout.
@@ -326,33 +350,31 @@ impl Check for CaptionersAuthenticate {
         "captioners_authenticate"
     }
     async fn run(&self, ctx: &CheckCtx) -> CheckReport {
-        // 1x1 transparent PNG (67 bytes).
-        const PROBE_PNG: &[u8] = &[
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
-            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
-            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
-            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-        ];
-
         let cloud: Vec<(&String, &crate::config::CaptionerConfig)> = ctx
             .config
             .captioners
             .iter()
             .filter(|(_, c)| c.kind == "cloud")
             .filter(|(_, c)| {
-                c.api_key_env
+                let has_key = c
+                    .api_key_env
                     .as_deref()
                     .and_then(|e| std::env::var(e).ok())
                     .map(|v| !v.is_empty())
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+                let keyless_local = c.provider.as_deref() == Some("openai_compat")
+                    && c.base_url
+                        .as_deref()
+                        .map(|b| !b.is_empty())
+                        .unwrap_or(false);
+                has_key || keyless_local
             })
             .collect();
         if cloud.is_empty() {
             return CheckReport {
                 check: self.name(),
                 status: CheckStatus::Skip,
-                detail: Some("no cloud captioners with non-empty api_key_env".into()),
+                detail: Some("no cloud captioners with credentials or a local base_url".into()),
             };
         }
         let mut failures = Vec::new();
@@ -386,7 +408,7 @@ impl Check for CaptionersAuthenticate {
             use crate::vlm::VlmCaptioner;
             let probe = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                cap.caption(PROBE_PNG, None, 1),
+                cap.caption(CAPTION_PROBE_PNG, None, CAPTION_PROBE_MAX_TOKENS),
             )
             .await;
             match probe {

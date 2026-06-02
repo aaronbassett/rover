@@ -104,3 +104,43 @@ async fn cache_short_circuits_second_call() {
     assert_eq!(cached2.as_deref(), Some("cached"));
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn openai_compat_base_url_without_trailing_slash_is_normalized() {
+    // base_url lacks the trailing slash (and the `/v1/`); the captioner must
+    // still POST to `/v1/chat/completions`. Before centralizing normalization
+    // in build_client this 404'd, because only the summarizer path normalized.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "test",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "test-model",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })))
+        .mount(&server)
+        .await;
+
+    // NOTE: no trailing slash, no `/v1`.
+    let cap = CloudCaptioner::new(
+        "test",
+        ProviderKind::OpenAiCompat,
+        "test-model",
+        Some(server.uri()),
+        Some("dummy".into()),
+    )
+    .unwrap();
+
+    let caption = cap.caption(PNG, None, 50).await.unwrap();
+    assert_eq!(caption, "ok");
+    let recv = server.received_requests().await.unwrap();
+    assert_eq!(recv.len(), 1);
+    assert_eq!(recv[0].url.path(), "/v1/chat/completions");
+}
