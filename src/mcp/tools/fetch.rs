@@ -809,8 +809,7 @@ impl RoverHandler {
             .or_else(|| auto_meta.and_then(|o| o.fallback));
 
         Ok(FetchOutput::Full(FetchResponse {
-            markdown: body_md,
-            frontmatter,
+            content: format!("{frontmatter}\n{body_md}"),
             cache_status,
             revalidation,
             summarized: summarized_flag,

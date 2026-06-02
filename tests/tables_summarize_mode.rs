@@ -71,29 +71,26 @@ async fn fetch_tables_summarize_records_summary_mode_in_frontmatter() {
         .expect("text content block");
     let v: serde_json::Value = serde_json::from_str(text).unwrap();
 
-    let frontmatter = v["frontmatter"]
-        .as_str()
-        .expect("frontmatter is a string field");
+    let content = v["content"].as_str().expect("content");
     assert!(
-        frontmatter.contains("tables_transformed:"),
-        "expected tables_transformed in frontmatter: {frontmatter}",
+        content.contains("tables_transformed:"),
+        "expected tables_transformed in content: {content}",
     );
     assert!(
-        frontmatter.contains("mode: summarize"),
-        "expected per-table mode=summarize in frontmatter: {frontmatter}",
+        content.contains("mode: summarize"),
+        "expected per-table mode=summarize in content: {content}",
     );
 
     // Frontmatter advertises a single transformed table at ordinal 0.
     assert!(
-        frontmatter.contains("ordinal: 0"),
-        "expected ordinal: 0 in frontmatter: {frontmatter}",
+        content.contains("ordinal: 0"),
+        "expected ordinal: 0 in content: {content}",
     );
 
     // Surrounding prose is preserved verbatim.
-    let body = v["markdown"].as_str().expect("markdown body");
     assert!(
-        body.contains("Lead-in paragraph"),
-        "lead-in paragraph should be preserved: {body}",
+        content.contains("Lead-in paragraph"),
+        "lead-in paragraph should be preserved: {content}",
     );
 
     // The summarize path replaces each detected pipe-table block with
@@ -103,8 +100,8 @@ async fn fetch_tables_summarize_records_summary_mode_in_frontmatter() {
     // line with `|---`). A regression that left the table un-transformed
     // would re-introduce that exact pattern.
     assert!(
-        !body.lines().any(|l| l.trim_start().starts_with("|---")),
-        "expected no raw pipe-table separator rows in the body, got:\n{body}",
+        !content.lines().any(|l| l.trim_start().starts_with("|---")),
+        "expected no raw pipe-table separator rows in the content, got:\n{content}",
     );
     // The distinctive marker fixture row exists only inside the
     // original table. After summarize, it must not appear as a raw
@@ -112,10 +109,10 @@ async fn fetch_tables_summarize_records_summary_mode_in_frontmatter() {
     // prefixed lines (`- | distinctive_marker ... |`) are accepted as
     // legitimate summary output from the extractive backend.
     assert!(
-        !body
+        !content
             .lines()
             .any(|l| l.trim_start().starts_with("| distinctive_marker_xyz_42")),
-        "expected the original pipe-table row for distinctive_marker_xyz_42 to be gone, got body:\n{body}",
+        "expected the original pipe-table row for distinctive_marker_xyz_42 to be gone, got content:\n{content}",
     );
 
     client.cancel().await.unwrap();

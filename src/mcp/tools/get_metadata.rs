@@ -95,6 +95,8 @@ impl RoverHandler {
                 .map(|t| t.to_string())
                 .unwrap_or_default(),
             cache_status: result.cache_status.into(),
+            prompt_injection: crate::guard::GuardTelemetry::default(),
+            security_notice: None,
         })
     }
 }

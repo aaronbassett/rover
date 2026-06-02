@@ -168,7 +168,7 @@ impl RoverHandler {
         let estimated_tokens = tokenizer::count(&summary.summary_md, family)?;
 
         Ok(SummarizeResponse {
-            summary_md: summary.summary_md,
+            content: summary.summary_md,
             metadata: SummarizeMetadata {
                 backend: summary.effective_backend,
                 mode: opts.mode.as_str().to_string(),
