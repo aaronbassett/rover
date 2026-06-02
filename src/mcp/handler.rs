@@ -42,7 +42,6 @@ pub struct RoverHandler {
     pub(crate) captioners: Arc<crate::vlm::CaptionerRegistry>,
     /// Prompt-injection guard. Always present; default config yields the
     /// `moderate` output level with methods 1+2 active.
-    #[allow(dead_code)]
     pub(crate) guard: std::sync::Arc<crate::guard::Guard>,
     /// M9 fix C1: lazily-initialized headless renderer. The handler owns a
     /// shared `OnceCell` so the first call requesting `headless.mode = On`
