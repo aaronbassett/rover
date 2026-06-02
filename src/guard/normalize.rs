@@ -70,8 +70,8 @@ pub fn normalize(input: &str) -> Normalized {
             for lch in lower {
                 let mut buf = [0u8; 4];
                 let encoded = lch.encode_utf8(&mut buf);
-                for &b in encoded.as_bytes() {
-                    text.push(b as char);
+                text.push_str(encoded);
+                for _ in 0..encoded.len() {
                     offsets.push(byte_idx);
                 }
             }
@@ -121,8 +121,9 @@ fn surface_base64(input: &str, text: &mut String, offsets: &mut Vec<usize>) {
         {
             text.push('\n');
             offsets.push(start);
-            for b in s.to_lowercase().bytes() {
-                text.push(b as char);
+            let lowered = s.to_lowercase();
+            text.push_str(&lowered);
+            for _ in 0..lowered.len() {
                 offsets.push(start);
             }
         }
@@ -188,5 +189,29 @@ mod tests {
     fn offsets_len_matches_text_len() {
         let n = normalize("hello world");
         assert_eq!(n.offsets.len(), n.text.len());
+    }
+
+    #[test]
+    fn offset_invariant_holds_with_non_ascii() {
+        // A non-ASCII char before the match must not desync offsets/text,
+        // and the quarantine span must map back to exactly the match.
+        let original = "héllo ignore previous";
+        let n = normalize(original);
+        assert_eq!(
+            n.offsets.len(),
+            n.text.len(),
+            "offset map desynced on non-ascii input"
+        );
+        let pos = n
+            .text
+            .find("ignore previous")
+            .expect("phrase present after normalize");
+        let (s, e) = n.map_span(pos, pos + "ignore previous".len());
+        assert_eq!(
+            &original[s..e],
+            "ignore previous",
+            "span mis-mapped: got {:?}",
+            &original[s..e]
+        );
     }
 }
