@@ -168,6 +168,74 @@ mod tests {
         assert_eq!(r.status, CheckStatus::Skip);
     }
 
+    #[tokio::test]
+    async fn captioners_authenticate_probes_keyless_openai_compat() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // A fake OpenAI-compatible server that answers the caption probe.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "probe",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "probe-model",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "a small blue square"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            })))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path().join("rover.db")).await.unwrap();
+        let mut cfg = Config::default();
+        cfg.output.dir = Some(tmp.path().to_path_buf());
+        // Keyless: no api_key_env. Trailing slash so this test is independent
+        // of Fix A.
+        cfg.captioners.insert(
+            "ollama".to_string(),
+            crate::config::CaptionerConfig {
+                kind: "cloud".into(),
+                provider: Some("openai_compat".into()),
+                model: Some("probe-model".into()),
+                base_url: Some(format!("{}/v1/", server.uri())),
+                api_key_env: None,
+            },
+        );
+        let ctx = CheckCtx {
+            config: Arc::new(cfg),
+            db,
+        };
+
+        let r = checks::CaptionersAuthenticate.run(&ctx).await;
+        // Before Fix B this returned Skip (the keyless captioner was filtered
+        // out). Now it must be probed and pass.
+        assert_eq!(r.status, CheckStatus::Ok, "detail: {:?}", r.detail);
+    }
+
+    #[test]
+    fn caption_probe_constants_are_sane() {
+        // Non-degenerate image and a budget that leaves room for output.
+        // Evaluated at compile time (const block) so the invariant is a build
+        // guarantee, not just a runtime check.
+        const {
+            assert!(
+                checks::CAPTION_PROBE_PNG.len() > 67,
+                "probe image must be larger than the old 1x1"
+            );
+            assert!(
+                checks::CAPTION_PROBE_MAX_TOKENS > 1,
+                "probe budget must exceed 1 token"
+            );
+        }
+    }
+
     #[cfg(feature = "local-inference")]
     #[tokio::test]
     async fn local_inference_model_cached_skips_when_no_local_configured() {
