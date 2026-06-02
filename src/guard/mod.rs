@@ -3,6 +3,7 @@
 //! See `docs/superpowers/specs/2026-06-02-prompt-injection-guard-design.md`.
 
 pub mod allowlist;
+pub mod normalize;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

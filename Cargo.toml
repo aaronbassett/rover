@@ -63,6 +63,7 @@ har = "0.9"
 robotxt = { version = "0.6", default-features = false, features = ["parser"] }
 httpdate = "1"
 unicode-segmentation = "1"
+unicode-normalization = "0.1"
 genai = "0.4"
 zstd = { version = "0.13", default-features = false }
 futures = "0.3"
