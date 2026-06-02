@@ -456,6 +456,15 @@ pub struct Guard {
     scorer: Option<Box<dyn Scorer>>,
 }
 
+impl std::fmt::Debug for Guard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Guard")
+            .field("cfg", &self.cfg)
+            .field("scorer", &self.scorer.as_ref().map(|_| "<scorer>"))
+            .finish()
+    }
+}
+
 /// Result of `Guard::assess`: the acted-upon body plus everything `finish`
 /// needs, and the telemetry the caller embeds in the frontmatter.
 pub struct Assessment {

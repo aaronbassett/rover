@@ -332,6 +332,12 @@ mod tests {
                 pacer,
                 summarizer,
                 captioners,
+                std::sync::Arc::new(
+                    crate::guard::Guard::from_config(
+                        &crate::config::Config::default().prompt_injection,
+                    )
+                    .unwrap(),
+                ),
                 #[cfg(feature = "headless")]
                 std::sync::Arc::new(tokio::sync::OnceCell::new()),
             ),

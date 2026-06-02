@@ -160,11 +160,17 @@ pub async fn serve_stdio(
         crate::summarizer::registry::build(&config, config.tokenizer.default)
             .map_err(anyhow::Error::from)?,
     );
-    let summarizer = Arc::new(crate::summarizer::SummarizerService::new(
-        db.clone(),
-        registry,
-        config.summarization.fallback_to_extractive,
-    ));
+    let guard = Arc::new(
+        crate::guard::Guard::from_config(&config.prompt_injection).map_err(anyhow::Error::from)?,
+    );
+    let summarizer = Arc::new(
+        crate::summarizer::SummarizerService::new(
+            db.clone(),
+            registry,
+            config.summarization.fallback_to_extractive,
+        )
+        .with_guard(guard.clone()),
+    );
 
     // M9: build the captioner registry from `[captioners.*]` config. An
     // empty config yields an empty registry, which is fine: caption-mode
@@ -198,6 +204,7 @@ pub async fn serve_stdio(
         pacer,
         summarizer,
         captioners,
+        guard.clone(),
         #[cfg(feature = "headless")]
         headless_renderer,
     );

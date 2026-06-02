@@ -92,6 +92,7 @@ pub struct SummarizerService {
     db: Db,
     registry: Arc<SummarizerRegistry>,
     fallback_to_extractive: bool,
+    guard: Option<Arc<crate::guard::Guard>>,
 }
 
 impl SummarizerService {
@@ -100,7 +101,14 @@ impl SummarizerService {
             db,
             registry,
             fallback_to_extractive,
+            guard: None,
         }
+    }
+
+    /// Attach a guard so `compact` hardens content fed to model backends.
+    pub fn with_guard(mut self, guard: Arc<crate::guard::Guard>) -> Self {
+        self.guard = Some(guard);
+        self
     }
 
     // Consumed in Task 8 (MCP wiring) and beyond.

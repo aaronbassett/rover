@@ -40,6 +40,10 @@ pub struct RoverHandler {
     /// cloud captioners ship in every binary; may be empty when the user
     /// hasn't configured any `[captioners.*]` blocks.
     pub(crate) captioners: Arc<crate::vlm::CaptionerRegistry>,
+    /// Prompt-injection guard. Always present; default config yields the
+    /// `moderate` output level with methods 1+2 active.
+    #[allow(dead_code)]
+    pub(crate) guard: std::sync::Arc<crate::guard::Guard>,
     /// M9 fix C1: lazily-initialized headless renderer. The handler owns a
     /// shared `OnceCell` so the first call requesting `headless.mode = On`
     /// (or `Auto` when the SPA heuristic triggers) pays the
@@ -63,6 +67,7 @@ impl RoverHandler {
         pacer: Arc<Pacer>,
         summarizer: Arc<crate::summarizer::SummarizerService>,
         captioners: Arc<crate::vlm::CaptionerRegistry>,
+        guard: Arc<crate::guard::Guard>,
         #[cfg(feature = "headless")] headless_renderer: Arc<
             tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>,
         >,
@@ -77,6 +82,7 @@ impl RoverHandler {
             pacer,
             summarizer,
             captioners,
+            guard,
             #[cfg(feature = "headless")]
             headless_renderer,
             tool_router: Self::tool_router(),

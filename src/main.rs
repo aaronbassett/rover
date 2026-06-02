@@ -238,11 +238,17 @@ async fn build_summarizer_service(
         rover::summarizer::registry::build(config, config.tokenizer.default)
             .map_err(anyhow::Error::from)?,
     );
-    Ok(Arc::new(rover::summarizer::SummarizerService::new(
-        db,
-        registry,
-        config.summarization.fallback_to_extractive,
-    )))
+    Ok(Arc::new(
+        rover::summarizer::SummarizerService::new(
+            db,
+            registry,
+            config.summarization.fallback_to_extractive,
+        )
+        .with_guard(std::sync::Arc::new(
+            rover::guard::Guard::from_config(&config.prompt_injection)
+                .map_err(anyhow::Error::from)?,
+        )),
+    ))
 }
 
 fn main() -> ExitCode {
