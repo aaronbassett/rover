@@ -513,6 +513,13 @@ impl Guard {
         self.scorer.as_deref()
     }
 
+    /// HIGH-strength cleaning for rover's own inference. Always runs patterns
+    /// plus the model (when loaded); ignores output-side allowlists/overrides
+    /// (internal hardening is not bypassable).
+    pub fn harden(&self, content: &str) -> Hardened {
+        harden_for_inference(content, true, self.scorer(), self.cfg.model_threshold)
+    }
+
     /// Resolve effective settings for a request against `url` with optional
     /// `security` overrides.
     fn resolve(&self, url: &str, security: Option<&SecurityArg>) -> Resolved {
