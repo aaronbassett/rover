@@ -156,6 +156,56 @@ pub enum GuardError {
     ModelLoad(String),
 }
 
+/// Result of scoring text with the model detector. `windows` is the set of
+/// `[start, end)` byte ranges (in the scored text) whose malicious score
+/// crossed the threshold. Empty when nothing crossed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ScorerResult {
+    pub max_score: f32,
+    pub windows: Vec<(usize, usize)>,
+}
+
+/// The model detector (method 3) interface. Implementations score overlapping
+/// 512-token windows and max-pool the malicious score. The real `ort`/DeBERTa
+/// impl lives in `model.rs` behind the `injection-model` feature; `MockScorer`
+/// is used in tests.
+pub trait Scorer: Send + Sync {
+    /// Score `text`; return the max malicious score and the byte ranges of any
+    /// windows that crossed `threshold`.
+    fn score(&self, text: &str, threshold: f32) -> ScorerResult;
+}
+
+/// Deterministic test double.
+#[cfg(any(test, feature = "injection-model"))]
+pub struct MockScorer {
+    score: f32,
+    windows: Vec<(usize, usize)>,
+}
+
+#[cfg(any(test, feature = "injection-model"))]
+impl MockScorer {
+    pub fn new(score: f32, windows: Vec<(usize, usize)>) -> Self {
+        Self { score, windows }
+    }
+}
+
+#[cfg(any(test, feature = "injection-model"))]
+impl Scorer for MockScorer {
+    fn score(&self, _text: &str, threshold: f32) -> ScorerResult {
+        if self.score >= threshold {
+            ScorerResult {
+                max_score: self.score,
+                windows: self.windows.clone(),
+            }
+        } else {
+            ScorerResult {
+                max_score: self.score,
+                windows: vec![],
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +258,21 @@ mod tests {
         let a = SecurityArg::default();
         assert!(a.disable_wrap.is_none() && a.disable_patterns.is_none());
         assert!(a.disable_model.is_none() && a.level.is_none());
+    }
+
+    #[test]
+    fn mock_scorer_reports_score_and_windows() {
+        let m = MockScorer::new(0.97, vec![(10, 50)]);
+        let r = m.score("some text", 0.9);
+        assert!((r.max_score - 0.97).abs() < 1e-6);
+        assert_eq!(r.windows, vec![(10, 50)]);
+    }
+
+    #[test]
+    fn mock_scorer_below_threshold_reports_no_windows() {
+        let m = MockScorer::new(0.3, vec![]);
+        let r = m.score("clean", 0.9);
+        assert!(r.windows.is_empty());
+        assert!(r.max_score < 0.9);
     }
 }

@@ -90,6 +90,7 @@ default = []
 test-loopback = []
 headless = ["dep:chromiumoxide", "dep:tempfile"]
 local-inference = ["dep:mistralrs"]
+injection-model = []
 
 [profile.release]
 # Strip symbols at link time so release artefacts (and the prebuilt release
