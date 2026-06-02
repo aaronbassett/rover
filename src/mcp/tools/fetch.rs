@@ -799,6 +799,7 @@ impl RoverHandler {
             images_downloaded: images_result.images_downloaded,
             images_failed: images_result.images_failed,
             images_processed: images_result.images_processed.clone(),
+            prompt_injection: None,
         });
 
         let summarized_flag = summarize_meta.as_ref().map(|o| o.summarized);

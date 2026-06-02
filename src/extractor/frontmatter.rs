@@ -80,6 +80,8 @@ pub struct PageMeta<'a> {
     pub images_downloaded: usize,
     pub images_failed: usize,
     pub images_processed: Vec<ImageProcessed>,
+    /// Guard telemetry. Rendered as a `prompt_injection:` block when `Some`.
+    pub prompt_injection: Option<&'a crate::guard::GuardTelemetry>,
 }
 
 /// Render `meta` as a frontmatter-envelope string followed by `body`.
@@ -193,6 +195,39 @@ pub fn render(meta: &PageMeta<'_>) -> String {
         }
     }
 
+    if let Some(pi) = meta.prompt_injection {
+        buf.push_str("prompt_injection:\n");
+        buf.push_str(&format!("  scanned: {}\n", pi.scanned));
+        buf.push_str(&format!("  detected: {}\n", pi.detected));
+        buf.push_str(&format!("  action: {}\n", yaml_escape(&pi.action)));
+        if !pi.detectors.is_empty() {
+            buf.push_str("  detectors:\n");
+            for d in &pi.detectors {
+                buf.push_str(&format!("    - {}\n", yaml_escape(d)));
+            }
+        }
+        if !pi.techniques.is_empty() {
+            buf.push_str("  techniques:\n");
+            for t in &pi.techniques {
+                buf.push_str(&format!("    - {}\n", yaml_escape(t)));
+            }
+        }
+        if let Some(score) = pi.model_score {
+            buf.push_str(&format!("  model_score: {score:.2}\n"));
+        }
+        if !pi.allowlisted.is_empty() {
+            buf.push_str("  allowlisted:\n");
+            for a in &pi.allowlisted {
+                buf.push_str(&format!("    - {}\n", yaml_escape(a)));
+            }
+        }
+        if !pi.overrides_attempted.is_empty() {
+            buf.push_str("  overrides_attempted:\n");
+            for o in &pi.overrides_attempted {
+                buf.push_str(&format!("    - {}\n", yaml_escape(o)));
+            }
+        }
+    }
     buf.push_str("---\n\n");
     buf.push_str(meta.body);
     if !meta.body.ends_with('\n') {
@@ -291,6 +326,7 @@ mod tests {
             images_downloaded: 0,
             images_failed: 0,
             images_processed: vec![],
+            prompt_injection: None,
         }
     }
 
@@ -451,5 +487,85 @@ mod tests {
         let url = u("https://example.com/p");
         let out = render(&meta(&url, "body"));
         assert!(!out.contains("images_processed:"));
+    }
+
+    #[test]
+    fn renders_prompt_injection_block_when_present() {
+        let url = url::Url::parse("https://example.com/a").unwrap();
+        let telem = crate::guard::GuardTelemetry {
+            scanned: true,
+            detected: true,
+            action: "moderate".into(),
+            detectors: vec!["patterns".into()],
+            techniques: vec!["instruction_override".into()],
+            model_score: Some(0.97),
+            allowlisted: vec![],
+            overrides_attempted: vec!["patterns".into()],
+        };
+        let meta = PageMeta {
+            url: &url,
+            canonical_url: &url,
+            title: Some("T"),
+            fetched_at: jiff::Timestamp::now(),
+            body: "hello",
+            tokens: 1,
+            tokenizer_name: "o200k",
+            description: None,
+            author: None,
+            published: None,
+            modified: None,
+            image: None,
+            og_type: None,
+            language: None,
+            schema_types: &[],
+            extraction_quality: 0.5,
+            tables_transformed: &[],
+            images_seen: 0,
+            images_downloaded: 0,
+            images_failed: 0,
+            images_processed: vec![],
+            prompt_injection: Some(&telem),
+        };
+        let out = render(&meta);
+        assert!(out.contains("prompt_injection:\n"));
+        assert!(out.contains("  scanned: true\n"));
+        assert!(out.contains("  detected: true\n"));
+        assert!(out.contains("  action: moderate\n"));
+        assert!(out.contains("  detectors:\n"));
+        assert!(out.contains("    - patterns\n"));
+        assert!(out.contains("  techniques:\n"));
+        assert!(out.contains("    - instruction_override\n"));
+        assert!(out.contains("  model_score: 0.97\n"));
+        assert!(out.contains("  overrides_attempted:\n"));
+    }
+
+    #[test]
+    fn omits_prompt_injection_block_when_none() {
+        let url = url::Url::parse("https://example.com/a").unwrap();
+        let meta = PageMeta {
+            url: &url,
+            canonical_url: &url,
+            title: None,
+            fetched_at: jiff::Timestamp::now(),
+            body: "hi",
+            tokens: 1,
+            tokenizer_name: "o200k",
+            description: None,
+            author: None,
+            published: None,
+            modified: None,
+            image: None,
+            og_type: None,
+            language: None,
+            schema_types: &[],
+            extraction_quality: 0.5,
+            tables_transformed: &[],
+            images_seen: 0,
+            images_downloaded: 0,
+            images_failed: 0,
+            images_processed: vec![],
+            prompt_injection: None,
+        };
+        assert!(!render(&meta).contains("prompt_injection"));
     }
 }
