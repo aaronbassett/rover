@@ -285,6 +285,9 @@ pub struct SummarizeMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focus: Option<String>,
     pub preserve: Vec<String>,
+
+    /// Guard telemetry for this summary.
+    pub prompt_injection: crate::guard::GuardTelemetry,
 }
 
 /// Cache-status wire enum for the summary cache (distinct from the page
