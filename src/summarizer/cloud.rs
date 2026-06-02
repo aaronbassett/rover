@@ -64,9 +64,9 @@ pub fn build_client(
     let mut builder = Client::builder();
 
     if provider == ProviderKind::OpenAiCompat {
-        let base = base_url
-            .ok_or_else(|| "openai_compat requires base_url".to_string())?
-            .to_string();
+        let base = normalize_openai_compat_base_url(
+            base_url.ok_or_else(|| "openai_compat requires base_url".to_string())?,
+        );
         let key_for_resolver = api_key.unwrap_or("noop").to_string();
         let resolver = ServiceTargetResolver::from_resolver_fn(
             move |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
@@ -92,6 +92,30 @@ pub fn build_client(
     }
 
     Ok(builder.build())
+}
+
+/// Normalize a user-supplied openai_compat base URL so it ends with `/v1/`.
+/// Accepts inputs missing the trailing slash, missing the `/v1/` segment, or
+/// already-correct. Idempotent.
+///
+/// Examples:
+/// - `http://localhost:1234`        → `http://localhost:1234/v1/`
+/// - `http://localhost:1234/`       → `http://localhost:1234/v1/`
+/// - `http://localhost:1234/v1`     → `http://localhost:1234/v1/`
+/// - `http://localhost:1234/v1/`    → unchanged
+/// - `https://api.example.com/custom/v1/` → unchanged
+/// - `https://api.example.com/custom/`    → `https://api.example.com/custom/v1/`
+fn normalize_openai_compat_base_url(base: &str) -> String {
+    let trimmed = base.trim();
+    let with_slash = if trimmed.ends_with('/') {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/")
+    };
+    if with_slash.ends_with("/v1/") {
+        return with_slash;
+    }
+    format!("{with_slash}v1/")
 }
 
 /// Return the model name string to pass to `exec_chat`.
@@ -313,5 +337,56 @@ mod cloud_tests {
     #[test]
     fn preserve_optional_field_round_trips() {
         let _ = vec![PreserveSection::Code];
+    }
+}
+
+#[cfg(test)]
+mod normalize_tests {
+    use super::normalize_openai_compat_base_url;
+
+    #[test]
+    fn appends_v1_slash_when_missing() {
+        assert_eq!(
+            normalize_openai_compat_base_url("http://localhost:1234"),
+            "http://localhost:1234/v1/"
+        );
+        assert_eq!(
+            normalize_openai_compat_base_url("http://localhost:1234/"),
+            "http://localhost:1234/v1/"
+        );
+        assert_eq!(
+            normalize_openai_compat_base_url("http://localhost:1234/v1"),
+            "http://localhost:1234/v1/"
+        );
+    }
+
+    #[test]
+    fn idempotent_on_already_normalized() {
+        let already = "http://localhost:1234/v1/";
+        assert_eq!(normalize_openai_compat_base_url(already), already);
+    }
+
+    #[test]
+    fn leaves_custom_paths_with_v1_alone() {
+        assert_eq!(
+            normalize_openai_compat_base_url("https://api.example.com/custom/v1/"),
+            "https://api.example.com/custom/v1/"
+        );
+    }
+
+    #[test]
+    fn appends_v1_to_custom_paths_without_v1() {
+        assert_eq!(
+            normalize_openai_compat_base_url("https://api.example.com/custom/"),
+            "https://api.example.com/custom/v1/"
+        );
+    }
+
+    #[test]
+    fn trims_whitespace() {
+        assert_eq!(
+            normalize_openai_compat_base_url("  http://localhost:1234  "),
+            "http://localhost:1234/v1/"
+        );
     }
 }

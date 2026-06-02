@@ -162,24 +162,7 @@ fn build_one(
                 .as_deref()
                 .and_then(|var| std::env::var(var).ok())
                 .filter(|v| !v.is_empty());
-            let base_url = if provider_kind == ProviderKind::OpenAiCompat {
-                cfg.base_url
-                    .as_deref()
-                    .map(normalize_openai_compat_base_url)
-            } else {
-                cfg.base_url.clone()
-            };
-            if let (Some(orig), Some(norm)) = (cfg.base_url.as_deref(), base_url.as_deref())
-                && orig != norm
-            {
-                tracing::info!(
-                    target: "rover::summarizer",
-                    backend = name,
-                    original = orig,
-                    normalized = norm,
-                    "auto-normalized openai_compat base_url",
-                );
-            }
+            let base_url = cfg.base_url.clone();
             let be =
                 CloudBackend::new(name, provider_kind, model, base_url, api_key).map_err(|e| {
                     SummarizerError::BackendUnavailable {
@@ -213,33 +196,6 @@ fn build_one(
             reason: format!("unknown backend kind: {other}"),
         }),
     }
-}
-
-/// Normalize a user-supplied openai_compat base URL so it ends with
-/// `/v1/`. Accepts inputs missing the trailing slash, missing the
-/// `/v1/` prefix, or already-correct. Idempotent.
-///
-/// Examples:
-/// - `http://localhost:1234` → `http://localhost:1234/v1/`
-/// - `http://localhost:1234/` → `http://localhost:1234/v1/`
-/// - `http://localhost:1234/v1` → `http://localhost:1234/v1/`
-/// - `http://localhost:1234/v1/` → `http://localhost:1234/v1/` (unchanged)
-/// - `https://api.example.com/custom/v1/` → unchanged (already ends `/v1/`)
-/// - `https://api.example.com/custom/` → `https://api.example.com/custom/v1/`
-fn normalize_openai_compat_base_url(base: &str) -> String {
-    let trimmed = base.trim();
-    // Ensure trailing slash.
-    let with_slash = if trimmed.ends_with('/') {
-        trimmed.to_string()
-    } else {
-        format!("{trimmed}/")
-    };
-    // If the URL path already ends in `/v1/`, leave it alone.
-    if with_slash.ends_with("/v1/") {
-        return with_slash;
-    }
-    // Otherwise append `v1/`.
-    format!("{with_slash}v1/")
 }
 
 fn find_extractive_fallback(
@@ -434,52 +390,6 @@ mod tests {
         let reg = build(&cfg, Tokenizer::O200k).unwrap();
         assert!(reg.get("default").is_ok());
         assert!(reg.extractive_fallback_name().is_none());
-    }
-
-    #[test]
-    fn normalize_base_url_appends_v1_slash_when_missing() {
-        assert_eq!(
-            normalize_openai_compat_base_url("http://localhost:1234"),
-            "http://localhost:1234/v1/"
-        );
-        assert_eq!(
-            normalize_openai_compat_base_url("http://localhost:1234/"),
-            "http://localhost:1234/v1/"
-        );
-        assert_eq!(
-            normalize_openai_compat_base_url("http://localhost:1234/v1"),
-            "http://localhost:1234/v1/"
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_idempotent_on_already_normalized() {
-        let already = "http://localhost:1234/v1/";
-        assert_eq!(normalize_openai_compat_base_url(already), already);
-    }
-
-    #[test]
-    fn normalize_base_url_leaves_custom_paths_with_v1_alone() {
-        assert_eq!(
-            normalize_openai_compat_base_url("https://api.example.com/custom/v1/"),
-            "https://api.example.com/custom/v1/"
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_appends_v1_to_custom_paths_without_v1() {
-        assert_eq!(
-            normalize_openai_compat_base_url("https://api.example.com/custom/"),
-            "https://api.example.com/custom/v1/"
-        );
-    }
-
-    #[test]
-    fn normalize_base_url_trims_whitespace() {
-        assert_eq!(
-            normalize_openai_compat_base_url("  http://localhost:1234  "),
-            "http://localhost:1234/v1/"
-        );
     }
 
     #[test]
