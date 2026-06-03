@@ -73,6 +73,7 @@ base64 = "0.22"
 chromiumoxide = { version = "0.9.1", optional = true, default-features = false }
 tempfile = { version = "3", optional = true }
 mistralrs = { version = "0.8.1", optional = true, default-features = false }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "download-binaries", "tls-rustls", "copy-dylibs"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mistralrs = { version = "0.8.1", optional = true, default-features = false, features = ["metal"] }
@@ -90,7 +91,8 @@ default = []
 test-loopback = []
 headless = ["dep:chromiumoxide", "dep:tempfile"]
 local-inference = ["dep:mistralrs"]
-injection-model = []
+injection-model = ["dep:ort"]
+ort = ["dep:ort"]
 
 [profile.release]
 # Strip symbols at link time so release artefacts (and the prebuilt release

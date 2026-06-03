@@ -3,6 +3,8 @@
 //! See `docs/superpowers/specs/2026-06-02-prompt-injection-guard-design.md`.
 
 pub mod allowlist;
+#[cfg(feature = "injection-model")]
+pub mod model;
 pub mod normalize;
 pub mod patterns;
 pub mod wrap;
@@ -491,9 +493,16 @@ impl Guard {
 
     /// Build from config. In default builds the scorer is always `None`; if a
     /// model is configured, a warning is logged (the `injection-model` feature
-    /// is required — see Task 21, which overrides this under the feature).
+    /// is required). Under the `injection-model` feature the configured ONNX
+    /// model is loaded instead.
     pub fn from_config(c: &crate::config::PromptInjectionConfig) -> Result<Self, GuardError> {
         let cfg = GuardConfig::from_config(c)?;
+        let scorer = Self::build_scorer(&cfg)?;
+        Ok(Self { cfg, scorer })
+    }
+
+    #[cfg(not(feature = "injection-model"))]
+    fn build_scorer(cfg: &GuardConfig) -> Result<Option<Box<dyn Scorer>>, GuardError> {
         if cfg.model != "disabled" {
             tracing::warn!(
                 target: "rover::guard",
@@ -502,7 +511,15 @@ impl Guard {
                  the model detector is inactive",
             );
         }
-        Ok(Self { cfg, scorer: None })
+        Ok(None)
+    }
+
+    #[cfg(feature = "injection-model")]
+    fn build_scorer(cfg: &GuardConfig) -> Result<Option<Box<dyn Scorer>>, GuardError> {
+        if cfg.model == "disabled" {
+            return Ok(None);
+        }
+        Ok(Some(Box::new(model::OnnxScorer::load(&cfg.model)?)))
     }
 
     pub fn config(&self) -> &GuardConfig {
