@@ -224,6 +224,12 @@ Five levels: `strict` · `loopback` · `project` · `lan` · `none`. Every outbo
 
 See [`docs/security.md`](docs/security.md) for the full level matrix, the always-blocked address floor, `file://` handling under `project`, and the documented residual limitations.
 
+### Prompt-injection guard
+
+Fetched web content is 3rd-party data, not instructions. Every content-returning tool (`fetch`, `summarize`, `get_metadata`) wraps what it hands back in a trusted, per-response nonce-tagged delimiter telling the agent to treat it as data only — and best-effort flags injection attempts via a curated pattern detector plus an optional ONNX classifier. A configurable response level (`strict` · `high` · `moderate` · `low` · `disabled`) decides whether flagged spans are dropped, removed, quarantined, or merely annotated, and structured `prompt_injection` telemetry rides along on each response. Content Rover feeds to its *own* summarizer/caption models is always independently cleaned.
+
+Configure it under [`[prompt_injection]`](docs/configuration.md#prompt_injection); the optional model detector is gated behind the `injection-model` Cargo feature. The full wire contract lives in [`docs/mcp-tools.md`](docs/mcp-tools.md#prompt-injection-guard).
+
 ### HAR debug recording
 
 Set `[debug] har_path` in `rover.toml` and every round-trip lands in a HAR file that imports cleanly into Chrome DevTools' Network panel:
