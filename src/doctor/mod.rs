@@ -60,6 +60,8 @@ pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
     checks.push(Box::new(checks::LocalInferenceModelCached));
     #[cfg(feature = "local-inference")]
     checks.push(Box::new(checks::LocalModelIntegrity));
+    #[cfg(feature = "injection-model")]
+    checks.push(Box::new(checks::PromptInjectionModelCached));
     #[cfg(feature = "headless")]
     checks.push(Box::new(checks::HeadlessBrowserLaunches));
     let mut reports = Vec::with_capacity(checks.len());
@@ -241,6 +243,14 @@ mod tests {
     async fn local_inference_model_cached_skips_when_no_local_configured() {
         let (ctx, _g) = fresh_ctx().await;
         let r = checks::LocalInferenceModelCached.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Skip);
+    }
+
+    #[cfg(feature = "injection-model")]
+    #[tokio::test]
+    async fn prompt_injection_model_check_skips_when_disabled() {
+        let (ctx, _g) = fresh_ctx().await; // default config: model = "disabled"
+        let r = checks::PromptInjectionModelCached.run(&ctx).await;
         assert_eq!(r.status, CheckStatus::Skip);
     }
 

@@ -16,7 +16,7 @@ const STRIDE: usize = 256;
 /// Resolve a preset name (or custom `owner/repo` id) to a HF repo id and the
 /// output logit index that means "injection". ProtectAI uses index 1
 /// (0=benign, 1=injection); confirm each preset's `config.json` `id2label`.
-fn resolve_preset(name: &str) -> Result<(String, usize), GuardError> {
+pub(crate) fn resolve_preset(name: &str) -> Result<(String, usize), GuardError> {
     match name {
         "deberta-base" => Ok(("protectai/deberta-v3-base-prompt-injection-v2".into(), 1)),
         "deberta-small" => Ok(("protectai/deberta-v3-small-prompt-injection-v2".into(), 1)),
