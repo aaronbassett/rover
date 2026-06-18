@@ -1,138 +1,74 @@
+<div align="center">
+
+<img src="docs/assets/rover-hero.png" alt="Rover — turn the web into clean, token-efficient Markdown your agent can trust" width="100%">
+
 # Rover
 
-**An MCP server that turns the web into clean, token-efficient Markdown for LLM agents.**
+**An MCP server that turns the web into clean, token-efficient Markdown your LLM agent can actually trust.**
 
-Rover sits between your agent and the open web. Give it a URL — it fetches, extracts the meaningful content, strips the chrome, normalises the markup, counts tokens, optionally summarises, and hands back a YAML-frontmattered Markdown document your agent can actually reason about. The same binary runs as a long-lived MCP server (for Claude Code and other agent harnesses) and as a one-shot CLI.
+[![CI](https://github.com/aaronbassett/rover/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronbassett/rover/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Rust 1.96+](https://img.shields.io/badge/rustc-1.96+-orange.svg)](docs/versioning.md)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](#install)
 
-```sh
-$ rover fetch https://en.wikipedia.org/wiki/Rust_(programming_language)
----
-url: "https://en.wikipedia.org/wiki/Rust_(programming_language)"
-title: "Rust (programming language) - Wikipedia"
-fetched_at: "2026-05-26T12:34:56Z"
-content_hash: "sha256:b3e9…"
-estimated_tokens: 14823
----
+[Quick start](#quick-start-wire-it-into-your-agent) · [Why Rover](#why-rover) · [How it compares](#how-your-agent-gets-the-web) · [MCP tools](#the-mcp-tools) · [Security](#security--trust) · [Features](#features) · [Docs](#documentation)
 
-# Rust (programming language)
-
-Rust is a multi-paradigm, general-purpose programming language…
-```
-
-[Install](#install) · [Quick start](#quick-start) · [Use as an MCP server](#use-as-an-mcp-server) · [Features](#features) · [Configuration](#configuration) · [Documentation](#documentation)
+</div>
 
 ---
+
+Point your agent at a URL and Rover fetches it, strips the ads/nav/chrome, extracts the real content, normalises the markup, counts the tokens, optionally summarises to a budget, and hands back a YAML-frontmattered Markdown document — wrapped so the model knows it's **untrusted third-party data, not instructions**. The same binary runs as a long-lived **MCP server** for Claude Code and other agent harnesses, and as a one-shot **CLI**.
+
+<div align="center">
+
+<img src="docs/assets/rover-demo.gif" alt="rover --help, rover fetch, and rover doctor in a terminal" width="80%">
+
+</div>
+
+> [!NOTE]
+> Rover is built for single-user-local deployment — one MCP server alongside your IDE/agent, not a multi-tenant gateway. Ship it as a binary, point your agent at it, get on with your work.
 
 ## Why Rover
 
-Agents that browse the web on the fly hit the same three walls every time:
+Agents that browse the live web hit the same four walls every time:
 
-- **Boilerplate, ads, and chrome** drown the actual content. Token budgets vanish into navigation menus.
-- **JavaScript-rendered pages** return empty `<div id="root">` to anything that isn't a browser.
-- **Repeated fetches** to the same URL waste tokens, time, and money — and ignore politeness rules (rate limits, `robots.txt`, server-side caching headers).
+- **🧹 Boilerplate, ads, and chrome drown the content.** Token budgets vanish into navigation menus and cookie banners.
+- **🖼️ JavaScript-rendered pages return an empty `<div id="root">`** to anything that isn't a browser.
+- **🔁 Repeated fetches waste tokens, time, and money** — and ignore politeness rules (rate limits, `robots.txt`, caching headers).
+- **🛡️ Fetched web content is untrusted.** A page can carry "ignore your instructions and…" straight into your agent's context. Most fetch tools hand it over raw.
 
-Rover fixes all three. The extraction layer is the battle-tested [`readabilityrs`](https://crates.io/crates/readabilityrs) crate (handles Prism/Shiki/rehype/WordPress/GitHub code blocks, MathJax/KaTeX, footnote dialects, lazy-loaded images, permalink anchors). On top of that, Rover adds caching with proper TTL handling, per-domain rate limiting, `robots.txt` honouring, charset detection, configurable SSRF protection, optional headless rendering for SPAs, extractive *and* cloud-LLM summarisation, image captioning, and a long-running task model with NDJSON-streamed progress.
+Rover fixes all four. Extraction is the battle-tested [`readabilityrs`](https://crates.io/crates/readabilityrs) crate (Prism/Shiki/rehype/WordPress/GitHub code blocks, MathJax/KaTeX, footnote dialects, lazy-loaded images, permalink anchors). On top of that Rover layers HTTP-aware caching, per-domain rate limiting + `robots.txt`, charset detection, configurable SSRF protection, a layered **prompt-injection guard**, optional headless rendering for SPAs, extractive *and* cloud-LLM summarisation, inline image captioning, and a long-running task model with NDJSON-streamed progress.
 
-> [!NOTE]
-> Rover is built for single-user-local deployment — one MCP server alongside your IDE/agent, not a multi-tenant gateway. Distribute it as a binary, point your agent at it, get on with your work.
+## How your agent gets the web
 
-## Install
+|  | **Rover** | **Claude Code `WebFetch`** | **`wget`** |
+|---|---|---|---|
+| What your agent gets back | Clean Markdown **document** + frontmatter, content hash, token count | A fast model's **answer** about the page (lossy, per-prompt) | Raw HTML / bytes |
+| Strips nav/ads/chrome → Markdown | ✅ readability extraction | ✅ HTML→MD (non-optional) | ❌ |
+| Reusable across calls (re-read, no re-run) | ✅ cached doc, stable hash | ❌ re-runs the model each prompt | ✅ (raw file) |
+| Token budgeting & counts | ✅ estimate · `max_tokens` · summarise-to-fit · count-only | ❌ fixed truncation, no control | ❌ |
+| HTTP-aware caching | ✅ TTL · ETag · Last-Modified · stale-while-revalidate | ◻️ flat 15-min cache | ◻️ timestamping (`-N`) only |
+| JavaScript / SPA rendering | ◻️ optional (`headless` feature) | ❌ | ❌ |
+| Batch fetch + per-domain rate limiting | ✅ `batch_fetch`, token-bucket, streaming progress | ❌ one URL per call | ◻️ recursive, no per-domain limit |
+| SSRF / private-network protection | ✅ 5 levels + dial-time re-check (anti-DNS-rebinding) | ◻️ HTTP→HTTPS upgrade; private-IP stance undocumented | ❌ |
+| Prompt-injection guard | ✅ layered: nonce wrapper + detectors + optional model | ❌ content goes straight to the model | — |
+| Structured metadata (schema.org / OG / Twitter) | ✅ `get_metadata` | ❌ (must ask in the prompt) | ❌ |
+| Inline image captioning | ✅ cloud VLMs (OpenAI / Anthropic / Gemini / compatible) | ❌ | ❌ |
+| Works offline / no per-fetch API cost | ✅ extractive backend, no API key | ❌ model call per fetch | ✅ |
 
-Pick whichever channel fits. All of them install a binary named `rover`.
+<sub>✅ full · ◻️ partial/optional · ❌ no · — n/a · `WebFetch` column per the [official Claude Code docs](https://docs.claude.com/en/docs/claude-code).</sub>
 
-**Homebrew (macOS):**
+> **Rover isn't a web crawler.** To recursively mirror or crawl an entire site, reach for `wget` or `httrack` — Rover fetches and preps *individual* pages for an agent to reason over, not bulk downloads.
 
-```sh
-brew install aaronbassett/tap/rover
-```
+## Quick start: wire it into your agent
 
-The `rover` formula is the lean `basic` build. Variants with optional features
-are separate formulas — `rover-complete` (everything), `rover-headless`,
-`rover-local-inference`, `rover-local-vision`. Homebrew only lets one be
-installed at a time (they all provide `rover`).
-
-**Prebuilt binary (Linux & macOS):**
-
-Download the tarball for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify it against `SHA256SUMS`, and drop `rover` on your `PATH`:
-
-```sh
-tar xzf rover-<version>-<target>-basic.tar.gz
-install rover-*/rover ~/.local/bin/rover
-```
-
-Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. Each
-target ships in five feature variants (`basic`, `local-inference`,
-`local-vision`, `headless`, `complete`).
-
-**crates.io:**
-
-```sh
-cargo install rover-mcp          # crate is rover-mcp; binary is rover
-```
-
-> [!NOTE]
-> The crate is published as `rover-mcp` because the `rover` name on crates.io is held by an unrelated project. The installed binary is still `rover`.
-
-**From source (for hacking):**
-
-```sh
-git clone https://github.com/aaronbassett/rover
-cd rover
-cargo build --release
-# binary lands at target/release/rover
-```
-
-The default build (~28 MiB) needs no model downloads, no Chrome, and no extra
-runtime dependencies.
-
-**Requirements:** Rust 1.96+ (edition 2024). See [`docs/versioning.md`](docs/versioning.md) for the stability and MSRV policy.
-
-## Quick start
-
-Fetch a page and print clean Markdown to stdout:
-
-```sh
-rover fetch https://example.com/article
-```
-
-Fetch and cap the output at 4,000 tokens (Rover summarises automatically when the extracted Markdown exceeds the budget):
-
-```sh
-rover fetch --max-tokens 4000 https://example.com/long-article
-```
-
-Inspect the cache:
-
-```sh
-rover cache stats         # entry count, total size, expired count
-rover cache list          # paginated URL listing
-rover cache get <url>     # print the cached Markdown for a URL
-```
-
-Sanity-check your installation:
-
-```sh
-rover doctor              # SQLite, schema, network, config, backends, output dir
-```
-
-> [!TIP]
-> Run `rover --help` for the full subcommand surface. Every subcommand also supports `--help` for its specific options.
-
-## Use as an MCP server
-
-The CLI is convenient, but the canonical surface is the MCP server. Wire Rover into Claude Code (or any MCP-speaking agent harness) so the model can call it directly:
-
-```sh
-rover mcp
-```
-
-`rover mcp` is a long-running stdio MCP server. Register it with your agent — for Claude Code:
+The canonical surface is the MCP server. Add it to **Claude Code** in one command:
 
 ```sh
 claude mcp add rover -- rover mcp
 ```
 
-…or, for any MCP client that takes a JSON config, the standard shape is:
+For any other MCP client that takes a JSON config, the standard shape is:
 
 ```json
 {
@@ -145,27 +81,151 @@ claude mcp add rover -- rover mcp
 }
 ```
 
-The model now has these tools available:
+Your agent now has these tools:
 
 | Tool | What it does |
 | --- | --- |
-| `fetch` | Single URL → cleaned Markdown. Supports caching, headless rendering, image modes, token budgeting, inline summarisation. |
+| `fetch` | Single URL → cleaned Markdown. Caching, headless rendering, image modes, token budgeting, inline summarisation. |
 | `batch_fetch` | Fetch N URLs concurrently with per-domain rate limiting. Returns a `task_id`; stream progress with `rover batch <id> --monitor`. |
-| `summarize` | Compact a cached or fresh page using extractive (offline) or cloud (genai) backends. Steerable via `focus`, `preserve`, `target_tokens`. |
+| `summarize` | Compact a cached or fresh page via extractive (offline) or cloud backends. Steerable with `focus`, `preserve`, `target_tokens`. |
 | `get_metadata` | Extract Schema.org, Open Graph, and Twitter Card metadata without pulling the full body. |
-| `count_tokens` | Estimate the token cost of a URL across cl100k / o200k / claude / llama3 / qwen3 tokenisers without paying it. |
+| `count_tokens` | Estimate a URL's token cost across `cl100k` / `o200k` / `claude` / `llama3` / `qwen3` tokenisers without paying it. |
 
 Full tool reference: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+
+### …or use it from the shell
+
+Every capability is also a one-shot CLI command — handy for scripts, CI, and trying things out:
+
+```sh
+rover fetch https://example.com/article            # clean Markdown → stdout
+rover fetch --max-tokens 4000 https://example.com  # summarise to fit a budget
+rover cache stats                                  # entry count, size, expired
+rover doctor                                       # sanity-check the install
+```
+
+> [!TIP]
+> `rover --help` prints the full subcommand surface; every subcommand has its own `--help`.
+
+## Install
+
+> [!NOTE]
+> Rover is pre-1.0 (`0.1.0-alpha.1`). The build-from-source path below works today; the packaged channels (Homebrew tap, prebuilt tarballs, crates.io) come online with the first tagged release.
+
+All channels install a binary named `rover`.
+
+**Build from source (works today):**
+
+```sh
+cargo install --git https://github.com/aaronbassett/rover --locked
+# or clone and build:
+git clone https://github.com/aaronbassett/rover && cd rover
+cargo build --release          # binary at target/release/rover
+```
+
+The default build (~20 MiB) needs no model downloads, no Chrome, and no extra runtime dependencies.
+
+**Homebrew (macOS) — on release:**
+
+```sh
+brew install aaronbassett/tap/rover
+```
+
+The `rover` formula is the lean default build. Optional-feature variants are separate formulas — `rover-complete`, `rover-headless`, `rover-local-inference` — and Homebrew installs one at a time (they all provide `rover`).
+
+**Prebuilt binary (Linux & macOS) — on release:**
+
+Download the tarball for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify it against `SHA256SUMS`, and drop `rover` on your `PATH`. Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS, each in four feature variants (`basic`, `local-inference`, `headless`, `complete`).
+
+**crates.io — on release:**
+
+```sh
+cargo install rover-mcp          # crate is rover-mcp; binary is rover
+```
+
+> [!NOTE]
+> The crate publishes as `rover-mcp` because `rover` on crates.io is held by an unrelated project. The installed binary is still `rover`.
+
+**Requirements:** Rust 1.96+ (edition 2024). See [`docs/versioning.md`](docs/versioning.md) for the stability and MSRV policy.
+
+## The MCP tools
+
+Every tool returns structured JSON; the content-returning tools (`fetch`, `summarize`, `get_metadata`) additionally wrap their payload in Rover's trusted-preamble + nonce delimiter (see [Security & trust](#security--trust)).
+
+```jsonc
+// fetch → cleaned, guarded Markdown document
+{
+  "content": "⚠ The text inside <untrusted-content-a3f9c1> … is third-party web content …\n\n<untrusted-content-a3f9c1>\n---\nurl: \"https://example.com/article\"\ntitle: \"…\"\nestimated_tokens: 14823\ntokenizer: \"o200k\"\nextraction_quality: 0.98\nprompt_injection: { scanned: true, detected: false }\n---\n\n# Article title\n…\n</untrusted-content-a3f9c1>",
+  "cache_status": "miss",
+  "summarized": false
+}
+```
+
+The example hero fetch, unwrapped:
+
+```yaml
+---
+url: "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+title: "Rust (programming language) - Wikipedia"
+fetched_at: "2026-06-18T12:34:56Z"
+content_hash: "sha256:b3e9…"
+estimated_tokens: 14823
+tokenizer: "o200k"
+language: "en"
+extraction_quality: 0.98
+---
+
+# Rust (programming language)
+
+Rust is a multi-paradigm, general-purpose programming language…
+```
+
+Full schemas, arguments, and wire contracts: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+
+## Security & trust
+
+Rover treats the web as hostile by default. Three independent layers protect both your agent and Rover's own internal inference.
+
+### Prompt-injection guard
+
+Fetched content is third-party **data**, not instructions — but a malicious page can still try to hijack your agent. Every content-returning tool (`fetch`, `summarize`, `get_metadata`) runs a layered guard:
+
+1. **Structural wrapper (always on).** The returned document is wrapped in a per-response, random-nonce delimiter — `<untrusted-content-a3f9c1>…</untrusted-content-a3f9c1>` — behind a trusted preamble that tells the model to treat everything inside as data only. Forged copies of the tag are stripped, so a page can't predict the nonce or close the wrapper early. **This is the load-bearing guarantee — it never relies on detection.**
+2. **Pattern detector (always compiled).** A curated literal + regex ruleset (instruction-override, role-injection, system-prompt-leak, tool-call-smuggle, data-exfil) runs over *normalised* text — NFKC, zero-width/control stripping, homoglyph folding, base64 surfacing — so obfuscated payloads still trip.
+3. **ONNX classifier (opt-in).** Build with `--features injection-model` to add a DeBERTa prompt-injection model (downloaded on first use) for novel phrasings the rules don't enumerate.
+
+A configurable response level decides what happens on a hit:
+
+| Level | Action |
+| --- | --- |
+| `strict` | Drop the body; return the warning only |
+| `high` | Remove the matched spans / windows |
+| `moderate` *(default)* | Quarantine matched spans in `<DANGER>…</DANGER>` + warn |
+| `low` | Content intact; warn only |
+| `disabled` | No detection (the wrapper still applies) |
+
+Structured `prompt_injection` telemetry rides along on every response, and content Rover feeds to its **own** summariser/caption models is always independently cleaned at high strength — that hardening can't be disabled. Configure under [`[prompt_injection]`](docs/configuration.md#prompt_injection); full contract in [`docs/mcp-tools.md`](docs/mcp-tools.md#prompt-injection-guard).
+
+### SSRF protection
+
+Five levels: `strict` · `loopback` · `project` · `lan` · `none`. Every outbound URL is validated twice — once by parsed scheme/host, once against every resolved address before the socket opens — and a **dial-time SSRF resolver** re-applies the policy at each connection attempt, closing the DNS-rebinding TOCTOU window for both the initial request and every redirect hop. Default is `strict` (public IPs, `http`/`https` only). Full level matrix, the always-blocked address floor, and `file://` handling: [`docs/security.md`](docs/security.md).
+
+### Secret redaction
+
+The tracing layer scrubs URL query-string secrets (`api_key`, `token`, `secret`, `password`) **and** HTTP `Authorization`-style credentials (`Bearer …` / `Basic …`, plus any field literally named `authorization`) before events reach any log destination.
+
+> [!CAUTION]
+> The HAR recorder (`[debug] har_path`) writes request/response bodies to disk **unredacted by design** — it's opt-in debug instrumentation. Protect the file with filesystem permissions and treat it as sensitive. Full threat model: [`docs/security.md`](docs/security.md).
 
 ## Features
 
 ### Output that respects your token budget
 
-Every fetch returns YAML-frontmattered Markdown with cache provenance, content hash, and token estimates. Pass `max_tokens` (MCP) or `--max-tokens` (CLI) and Rover summarises to fit. Pass `count_only` / `--count-only` and Rover skips the body entirely and returns just the estimate.
+Every fetch returns YAML-frontmattered Markdown with cache provenance, content hash, language, extraction-quality score, and a token estimate. Pass `max_tokens` (MCP) / `--max-tokens` (CLI) and Rover summarises to fit; pass `count_only` / `--count-only` and it skips the body entirely and returns just the estimate. Token counts span five tokenisers (`cl100k`, `o200k`, `claude`, `llama3`, `qwen3`; default `o200k`).
 
 ### Caching, with care
 
-A single SQLite database (WAL mode) backs the cache, task state, and event log. Cache decisions honour `Cache-Control`, `Expires`, `ETag`, `Last-Modified`, and stale-while-revalidate semantics; the cache also stores extracted Markdown, raw HTML (optional), and per-page metadata.
+A single SQLite database (WAL mode) backs the cache, task state, and event log. Cache decisions honour `Cache-Control`, `Expires`, `ETag`, `Last-Modified`, and stale-while-revalidate. The default TTL is **15 minutes** — deliberately short, so content that's been poisoned or quietly changed has a small blast radius before the next revalidation.
 
 ```sh
 rover cache list
@@ -179,7 +239,7 @@ Cache location: `$XDG_DATA_HOME/rover/rover.db` (or `~/.local/share/rover/rover.
 
 ### Background tasks with streaming progress
 
-`batch_fetch` (MCP) and `rover batch <id>` / `rover task <id>` (CLI) schedule long-running work and stream NDJSON events you can pipe into the Monitor pattern:
+`batch_fetch` (MCP) and `rover batch <id>` / `rover task <id>` (CLI) schedule long-running work and stream NDJSON events:
 
 ```sh
 rover batch <id> --monitor                       # live: item_started, item_done, …, task_completed
@@ -189,7 +249,7 @@ rover batch <id> --format=ndjson                 # single JSON line, scripting-f
 rover task <id> --monitor --from-event <id>      # resume an interrupted stream
 ```
 
-Tasks survive `rover mcp` restarts. Batch jobs resume from persisted progress; summarisation jobs mark as `failed` with a clear reason so the agent can re-request.
+Tasks survive `rover mcp` restarts: batch jobs resume from persisted progress; summarisation jobs mark `failed` with a clear reason so the agent can re-request.
 
 ### Summarisation
 
@@ -210,29 +270,32 @@ model = "gpt-4o-mini"
 api_key_env = "OPENAI_API_KEY"
 ```
 
-`openai_compat` covers LM Studio, Ollama, vLLM, and anything else that speaks the OpenAI chat-completions dialect. Steering parameters (`focus`, `preserve`, `target_tokens`, `style`) work uniformly across all backends.
+`openai_compat` covers LM Studio, Ollama, vLLM, and anything else speaking the OpenAI chat-completions dialect. Steering parameters (`focus`, `preserve`, `target_tokens`, `style`) work uniformly across backends. When a cloud backend fails (auth, rate limit, network), Rover transparently falls back to extractive and tags the response with `summarizer_fallback: { from, reason }` — set `fallback_to_extractive = false` for strict-error mode.
 
-When a cloud backend fails (auth, rate limit, network), Rover transparently falls back to the extractive backend and tags the response with `summarizer_fallback: { from, reason }`. Set `fallback_to_extractive = false` for strict-error mode.
+### Inline image captioning
+
+Set `images: caption` (MCP) and Rover replaces images with model-written alt-text inline in the Markdown. Captioning uses cloud vision models and is **always compiled in — no feature flag**:
+
+```toml
+[image_captions]
+default = "openai"
+max_per_page = 5
+
+[captioners.openai]
+provider = "openai"           # openai, anthropic, gemini, openai_compat
+model = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+```
+
+`openai_compat` works here too — point it at a local Ollama or LM Studio vision server (e.g. `llama3.2-vision`) for fully offline captioning with no API key.
 
 ### Per-domain rate limiting & `robots.txt`
 
-A per-host token bucket plus a global concurrency cap plus a respected `Crawl-Delay` floor — all configurable. The robots cache fails closed (cached `disallow_all` sentinel for the configured `failure_ttl`) so a flaky robots endpoint doesn't quietly let traffic through.
-
-### Configurable SSRF protection
-
-Five levels: `strict` · `loopback` · `project` · `lan` · `none`. Every outbound URL is validated twice — once by parsed scheme/host, once against every resolved address before the connection is opened — and a **dial-time SSRF resolver** re-applies the same policy at every connection attempt, closing the DNS-rebinding TOCTOU window for both the initial request and every redirect hop.
-
-See [`docs/security.md`](docs/security.md) for the full level matrix, the always-blocked address floor, `file://` handling under `project`, and the documented residual limitations.
-
-### Prompt-injection guard
-
-Fetched web content is 3rd-party data, not instructions. Every content-returning tool (`fetch`, `summarize`, `get_metadata`) wraps what it hands back in a trusted, per-response nonce-tagged delimiter telling the agent to treat it as data only — and best-effort flags injection attempts via a curated pattern detector plus an optional ONNX classifier. A configurable response level (`strict` · `high` · `moderate` · `low` · `disabled`) decides whether flagged spans are dropped, removed, quarantined, or merely annotated, and structured `prompt_injection` telemetry rides along on each response. Content Rover feeds to its *own* summarizer/caption models is always independently cleaned.
-
-Configure it under [`[prompt_injection]`](docs/configuration.md#prompt_injection); the optional model detector is gated behind the `injection-model` Cargo feature. The full wire contract lives in [`docs/mcp-tools.md`](docs/mcp-tools.md#prompt-injection-guard).
+A per-host token bucket, a global concurrency cap, and a respected `Crawl-Delay` floor — all configurable. The robots cache fails closed (a cached `disallow_all` sentinel for the configured `failure_ttl`), so a flaky robots endpoint doesn't quietly let traffic through.
 
 ### HAR debug recording
 
-Set `[debug] har_path` in `rover.toml` and every round-trip lands in a HAR file that imports cleanly into Chrome DevTools' Network panel:
+Set `[debug] har_path` and every round-trip lands in a HAR file that imports cleanly into Chrome DevTools' Network panel. Sub-requests (CSS, fonts, beacons) are excluded so the file stays focused on what Rover actually returned.
 
 ```toml
 [debug]
@@ -240,52 +303,34 @@ har_path = "./rover-debug.har"
 har_body_cap = "64KiB"
 ```
 
-Sub-requests (CSS, fonts, beacons) are deliberately excluded so the HAR file stays focused on what Rover actually returned.
-
 ### Optional features (Cargo feature flags)
 
-Three independent features for users who want more than the default:
-
-| Feature | Adds | Approx. size |
+| Feature | Adds | Notes |
 | --- | --- | --- |
-| `local-inference` | Local LLM summarisation via [`mistral.rs`](https://github.com/EricLBuehler/mistral.rs) (default model: Qwen 3.5 0.8B) | ~80 MB |
-| `local-vision` | Local image captioning via SmolVLM (shares `mistral.rs` with `local-inference`) | ~5 MB additional |
-| `headless` | JavaScript-rendered SPA support via [`chromiumoxide`](https://github.com/mattsse/chromiumoxide) (uses system Chrome) | ~32 MB |
-
-Install with any combination via crates.io (or use the matching Homebrew
-formula / prebuilt variant tarball):
+| `headless` | JavaScript-rendered SPA support via [`chromiumoxide`](https://github.com/mattsse/chromiumoxide) | Uses system Chrome/Chromium (~32 MB) |
+| `local-inference` | Local LLM summarisation via [`mistral.rs`](https://github.com/EricLBuehler/mistral.rs) (default model: Qwen 3.5 0.8B) | ~80 MB; model downloaded on first use |
+| `injection-model` | ONNX DeBERTa prompt-injection classifier (guard method 3) | Native ONNX runtime; ~200 MB model downloaded on first use |
 
 ```sh
-cargo install rover-mcp --features local-inference
-cargo install rover-mcp --features headless
-cargo install rover-mcp --features local-inference,local-vision,headless
+cargo build --release --features headless
+cargo build --release --features local-inference,headless
+cargo build --release --features injection-model
 ```
 
-Local models are downloaded on first use (or ahead of time with `rover model download <repo_id>`) and live under `$HF_HOME/hub`. Manage the cache with `rover model {list,download,remove}`.
-
-> [!WARNING]
-> Cloud captioners (OpenAI, Anthropic, Gemini, OpenAI-compatible) are **always compiled in** — they don't need any feature flag. The `local-vision` feature only adds the option of a fully-offline captioner.
+Local models download on first use (or ahead of time via `rover model download <repo_id>`) and live under `$HF_HOME/hub`; manage them with `rover model {list,download,remove}`.
 
 > [!IMPORTANT]
-> The `headless` feature needs a Chrome/Chromium browser on the host. Rover auto-detects standard install paths on Linux/macOS/Windows; override with `[headless] chrome_executable`. `rover doctor` verifies the launch path.
+> Cloud captioners (OpenAI, Anthropic, Gemini, OpenAI-compatible) are **always compiled in** — no feature flag. The `headless` feature needs a Chrome/Chromium browser on the host; Rover auto-detects standard install paths (override with `[headless] chrome_executable`), and `rover doctor` verifies the launch path.
 
-Setup details, model recommendations, memory profiles, and binary-size matrix: [`docs/features.md`](docs/features.md).
+Setup details, model recommendations, and memory profiles: [`docs/features.md`](docs/features.md).
 
 ## Configuration
 
-Rover reads `rover.toml` from `$XDG_CONFIG_HOME/rover/rover.toml` (or `~/.config/rover/rover.toml`). Override the location with `ROVER_CONFIG`. Every key has a sensible default — the config file is optional.
-
-Inspect the merged effective configuration with per-key provenance:
+Rover reads `rover.toml` from `$XDG_CONFIG_HOME/rover/rover.toml` (or `~/.config/rover/rover.toml`); override with `ROVER_CONFIG`. Every key has a sensible default — the file is optional.
 
 ```sh
-rover config show
-```
-
-Mutate values in place (comments preserved via `toml_edit`, round-trip validated):
-
-```sh
-rover config set ssrf.level loopback
-rover config set cache.default_ttl 3600
+rover config show                          # merged effective config + per-key provenance
+rover config set ssrf.level loopback       # mutate in place (comments preserved, round-trip validated)
 rover config set summarization.default_backend fast
 ```
 
@@ -300,7 +345,7 @@ timeout_secs = 30
 level = "strict"
 
 [cache]
-default_ttl = "1h"
+default_ttl = "15m"          # default; raise per-origin Cache-Control still wins
 max_ttl = "7d"
 
 [rate_limit]
@@ -308,30 +353,14 @@ requests_per_minute_per_domain = 30
 per_domain_concurrency = 2
 global_concurrency = 8
 
-[robots]
-respect = true
-failure_ttl = "5m"
-
 [summarization]
 default_backend = "default"
-fallback_to_extractive = true
 
 [backends.default]
 kind = "extractive"
 ```
 
-The full reference — every section, every key, every default — lives in [`docs/configuration.md`](docs/configuration.md).
-
-## Documentation
-
-| Doc | What's in it |
-| --- | --- |
-| [`docs/cli.md`](docs/cli.md) | Every subcommand, every flag, exit codes, NDJSON event shapes. |
-| [`docs/mcp-tools.md`](docs/mcp-tools.md) | MCP tool schemas: `fetch`, `batch_fetch`, `summarize`, `get_metadata`, `count_tokens`. |
-| [`docs/configuration.md`](docs/configuration.md) | Every config section and key, with defaults, types, and worked examples. |
-| [`docs/backends.md`](docs/backends.md) | Summarisation backend reference: extractive (TextRank) and cloud (genai) providers. |
-| [`docs/features.md`](docs/features.md) | Cargo feature flags: `local-inference`, `local-vision`, `headless` — setup, models, sizes. |
-| [`docs/security.md`](docs/security.md) | SSRF levels, address floor, DNS rebinding mitigation, secret redaction, cache poisoning, known limitations. |
+The full reference — every section, key, and default — lives in [`docs/configuration.md`](docs/configuration.md).
 
 ## Subcommands at a glance
 
@@ -342,20 +371,26 @@ rover cache list|get|purge|stats     inspect / manage the local cache
 rover batch <id>                     batch status; --monitor streams events
 rover task <id>                      task status (any kind); --cancel, --monitor
 rover doctor                         health checks; --format=ndjson for scripting
-rover config show                    print merged config + per-key provenance
-rover config set <key> <value>       mutate a config key in place
+rover config show|set                inspect / mutate config (provenance-aware)
 rover model download|list|remove     manage local model cache (feature-gated)
 ```
 
-Full reference: [`docs/cli.md`](docs/cli.md).
+Full reference, exit codes, and NDJSON event shapes: [`docs/cli.md`](docs/cli.md).
 
-## Security & privacy
+## Documentation
 
-Rover defaults to **strict SSRF** (public IPs only, `http`/`https` only) and a conservative rate-limit profile. The tracing layer scrubs both URL query-string secrets (`api_key`, `token`, `secret`, `password`) and HTTP `Authorization`-style credentials (`Bearer …` / `Basic …`, plus any field literally named `authorization`) before events hit any log destination.
+| Doc | What's in it |
+| --- | --- |
+| [`docs/cli.md`](docs/cli.md) | Every subcommand, flag, exit code, and NDJSON event shape. |
+| [`docs/mcp-tools.md`](docs/mcp-tools.md) | MCP tool schemas: `fetch`, `batch_fetch`, `summarize`, `get_metadata`, `count_tokens`, and the prompt-injection wire contract. |
+| [`docs/configuration.md`](docs/configuration.md) | Every config section and key, with defaults, types, and examples. |
+| [`docs/backends.md`](docs/backends.md) | Summarisation backend reference: extractive (TextRank) and cloud providers. |
+| [`docs/features.md`](docs/features.md) | Cargo feature flags: `headless`, `local-inference`, `injection-model` — setup, models, sizes. |
+| [`docs/security.md`](docs/security.md) | SSRF levels, address floor, DNS-rebinding mitigation, secret redaction, prompt-injection guard, known limitations. |
+| [`docs/versioning.md`](docs/versioning.md) | Stability and MSRV policy. |
 
-> [!CAUTION]
-> The HAR recorder, when enabled via `[debug] har_path`, writes request and response bodies to disk *unredacted by design* — HAR is opt-in debug instrumentation for inspecting raw traffic. Protect the HAR file with filesystem permissions and treat it as sensitive material. Full threat model: [`docs/security.md`](docs/security.md).
+Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md) · Security policy: [`SECURITY.md`](SECURITY.md) · Changelog: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
-MIT or Apache-2.0, at your option.
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
