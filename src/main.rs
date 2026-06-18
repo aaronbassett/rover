@@ -42,7 +42,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Start the MCP server (long-running). M3.
+    /// Start the MCP server (long-running).
     Mcp(McpArgs),
 
     /// One-shot fetch, prints markdown to stdout.
@@ -76,18 +76,18 @@ enum Command {
         from_event: Option<i64>,
     },
 
-    /// Cache operations (M2).
+    /// Cache operations.
     #[command(subcommand)]
     Cache(CacheCmd),
 
-    /// Verify the Rover environment (M8).
+    /// Verify the Rover environment.
     Doctor(DoctorArgs),
 
-    /// Inspect or modify config (M8).
+    /// Inspect or modify config.
     #[command(subcommand)]
     Config(ConfigCmd),
 
-    /// Manage local HuggingFace model cache (M9).
+    /// Manage local HuggingFace model cache.
     #[cfg(feature = "local-inference")]
     #[command(subcommand)]
     Model(rover::cli::model::ModelCmd),
@@ -122,16 +122,15 @@ struct FetchArgs {
     #[arg(long)]
     max_retries: Option<u8>,
 
-    /// Auto-summarize when extracted markdown exceeds N tokens. **v1
-    /// note:** the canonical auto-summarize path is the MCP `fetch` tool;
-    /// the CLI parses and validates this flag but does not yet apply
-    /// summarization here.
+    /// Auto-summarize when the extracted markdown exceeds N tokens. Runs the
+    /// configured [summarization] backend (offline extractive by default) and
+    /// replaces the body with a summary sized toward the budget (best-effort).
     #[arg(long)]
     max_tokens: Option<usize>,
 
-    /// JSON `SummarizeOpts` blob (same shape as the MCP `summarize` args
-    /// without `url`). **v1 note:** validated but not yet applied in the
-    /// CLI path; use the MCP `summarize` tool for the canonical surface.
+    /// JSON SummarizeOpts blob (same shape as the MCP `summarize` args
+    /// without `url`), e.g. '{"target_tokens":500}'. Applied before
+    /// --max-tokens; the body is replaced with the summary.
     #[arg(long, value_name = "JSON")]
     summarize: Option<String>,
 }

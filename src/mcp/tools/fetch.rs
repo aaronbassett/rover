@@ -813,7 +813,10 @@ impl RoverHandler {
             og_type: metadata.og_type.as_deref(),
             language: metadata.language.as_deref(),
             schema_types: &metadata.schema_types,
+            // MCP reports summarization via the `FetchResponse.summarized`
+            // envelope field; the in-content frontmatter marker stays off.
             extraction_quality: quality,
+            summarized: false,
             tables_transformed: &tables_transformed,
             images_seen: images_result.images_seen,
             images_downloaded: images_result.images_downloaded,

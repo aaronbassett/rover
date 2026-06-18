@@ -29,21 +29,16 @@ pub struct Args {
     pub global_concurrency: Option<u32>,
     pub max_retries: Option<u8>,
 
-    /// Auto-summarize when extracted markdown exceeds N tokens.
-    ///
-    /// **v1 note:** the canonical auto-summarize path is the MCP `fetch`
-    /// tool. The CLI `fetch` subcommand accepts this flag for
-    /// forward-compatibility but does not yet apply summarization in this
-    /// milestone — the flag is parsed and validated only.
+    /// Auto-summarize when the extracted markdown exceeds N tokens. Runs the
+    /// configured `[summarization]` backend (the offline extractive backend
+    /// by default) and replaces the body with a summary sized toward the
+    /// budget (best-effort; may land a few tokens over).
     pub max_tokens: Option<usize>,
 
-    /// JSON `SummarizeOpts` blob. Same shape as the MCP `summarize` tool
+    /// JSON `SummarizeOpts` blob — same shape as the MCP `summarize` tool
     /// args minus the `url` field, e.g.
-    /// `--summarize '{"mode":"abstractive","target_tokens":500}'`.
-    ///
-    /// **v1 note:** as with `--max-tokens`, the canonical summarization
-    /// path is the MCP `fetch` / `summarize` tools. The CLI accepts and
-    /// validates this JSON but does not invoke the summarizer in v1.
+    /// `--summarize '{"mode":"abstractive","target_tokens":500}'`. Applied
+    /// before `--max-tokens`; the body is replaced with the summary.
     pub summarize: Option<String>,
 }
 
@@ -73,15 +68,13 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         None
     };
 
-    // Validate the optional --summarize JSON blob up front so the user
-    // gets a clean error before any network or storage I/O. The CLI does
-    // not yet thread these through to the summarizer (the canonical path
-    // is the MCP `fetch` / `summarize` tools); validating still catches
-    // typos and surfaces the flag in `--help`.
-    if let Some(s) = args.summarize.as_deref() {
-        let _: crate::mcp::tools::fetch::InlineSummarizeArgs =
-            serde_json::from_str(s).context("parsing --summarize JSON")?;
-    }
+    // Parse the optional --summarize JSON blob up front so the user gets a
+    // clean error before any network or storage I/O.
+    let summarize_opts: Option<crate::mcp::tools::fetch::InlineSummarizeArgs> =
+        match args.summarize.as_deref() {
+            Some(s) => Some(serde_json::from_str(s).context("parsing --summarize JSON")?),
+            None => None,
+        };
     if matches!(args.max_tokens, Some(0)) {
         anyhow::bail!("--max-tokens must be greater than 0");
     }
@@ -186,7 +179,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     crate::tokenizer::ensure_loaded(family)
         .await
         .context("loading default tokenizer")?;
-    let tokens = crate::tokenizer::count(&result.page.extracted_md, family)
+    let original_tokens = crate::tokenizer::count(&result.page.extracted_md, family)
         .context("counting tokens for frontmatter")?;
 
     // Recover the metadata persisted in the cache row (M2 `metadata_json`).
@@ -198,22 +191,57 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
-    // NB: `raw_html_text_len` is not yet persisted on the cache row; we
-    // approximate density from the markdown length itself. In practice that
-    // saturates density to 1.0, so quality is dominated by the title and
-    // metadata bonuses. M5+ can store the raw length to improve fidelity.
+    // Extraction quality is scored on the extracted body, before any
+    // summarization — it measures extraction fidelity, not the summary.
     let quality = crate::extractor::quality::score(
         &result.page.extracted_md,
         result.page.extracted_md.chars().count().max(1),
         !metadata.is_empty(),
         result.page.title.is_some(),
     );
+
+    // Optional summarization. Mirrors the MCP `fetch` path: an explicit
+    // `--summarize` blob runs first, then `--max-tokens` auto-summarizes when
+    // the body is over budget. Built lazily so a plain fetch pays nothing.
+    let (body_md, tokens, summarized) = if args.max_tokens.is_some() || summarize_opts.is_some() {
+        let registry = std::sync::Arc::new(
+            crate::summarizer::registry::build(&cfg, family)
+                .context("building summarizer registry")?,
+        );
+        // Harden content fed to model backends (always-on, matching the MCP
+        // path). Prompt-free extractive backends ignore it; cloud/local model
+        // backends get cleaned, nonce-wrapped content.
+        let guard = std::sync::Arc::new(
+            crate::guard::Guard::from_config(&cfg.prompt_injection)
+                .context("building prompt-injection guard")?,
+        );
+        let summarizer = crate::summarizer::SummarizerService::new(
+            db.clone(),
+            registry,
+            cfg.summarization.fallback_to_extractive,
+        )
+        .with_guard(guard);
+        let defaults = crate::summarizer::DefaultsHint::from_config(&cfg.summarization);
+        maybe_summarize(
+            &summarizer,
+            &defaults,
+            family,
+            result.page.extracted_md.clone(),
+            original_tokens,
+            args.max_tokens,
+            summarize_opts,
+        )
+        .await?
+    } else {
+        (result.page.extracted_md.clone(), original_tokens, false)
+    };
+
     let meta = PageMeta {
         url: &url,
         canonical_url: &canonical,
         title: result.page.title.as_deref(),
         fetched_at: Timestamp::now(),
-        body: &result.page.extracted_md,
+        body: &body_md,
         tokens,
         tokenizer_name: family.as_str(),
         description: metadata.description.as_deref(),
@@ -225,6 +253,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         language: metadata.language.as_deref(),
         schema_types: &metadata.schema_types,
         extraction_quality: quality,
+        summarized,
         tables_transformed: &[],
         images_seen: 0,
         images_downloaded: 0,
@@ -260,4 +289,170 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Apply optional summarization to `body`, mirroring the MCP `fetch` path.
+/// An explicit `--summarize` blob runs first; then `--max-tokens` triggers
+/// auto-summarization when the body is still over budget. Returns the
+/// (possibly summarized) body, its token count, and whether summarization ran.
+async fn maybe_summarize(
+    summarizer: &crate::summarizer::SummarizerService,
+    defaults: &crate::summarizer::DefaultsHint,
+    family: crate::tokenizer::Tokenizer,
+    body: String,
+    tokens: usize,
+    max_tokens: Option<usize>,
+    summarize: Option<crate::mcp::tools::fetch::InlineSummarizeArgs>,
+) -> anyhow::Result<(String, usize, bool)> {
+    let mut body = body;
+    let mut tokens = tokens;
+    let mut summarized = false;
+
+    // Explicit `--summarize` first: the body becomes the summary.
+    if let Some(inline) = summarize {
+        let opts = summarizer.resolve_defaults(
+            inline.mode.map(Into::into),
+            inline.style.map(Into::into),
+            inline.target_tokens,
+            inline.focus,
+            inline.preserve.into_iter().map(Into::into).collect(),
+            inline.backend,
+            defaults,
+        );
+        body = compact_body(summarizer, &body, &opts).await?;
+        tokens = crate::tokenizer::count(&body, family).context("counting summary tokens")?;
+        summarized = true;
+    }
+
+    // Auto-summarize on `--max-tokens` overflow. Best-effort: the offline
+    // extractive backend budgets by summing per-sentence token counts, so the
+    // joined summary can land a few tokens over the target. The CLI budget is
+    // a target, not a hard ceiling, so we emit the result rather than failing.
+    // (If an explicit `--summarize` already ran, we keep that result.)
+    if let Some(max) = max_tokens
+        && tokens > max
+        && !summarized
+    {
+        let opts = summarizer.resolve_defaults(None, None, Some(max), None, vec![], None, defaults);
+        body = compact_body(summarizer, &body, &opts).await?;
+        tokens = crate::tokenizer::count(&body, family).context("counting summary tokens")?;
+        summarized = true;
+    }
+
+    Ok((body, tokens, summarized))
+}
+
+/// Run the summarizer over `body` and return the summary markdown.
+async fn compact_body(
+    summarizer: &crate::summarizer::SummarizerService,
+    body: &str,
+    opts: &crate::summarizer::backend::CompactOpts,
+) -> anyhow::Result<String> {
+    let content_hash = format!("sha256:{}", sha256_hex(body.as_bytes()));
+    let r = summarizer
+        .compact(&content_hash, body, opts)
+        .await
+        .context("summarizing extracted markdown")?;
+    Ok(r.summary_md)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::summarizer::{DefaultsHint, SummarizerService};
+    use std::sync::Arc;
+
+    fn default_config() -> crate::config::Config {
+        toml::from_str("").unwrap()
+    }
+
+    async fn service() -> (SummarizerService, DefaultsHint, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Db::open(tmp.path().join("t.db")).await.unwrap();
+        let cfg = default_config();
+        let family = cfg.tokenizer.default;
+        crate::tokenizer::ensure_loaded(family).await.unwrap();
+        let registry = Arc::new(crate::summarizer::registry::build(&cfg, family).unwrap());
+        let svc = SummarizerService::new(db, registry, cfg.summarization.fallback_to_extractive);
+        let defaults = DefaultsHint::from_config(&cfg.summarization);
+        (svc, defaults, tmp)
+    }
+
+    /// A multi-sentence body the extractive backend can rank and trim.
+    fn long_body() -> String {
+        let mut s = String::new();
+        for i in 0..80 {
+            s.push_str(&format!(
+                "Sentence number {i} states a distinct and self-contained fact about how a rover \
+                 fetches and prepares web content for an agent to reason over. "
+            ));
+        }
+        s
+    }
+
+    #[tokio::test]
+    async fn passthrough_when_under_budget_and_no_summarize() {
+        let (svc, defaults, _tmp) = service().await;
+        let family = default_config().tokenizer.default;
+        let body = "A short extracted body.".to_string();
+        let tokens = crate::tokenizer::count(&body, family).unwrap();
+        let (out, out_tokens, summarized) = maybe_summarize(
+            &svc,
+            &defaults,
+            family,
+            body.clone(),
+            tokens,
+            Some(10_000),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!summarized, "should not summarize when under budget");
+        assert_eq!(out, body);
+        assert_eq!(out_tokens, tokens);
+    }
+
+    #[tokio::test]
+    async fn explicit_summarize_shrinks_body() {
+        let (svc, defaults, _tmp) = service().await;
+        let family = default_config().tokenizer.default;
+        let body = long_body();
+        let tokens = crate::tokenizer::count(&body, family).unwrap();
+        let inline = crate::mcp::tools::fetch::InlineSummarizeArgs {
+            target_tokens: Some(80),
+            ..Default::default()
+        };
+        let (out, out_tokens, summarized) =
+            maybe_summarize(&svc, &defaults, family, body, tokens, None, Some(inline))
+                .await
+                .unwrap();
+        assert!(summarized);
+        assert!(!out.is_empty());
+        assert!(
+            out_tokens < tokens,
+            "summary should be smaller than the original ({out_tokens} !< {tokens})"
+        );
+    }
+
+    #[tokio::test]
+    async fn max_tokens_auto_summarizes_over_budget() {
+        let (svc, defaults, _tmp) = service().await;
+        let family = default_config().tokenizer.default;
+        let body = long_body();
+        let tokens = crate::tokenizer::count(&body, family).unwrap();
+        assert!(
+            tokens > 400,
+            "fixture should exceed the budget (got {tokens})"
+        );
+        let (out, out_tokens, summarized) =
+            maybe_summarize(&svc, &defaults, family, body, tokens, Some(400), None)
+                .await
+                .unwrap();
+        assert!(summarized);
+        assert!(!out.is_empty());
+        assert!(
+            out_tokens < tokens,
+            "auto-summary should be smaller than the original ({out_tokens} !< {tokens})"
+        );
+    }
 }

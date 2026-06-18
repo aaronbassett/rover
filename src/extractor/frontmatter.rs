@@ -75,6 +75,9 @@ pub struct PageMeta<'a> {
     pub language: Option<&'a str>,
     pub schema_types: &'a [String],
     pub extraction_quality: f32,
+    /// Whether the body was summarized before rendering (CLI `--max-tokens`
+    /// / `--summarize`). Rendered as `summarized: true` when set.
+    pub summarized: bool,
     pub tables_transformed: &'a [crate::extractor::tables::TableTransform],
     pub images_seen: usize,
     pub images_downloaded: usize,
@@ -104,6 +107,9 @@ pub fn render(meta: &PageMeta<'_>) -> String {
 
     buf.push_str(&format!("estimated_tokens: {}\n", meta.tokens));
     write_field(&mut buf, "tokenizer", meta.tokenizer_name);
+    if meta.summarized {
+        buf.push_str("summarized: true\n");
+    }
 
     // M4 metadata fields — emit only when present.
     if let Some(v) = meta.description {
@@ -321,6 +327,7 @@ mod tests {
             language: None,
             schema_types: &[],
             extraction_quality: 0.50,
+            summarized: false,
             tables_transformed: &[],
             images_seen: 0,
             images_downloaded: 0,
@@ -524,6 +531,7 @@ mod tests {
             images_downloaded: 0,
             images_failed: 0,
             images_processed: vec![],
+            summarized: false,
             prompt_injection: Some(&telem),
         };
         let out = render(&meta);
@@ -564,6 +572,7 @@ mod tests {
             images_downloaded: 0,
             images_failed: 0,
             images_processed: vec![],
+            summarized: false,
             prompt_injection: None,
         };
         assert!(!render(&meta).contains("prompt_injection"));
