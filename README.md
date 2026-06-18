@@ -21,7 +21,9 @@ Point your agent at a URL and Rover fetches it, strips the ads/nav/chrome, extra
 
 <div align="center">
 
-<img src="docs/assets/rover-demo.gif" alt="rover --help, rover fetch, and rover doctor in a terminal" width="80%">
+<img src="docs/assets/rover-demo.gif" alt="rover fetching a Wikipedia page and summarising it to a token budget" width="85%">
+
+<sub><code>rover</code> fetching the Charlie Dog (a.k.a. <strong>Rover</strong> 🐕) page and summarising ~19.6k tokens down to ~330 — summarisation here runs through a configured cloud backend.</sub>
 
 </div>
 
@@ -221,7 +223,7 @@ The tracing layer scrubs URL query-string secrets (`api_key`, `token`, `secret`,
 
 ### Output that respects your token budget
 
-Every fetch returns YAML-frontmattered Markdown with cache provenance, content hash, language, extraction-quality score, and a token estimate. Pass `max_tokens` (MCP) / `--max-tokens` (CLI) and Rover summarises to fit; pass `count_only` / `--count-only` and it skips the body entirely and returns just the estimate. Token counts span five tokenisers (`cl100k`, `o200k`, `claude`, `llama3`, `qwen3`; default `o200k`).
+Every fetch returns YAML-frontmattered Markdown with cache provenance, content hash, language, extraction-quality score, and a token estimate. Pass `max_tokens` (MCP) / `--max-tokens` (CLI) and Rover summarises to fit — the body is replaced with a budget-sized summary and the frontmatter gains `summarized: true`. The MCP `fetch` `count_only` arg (and the standalone `count_tokens` tool) returns just the estimate without the body. Token counts span five tokenisers (`cl100k`, `o200k`, `claude`, `llama3`, `qwen3`; default `o200k`).
 
 ### Caching, with care
 
