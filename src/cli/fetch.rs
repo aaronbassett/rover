@@ -391,7 +391,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // serialised vs. tokenizer-registry-clearing tests
     async fn passthrough_when_under_budget_and_no_summarize() {
+        let _tok = crate::tokenizer::_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (svc, defaults, _tmp) = service().await;
         let family = default_config().tokenizer.default;
         let body = "A short extracted body.".to_string();
@@ -413,7 +417,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // serialised vs. tokenizer-registry-clearing tests
     async fn explicit_summarize_shrinks_body() {
+        let _tok = crate::tokenizer::_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (svc, defaults, _tmp) = service().await;
         let family = default_config().tokenizer.default;
         let body = long_body();
@@ -435,7 +443,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // serialised vs. tokenizer-registry-clearing tests
     async fn max_tokens_auto_summarizes_over_budget() {
+        let _tok = crate::tokenizer::_test_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let (svc, defaults, _tmp) = service().await;
         let family = default_config().tokenizer.default;
         let body = long_body();
