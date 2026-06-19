@@ -41,8 +41,11 @@ pub enum CountSource {
 /// Successful `fetch` response (full content).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FetchResponse {
-    pub markdown: String,
-    pub frontmatter: String,
+    /// The full agent-facing document: a trusted preamble followed by the
+    /// nonce-wrapped frontmatter+body (see the prompt-injection guard). When
+    /// the guard's `wrap` method is allowlisted for the URL this is the
+    /// unwrapped frontmatter+body instead.
+    pub content: String,
     pub cache_status: CacheStatus,
 
     /// Present when `cache_status == "stale"` and a background revalidate
@@ -168,6 +171,14 @@ pub struct MetadataResponse {
     pub content_hash: String,
     pub fetched_at: String,
     pub cache_status: CacheStatus,
+
+    /// Guard telemetry for this response.
+    pub prompt_injection: crate::guard::GuardTelemetry,
+
+    /// Trusted warning surfaced when injection text was detected in the
+    /// metadata values (the structured equivalent of an in-band notice).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub security_notice: Option<String>,
 }
 
 /// Stable error envelope returned over MCP. `code` is from the fixed set
@@ -252,7 +263,8 @@ pub struct StaleRevalidation {
 /// `summarize` tool response.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SummarizeResponse {
-    pub summary_md: String,
+    /// The agent-facing summary as a nonce-wrapped document (see the guard).
+    pub content: String,
     pub metadata: SummarizeMetadata,
 }
 
@@ -273,6 +285,9 @@ pub struct SummarizeMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focus: Option<String>,
     pub preserve: Vec<String>,
+
+    /// Guard telemetry for this summary.
+    pub prompt_injection: crate::guard::GuardTelemetry,
 }
 
 /// Cache-status wire enum for the summary cache (distinct from the page
@@ -299,8 +314,7 @@ mod tests {
     #[test]
     fn fetch_response_serialises_snake_case_cache_status() {
         let v = FetchResponse {
-            markdown: "x".into(),
-            frontmatter: "f".into(),
+            content: "x".into(),
             cache_status: CacheStatus::Hit,
             revalidation: None,
             summarized: None,
@@ -309,6 +323,7 @@ mod tests {
         };
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("\"cache_status\":\"hit\""), "got: {s}");
+        assert!(s.contains("\"content\":\"x\""), "got: {s}");
     }
 
     #[test]

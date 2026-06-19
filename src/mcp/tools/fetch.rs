@@ -63,6 +63,11 @@ pub struct FetchArgs {
 
     #[serde(default)]
     pub headless: Option<HeadlessArg>,
+
+    /// Optional per-call guard overrides. Each field is honored only if its
+    /// corresponding `[prompt_injection.agent_overrides]` grant is `true`.
+    #[serde(default)]
+    pub security: Option<crate::guard::SecurityArg>,
 }
 
 /// Inline `summarize` sub-arg for the `fetch` tool. Re-uses the same
@@ -632,6 +637,21 @@ impl RoverHandler {
         .map_err(McpError::Extractor)?;
         let body_md = images_result.markdown;
 
+        // Prompt-injection output guard: scan/act once here (after tables &
+        // images, before summarize). The wrapper is applied last (below).
+        let guard_assessment = self
+            .guard
+            .assess(url.as_str(), args.security.as_ref(), &body_md);
+        // When the body is returned directly (no summarize), apply the level
+        // action to it. When summarized, the returned body is the summary of
+        // HIGH-cleaned content (internal hardening) and is wrapped as-is.
+        let direct_body = if args.summarize.is_none() {
+            guard_assessment.acted_body.clone()
+        } else {
+            body_md.clone()
+        };
+        let body_md = direct_body;
+
         // M7: optional inline `summarize` arg runs first against the
         // post-pass body. If the agent provided this, the returned
         // `markdown` is the summary.
@@ -793,12 +813,16 @@ impl RoverHandler {
             og_type: metadata.og_type.as_deref(),
             language: metadata.language.as_deref(),
             schema_types: &metadata.schema_types,
+            // MCP reports summarization via the `FetchResponse.summarized`
+            // envelope field; the in-content frontmatter marker stays off.
             extraction_quality: quality,
+            summarized: false,
             tables_transformed: &tables_transformed,
             images_seen: images_result.images_seen,
             images_downloaded: images_result.images_downloaded,
             images_failed: images_result.images_failed,
             images_processed: images_result.images_processed.clone(),
+            prompt_injection: Some(&guard_assessment.telemetry),
         });
 
         let summarized_flag = summarize_meta.as_ref().map(|o| o.summarized);
@@ -808,8 +832,12 @@ impl RoverHandler {
             .or_else(|| auto_meta.and_then(|o| o.fallback));
 
         Ok(FetchOutput::Full(FetchResponse {
-            markdown: body_md,
-            frontmatter,
+            content: self.guard.finish(
+                &guard_assessment,
+                &frontmatter,
+                &body_md,
+                args.summarize.is_none(),
+            ),
             cache_status,
             revalidation,
             summarized: summarized_flag,

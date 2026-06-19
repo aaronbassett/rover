@@ -73,6 +73,9 @@ pub struct Config {
 
     #[serde(default)]
     pub captioners: std::collections::BTreeMap<String, CaptionerConfig>,
+
+    #[serde(default)]
+    pub prompt_injection: PromptInjectionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -720,6 +723,79 @@ fn default_ssrf_level() -> String {
 
 fn default_ssrf_project_root() -> std::path::PathBuf {
     std::path::PathBuf::from(".")
+}
+
+/// Top-level `[prompt_injection]` section. `level` and `model` are free-form
+/// strings here (mirroring `SsrfConfig.level`); `guard::GuardConfig::from_config`
+/// parses them into typed enums at first use, surfacing a typed error rather
+/// than a serde error.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptInjectionConfig {
+    #[serde(default = "default_pi_level")]
+    pub level: String,
+
+    #[serde(default = "default_pi_model")]
+    pub model: String,
+
+    #[serde(default = "default_pi_model_threshold")]
+    pub model_threshold: f64,
+
+    #[serde(default)]
+    pub allowlist: PromptInjectionAllowlist,
+
+    #[serde(default)]
+    pub agent_overrides: PromptInjectionOverrides,
+}
+
+impl Default for PromptInjectionConfig {
+    fn default() -> Self {
+        Self {
+            level: default_pi_level(),
+            model: default_pi_model(),
+            model_threshold: default_pi_model_threshold(),
+            allowlist: PromptInjectionAllowlist::default(),
+            agent_overrides: PromptInjectionOverrides::default(),
+        }
+    }
+}
+
+/// Per-method URL-glob allowlists. A URL matching the glob list skips that
+/// method on OUTPUT for that URL. A bare `"*"` disables the method entirely.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptInjectionAllowlist {
+    #[serde(default)]
+    pub wrap: Vec<String>,
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    #[serde(default)]
+    pub model: Vec<String>,
+}
+
+/// Per-method agent-override grants (default: all deny). The MCP `security`
+/// arg is honored for a method only when its grant here is `true`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptInjectionOverrides {
+    #[serde(default)]
+    pub wrap: bool,
+    #[serde(default)]
+    pub patterns: bool,
+    #[serde(default)]
+    pub model: bool,
+    #[serde(default)]
+    pub level: bool,
+}
+
+fn default_pi_level() -> String {
+    "moderate".to_string()
+}
+fn default_pi_model() -> String {
+    "disabled".to_string()
+}
+fn default_pi_model_threshold() -> f64 {
+    0.9
 }
 
 /// Top-level `[debug]` section. M8 introduces this for HAR recording and
@@ -1591,5 +1667,64 @@ model = "HuggingFaceTB/SmolVLM-256M-Instruct"
         let h = HeadlessConfig::default();
         assert_eq!(h.max_concurrent, 4);
         assert!(h.chrome_executable.is_empty());
+    }
+
+    #[test]
+    fn prompt_injection_defaults_when_absent() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.prompt_injection.level, "moderate");
+        assert_eq!(cfg.prompt_injection.model, "disabled");
+        assert!((cfg.prompt_injection.model_threshold - 0.9).abs() < f64::EPSILON);
+        assert!(cfg.prompt_injection.allowlist.wrap.is_empty());
+        assert!(cfg.prompt_injection.allowlist.patterns.is_empty());
+        assert!(cfg.prompt_injection.allowlist.model.is_empty());
+        assert!(!cfg.prompt_injection.agent_overrides.wrap);
+        assert!(!cfg.prompt_injection.agent_overrides.patterns);
+        assert!(!cfg.prompt_injection.agent_overrides.model);
+        assert!(!cfg.prompt_injection.agent_overrides.level);
+    }
+
+    #[test]
+    fn prompt_injection_parses_full_block() {
+        let toml = r#"
+[prompt_injection]
+level = "strict"
+model = "deberta-base"
+model_threshold = 0.75
+
+[prompt_injection.allowlist]
+wrap = ["https://*.internal.example.com/*"]
+patterns = ["*"]
+model = []
+
+[prompt_injection.agent_overrides]
+wrap = true
+patterns = false
+model = true
+level = true
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.prompt_injection.level, "strict");
+        assert_eq!(cfg.prompt_injection.model, "deberta-base");
+        assert!((cfg.prompt_injection.model_threshold - 0.75).abs() < f64::EPSILON);
+        assert_eq!(
+            cfg.prompt_injection.allowlist.wrap,
+            vec!["https://*.internal.example.com/*".to_string()]
+        );
+        assert_eq!(
+            cfg.prompt_injection.allowlist.patterns,
+            vec!["*".to_string()]
+        );
+        assert!(cfg.prompt_injection.agent_overrides.wrap);
+        assert!(!cfg.prompt_injection.agent_overrides.patterns);
+        assert!(cfg.prompt_injection.agent_overrides.model);
+        assert!(cfg.prompt_injection.agent_overrides.level);
+    }
+
+    #[test]
+    fn prompt_injection_rejects_unknown_field() {
+        let toml = "[prompt_injection]\nbogus = 1\n";
+        let r: Result<Config, _> = toml::from_str(toml);
+        assert!(r.is_err(), "expected deny_unknown_fields rejection");
     }
 }

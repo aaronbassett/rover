@@ -36,6 +36,10 @@ async fn fixture_handler() -> (RoverHandler, Db) {
         pacer,
         summarizer,
         captioners,
+        std::sync::Arc::new(
+            rover::guard::Guard::from_config(&rover::config::Config::default().prompt_injection)
+                .unwrap(),
+        ),
         #[cfg(feature = "headless")]
         Arc::new(tokio::sync::OnceCell::new()),
     );

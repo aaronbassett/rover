@@ -46,6 +46,9 @@ pub struct SummarizeArgs {
 
     #[serde(default)]
     pub tokenizer: Option<String>,
+
+    #[serde(default)]
+    pub security: Option<crate::guard::SecurityArg>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
@@ -167,8 +170,15 @@ impl RoverHandler {
 
         let estimated_tokens = tokenizer::count(&summary.summary_md, family)?;
 
+        let assessment =
+            self.guard
+                .assess(url.as_str(), args.security.as_ref(), &summary.summary_md);
+        let content = self
+            .guard
+            .finish(&assessment, "", &assessment.acted_body, true);
+
         Ok(SummarizeResponse {
-            summary_md: summary.summary_md,
+            content,
             metadata: SummarizeMetadata {
                 backend: summary.effective_backend,
                 mode: opts.mode.as_str().to_string(),
@@ -193,6 +203,7 @@ impl RoverHandler {
                     .iter()
                     .map(|p| p.as_str().to_string())
                     .collect(),
+                prompt_injection: assessment.telemetry,
             },
         })
     }

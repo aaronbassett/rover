@@ -9,8 +9,9 @@ pub mod doctor;
 pub mod error;
 pub mod extractor;
 pub mod fetcher;
+pub mod guard;
 pub mod mcp;
-#[cfg(feature = "local-inference")]
+#[cfg(any(feature = "local-inference", feature = "injection-model"))]
 pub mod model_integrity;
 pub mod paths;
 pub mod storage;

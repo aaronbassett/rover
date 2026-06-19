@@ -40,6 +40,9 @@ pub struct RoverHandler {
     /// cloud captioners ship in every binary; may be empty when the user
     /// hasn't configured any `[captioners.*]` blocks.
     pub(crate) captioners: Arc<crate::vlm::CaptionerRegistry>,
+    /// Prompt-injection guard. Always present; default config yields the
+    /// `moderate` output level with methods 1+2 active.
+    pub(crate) guard: std::sync::Arc<crate::guard::Guard>,
     /// M9 fix C1: lazily-initialized headless renderer. The handler owns a
     /// shared `OnceCell` so the first call requesting `headless.mode = On`
     /// (or `Auto` when the SPA heuristic triggers) pays the
@@ -63,10 +66,29 @@ impl RoverHandler {
         pacer: Arc<Pacer>,
         summarizer: Arc<crate::summarizer::SummarizerService>,
         captioners: Arc<crate::vlm::CaptionerRegistry>,
+        guard: Arc<crate::guard::Guard>,
         #[cfg(feature = "headless")] headless_renderer: Arc<
             tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>,
         >,
     ) -> Self {
+        // Rewrite covered tools' descriptions to advertise, per override, whether
+        // the agent's `security` arg is currently honored based on config grants.
+        // rmcp's `#[tool_handler]` clones each route's `attr.description` when
+        // generating `list_tools`, so mutating the router map here is reflected.
+        let mut tool_router = Self::tool_router();
+        let note = guard.tool_security_note();
+        for name in ["fetch_tool", "summarize_tool", "get_metadata_tool"] {
+            if let Some(route) = tool_router.map.get_mut(name) {
+                let base = route.attr.description.clone().unwrap_or_default();
+                route.attr.description = Some(format!("{base} {note}").into());
+            }
+        }
+        if let Some(route) = tool_router.map.get_mut("batch_fetch_tool") {
+            let base = route.attr.description.clone().unwrap_or_default();
+            route.attr.description = Some(
+                format!("{base} Fetched content is prompt-injection guarded when you later read each URL via fetch.").into(),
+            );
+        }
         Self {
             db,
             config,
@@ -77,9 +99,10 @@ impl RoverHandler {
             pacer,
             summarizer,
             captioners,
+            guard,
             #[cfg(feature = "headless")]
             headless_renderer,
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 }

@@ -32,6 +32,40 @@ Inspect the effective configuration with `rover config show`. Mutate a single se
 
 Unknown level strings are rejected the first time the SSRF policy is consulted (typed `SsrfError::UnknownLevel`).
 
+## `[prompt_injection]`
+
+Layered prompt-injection guard for the content-returning MCP tools (`fetch`, `summarize`, `get_metadata`, and — transitively — `batch_fetch`). See `mcp-tools.md` for the wire contract (the `content` field, the nonce wrapper, and the `prompt_injection` telemetry object).
+
+```toml
+[prompt_injection]
+level = "moderate"      # strict | high | moderate | low | disabled  (output side)
+model = "disabled"      # disabled | deberta-base | deberta-small | prompt-guard-2-86m | prompt-guard-2-22m | <hf-id>
+model_threshold = 0.9   # model malicious-score threshold
+
+[prompt_injection.allowlist]   # URL globs; a matching URL skips that method on OUTPUT
+wrap = []                      # e.g. ["https://*.internal.example.com/*"]   ("*" disables entirely)
+patterns = []
+model = []
+
+[prompt_injection.agent_overrides]   # grant the agent per-call `security` control (default: all deny)
+wrap = false
+patterns = false
+model = false
+level = false
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `level` | enum | `"moderate"` | Output action on a detector hit. One of `strict`, `high`, `moderate`, `low`, `disabled`. |
+| `model` | string | `"disabled"` | Model detector. One of `disabled`, the presets `deberta-base`, `deberta-small`, `prompt-guard-2-86m`, `prompt-guard-2-22m`, or a custom HuggingFace `owner/repo` id. |
+| `model_threshold` | float | `0.9` | Malicious-score threshold above which a model window is flagged. |
+
+`[prompt_injection.allowlist]` lists per-method URL globs (`wrap`, `patterns`, `model`); a URL matching a method's list skips that method on output for that URL, and a bare `"*"` disables the method entirely. `[prompt_injection.agent_overrides]` grants the agent per-call control via the MCP `security` arg — each of `wrap`, `patterns`, `model`, `level` (default `false`); a `security` field is honored only when its grant here is `true`, otherwise it is ignored and recorded in the response's `prompt_injection.overrides_attempted`.
+
+Both the `level`/`model` strings are validated at first use (`guard::GuardConfig::from_config`), surfacing a typed error rather than a serde error — unknown values are accepted by the TOML parser and rejected when the guard is built.
+
+The model detector (`model`) requires building Rover with `--features injection-model` (downloads an ONNX DeBERTa classifier from HuggingFace on first use; verify with `rover doctor`). When the feature is not compiled, a configured `model` is ignored with a warning. Methods 1 (structural wrapper) and 2 (pattern detector) are always compiled. Internal-inference hardening (cleaning content Rover feeds to its own summarizer/caption models) is always on and cannot be disabled.
+
 ## `[cache]`
 
 | Key | Type | Default | Description |
@@ -228,6 +262,10 @@ timeout_secs = 30
 [ssrf]
 level = "project"
 project_root = "/Users/me/code"
+
+[prompt_injection]
+level = "moderate"
+model = "disabled"          # set to e.g. "deberta-small" with --features injection-model
 
 [cache]
 default_ttl = "6h"
