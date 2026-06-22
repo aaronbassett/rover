@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 const config: Config = {
   title: 'Rover',
   tagline: 'Turn the web into clean, token-efficient Markdown your agent can trust.',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/favicon.png',
 
   // Set the production url of your site here
   url: 'https://rover-fetch.com',
@@ -55,10 +55,11 @@ const config: Config = {
     image: 'img/docusaurus-social-card.jpg',
     colorMode: { defaultMode: 'light', respectPrefersColorScheme: true },
     navbar: {
-      title: 'My Site',
+      title: 'Rover',
       logo: {
-        alt: 'My Site Logo',
-        src: 'img/logo.svg',
+        alt: 'Rover',
+        src: 'img/logo.png',
+        srcDark: 'img/logo-dark.png',
       },
       items: [
         {
