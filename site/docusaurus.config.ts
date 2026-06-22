@@ -45,6 +45,7 @@ const config: Config = {
           includeDocs: true,
           includeBlog: false,
           includePages: false,
+          excludeRoutes: ['/search'],  // search route is a JS-only UI shell with no real content
         },
       },
     ],
