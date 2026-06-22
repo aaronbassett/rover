@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Pre-1.0 stability expectations are spelled out in [`docs/versioning.md`](docs/versioning.md).
+Pre-1.0 stability expectations are spelled out at [`rover-fetch.com/docs/versioning`](https://rover-fetch.com/docs/versioning).
 
 ## [0.1.0] - 2026-06-22
 
@@ -18,7 +18,7 @@ Pre-1.0 stability expectations are spelled out in [`docs/versioning.md`](docs/ve
   (`--features headless`), creates the GitHub Release with a `curl | sh`
   installer and SHA-256 checksums, and publishes a single `rover` Homebrew
   formula (`depends_on "chromium"`) to `aaronbassett/homebrew-tap`.
-  `LICENSE-MIT` / `LICENSE-APACHE`; a release runbook (`docs/releasing.md`).
+  `LICENSE-MIT` / `LICENSE-APACHE`; a release runbook ([rover-fetch.com/docs/releasing](https://rover-fetch.com/docs/releasing)).
 
 ### Changed
 

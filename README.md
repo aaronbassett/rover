@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/rover-hero.png" alt="Rover — turn the web into clean, token-efficient Markdown your agent can trust" width="100%">
+<img src="site/static/img/rover-hero.png" alt="Rover — turn the web into clean, token-efficient Markdown your agent can trust" width="100%">
 
 # Rover
 
@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/aaronbassett/rover/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronbassett/rover/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Rust 1.96+](https://img.shields.io/badge/rustc-1.96+-orange.svg)](docs/versioning.md)
+[![Rust 1.96+](https://img.shields.io/badge/rustc-1.96+-orange.svg)](https://rover-fetch.com/docs/versioning)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](#install)
 
 [Quick start](#quick-start-wire-it-into-your-agent) · [Why Rover](#why-rover) · [How it compares](#how-your-agent-gets-the-web) · [MCP tools](#the-mcp-tools) · [Security](#security--trust) · [Features](#features) · [Docs](#documentation)
@@ -21,7 +21,7 @@ Point your agent at a URL and Rover fetches it, strips the ads/nav/chrome, extra
 
 <div align="center">
 
-<img src="docs/assets/rover-demo.gif" alt="rover fetching a Wikipedia page and summarising it to a token budget" width="85%">
+<img src="site/static/img/rover-demo.gif" alt="rover fetching a Wikipedia page and summarising it to a token budget" width="85%">
 
 <sub><code>rover</code> fetching the Charlie Dog (a.k.a. <strong>Rover</strong> 🐕) page and summarising ~19.6k tokens down to ~330 — summarisation here runs through a configured cloud backend.</sub>
 
@@ -93,7 +93,7 @@ Your agent now has these tools:
 | `get_metadata` | Extract Schema.org, Open Graph, and Twitter Card metadata without pulling the full body. |
 | `count_tokens` | Estimate a URL's token cost across `cl100k` / `o200k` / `claude` / `llama3` / `qwen3` tokenisers without paying it. |
 
-Full tool reference: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+Full tool reference: [`rover-fetch.com/docs/mcp-tools`](https://rover-fetch.com/docs/mcp-tools).
 
 ### …or use it from the shell
 
@@ -160,7 +160,7 @@ cargo install rover-fetch --features headless   # crate is rover-fetch; binary i
 > [!NOTE]
 > The crate publishes as `rover-fetch` because `rover` on crates.io is held by an unrelated project. The installed binary is still `rover`. `cargo install` builds with the crate's default (basic) features; add `--features headless` to match the prebuilt and Homebrew binary.
 
-**Requirements:** Rust 1.96+ (edition 2024). See [`docs/versioning.md`](docs/versioning.md) for the stability and MSRV policy.
+**Requirements:** Rust 1.96+ (edition 2024). See [`rover-fetch.com/docs/versioning`](https://rover-fetch.com/docs/versioning) for the stability and MSRV policy.
 
 ## The MCP tools
 
@@ -194,7 +194,7 @@ extraction_quality: 0.98
 Rust is a multi-paradigm, general-purpose programming language…
 ```
 
-Full schemas, arguments, and wire contracts: [`docs/mcp-tools.md`](docs/mcp-tools.md).
+Full schemas, arguments, and wire contracts: [`rover-fetch.com/docs/mcp-tools`](https://rover-fetch.com/docs/mcp-tools).
 
 ## Security & trust
 
@@ -218,18 +218,18 @@ A configurable response level decides what happens on a hit:
 | `low` | Content intact; warn only |
 | `disabled` | No detection (the wrapper still applies) |
 
-Structured `prompt_injection` telemetry rides along on every response, and content Rover feeds to its **own** summariser/caption models is always independently cleaned at high strength — that hardening can't be disabled. Configure under [`[prompt_injection]`](docs/configuration.md#prompt_injection); full contract in [`docs/mcp-tools.md`](docs/mcp-tools.md#prompt-injection-guard).
+Structured `prompt_injection` telemetry rides along on every response, and content Rover feeds to its **own** summariser/caption models is always independently cleaned at high strength — that hardening can't be disabled. Configure under [`[prompt_injection]`](https://rover-fetch.com/docs/configuration#prompt_injection); full contract in [`rover-fetch.com/docs/mcp-tools`](https://rover-fetch.com/docs/mcp-tools#prompt-injection-guard).
 
 ### SSRF protection
 
-Five levels: `strict` · `loopback` · `project` · `lan` · `none`. Every outbound URL is validated twice — once by parsed scheme/host, once against every resolved address before the socket opens — and a **dial-time SSRF resolver** re-applies the policy at each connection attempt, closing the DNS-rebinding TOCTOU window for both the initial request and every redirect hop. Default is `strict` (public IPs, `http`/`https` only). Full level matrix, the always-blocked address floor, and `file://` handling: [`docs/security.md`](docs/security.md).
+Five levels: `strict` · `loopback` · `project` · `lan` · `none`. Every outbound URL is validated twice — once by parsed scheme/host, once against every resolved address before the socket opens — and a **dial-time SSRF resolver** re-applies the policy at each connection attempt, closing the DNS-rebinding TOCTOU window for both the initial request and every redirect hop. Default is `strict` (public IPs, `http`/`https` only). Full level matrix, the always-blocked address floor, and `file://` handling: [`rover-fetch.com/docs/security`](https://rover-fetch.com/docs/security).
 
 ### Secret redaction
 
 The tracing layer scrubs URL query-string secrets (`api_key`, `token`, `secret`, `password`) **and** HTTP `Authorization`-style credentials (`Bearer …` / `Basic …`, plus any field literally named `authorization`) before events reach any log destination.
 
 > [!CAUTION]
-> The HAR recorder (`[debug] har_path`) writes request/response bodies to disk **unredacted by design** — it's opt-in debug instrumentation. Protect the file with filesystem permissions and treat it as sensitive. Full threat model: [`docs/security.md`](docs/security.md).
+> The HAR recorder (`[debug] har_path`) writes request/response bodies to disk **unredacted by design** — it's opt-in debug instrumentation. Protect the file with filesystem permissions and treat it as sensitive. Full threat model: [`rover-fetch.com/docs/security`](https://rover-fetch.com/docs/security).
 
 ## Features
 
@@ -336,7 +336,7 @@ Local models download on first use (or ahead of time via `rover model download <
 > [!IMPORTANT]
 > Cloud captioners (OpenAI, Anthropic, Gemini, OpenAI-compatible) are **always compiled in** — no feature flag. The `headless` feature needs a Chrome/Chromium browser on the host; Rover auto-detects standard install paths (override with `[headless] chrome_executable`), and `rover doctor` verifies the launch path.
 
-Setup details, model recommendations, and memory profiles: [`docs/features.md`](docs/features.md).
+Setup details, model recommendations, and memory profiles: [`rover-fetch.com/docs/features`](https://rover-fetch.com/docs/features).
 
 ## Configuration
 
@@ -374,7 +374,7 @@ default_backend = "default"
 kind = "extractive"
 ```
 
-The full reference — every section, key, and default — lives in [`docs/configuration.md`](docs/configuration.md).
+The full reference — every section, key, and default — lives at [`rover-fetch.com/docs/configuration`](https://rover-fetch.com/docs/configuration).
 
 ## Subcommands at a glance
 
@@ -389,19 +389,19 @@ rover config show|set                inspect / mutate config (provenance-aware)
 rover model download|list|remove     manage local model cache (feature-gated)
 ```
 
-Full reference, exit codes, and NDJSON event shapes: [`docs/cli.md`](docs/cli.md).
+Full reference, exit codes, and NDJSON event shapes: [`rover-fetch.com/docs/cli`](https://rover-fetch.com/docs/cli).
 
 ## Documentation
 
 | Doc | What's in it |
 | --- | --- |
-| [`docs/cli.md`](docs/cli.md) | Every subcommand, flag, exit code, and NDJSON event shape. |
-| [`docs/mcp-tools.md`](docs/mcp-tools.md) | MCP tool schemas: `fetch`, `batch_fetch`, `summarize`, `get_metadata`, `count_tokens`, and the prompt-injection wire contract. |
-| [`docs/configuration.md`](docs/configuration.md) | Every config section and key, with defaults, types, and examples. |
-| [`docs/backends.md`](docs/backends.md) | Summarisation backend reference: extractive (TextRank) and cloud providers. |
-| [`docs/features.md`](docs/features.md) | Cargo feature flags: `headless`, `local-inference`, `injection-model` — setup, models, sizes. |
-| [`docs/security.md`](docs/security.md) | SSRF levels, address floor, DNS-rebinding mitigation, secret redaction, prompt-injection guard, known limitations. |
-| [`docs/versioning.md`](docs/versioning.md) | Stability and MSRV policy. |
+| [CLI](https://rover-fetch.com/docs/cli) | Every subcommand, flag, exit code, and NDJSON event shape. |
+| [MCP tools](https://rover-fetch.com/docs/mcp-tools) | MCP tool schemas: `fetch`, `batch_fetch`, `summarize`, `get_metadata`, `count_tokens`, and the prompt-injection wire contract. |
+| [Configuration](https://rover-fetch.com/docs/configuration) | Every config section and key, with defaults, types, and examples. |
+| [Backends](https://rover-fetch.com/docs/backends) | Summarisation backend reference: extractive (TextRank) and cloud providers. |
+| [Features](https://rover-fetch.com/docs/features) | Cargo feature flags: `headless`, `local-inference`, `injection-model` — setup, models, sizes. |
+| [Security](https://rover-fetch.com/docs/security) | SSRF levels, address floor, DNS-rebinding mitigation, secret redaction, prompt-injection guard, known limitations. |
+| [Versioning](https://rover-fetch.com/docs/versioning) | Stability and MSRV policy. |
 
 Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md) · Security policy: [`SECURITY.md`](SECURITY.md) · Changelog: [`CHANGELOG.md`](CHANGELOG.md).
 

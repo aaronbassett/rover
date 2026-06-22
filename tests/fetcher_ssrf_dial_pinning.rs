@@ -1,6 +1,6 @@
 //! End-to-end check that the custom DNS resolver re-applies the SSRF
 //! address policy at dial time, closing the resolve-then-dial TOCTOU
-//! window described in `docs/security.md` §"DNS rebinding".
+//! window described in `https://rover-fetch.com/docs/security` §"DNS rebinding".
 //!
 //! We can't easily stand up a malicious authoritative DNS server in a
 //! unit test, but we can exercise the same code path by having the
