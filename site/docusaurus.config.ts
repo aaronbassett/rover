@@ -12,16 +12,14 @@ const config: Config = {
   // Set the production url of your site here
   url: 'https://rover-fetch.com',
   // Set the /<baseUrl>/ pathname under which your site is served
-  // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: '/',
   trailingSlash: false,
 
-  // GitHub pages deployment config.
-  // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'facebook', // Usually your GitHub org/user name.
-  projectName: 'docusaurus', // Usually your repo name.
+  organizationName: 'aaronbassett',
+  projectName: 'rover',
 
   onBrokenLinks: 'throw',
+  onBrokenMarkdownLinks: 'throw',
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -37,10 +35,7 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/facebook/docusaurus/tree/main/packages/create-docusaurus/templates/shared/',
+          editUrl: 'https://github.com/aaronbassett/rover/tree/main/site/',
         },
         blog: false, // Blog disabled — out of scope for rover-fetch.com docs site
         theme: {
@@ -62,17 +57,10 @@ const config: Config = {
         srcDark: 'img/logo-dark.png',
       },
       items: [
-        {
-          type: 'docSidebar',
-          sidebarId: 'tutorialSidebar',
-          position: 'left',
-          label: 'Tutorial',
-        },
-        {
-          href: 'https://github.com/facebook/docusaurus',
-          label: 'GitHub',
-          position: 'right',
-        },
+        { to: '/docs/intro', label: 'Docs', position: 'left' },
+        { to: '/docs/mcp-tools', label: 'Tools', position: 'left' },
+        { to: '/docs/security', label: 'Security', position: 'left' },
+        { href: 'https://github.com/aaronbassett/rover', label: 'GitHub', position: 'right' },
       ],
     },
     footer: {
@@ -81,40 +69,20 @@ const config: Config = {
         {
           title: 'Docs',
           items: [
-            {
-              label: 'Docs',
-              to: '/docs',
-            },
+            { label: 'Getting started', to: '/docs/intro' },
+            { label: 'CLI', to: '/docs/cli' },
+            { label: 'MCP tools', to: '/docs/mcp-tools' },
           ],
         },
         {
-          title: 'Community',
+          title: 'Project',
           items: [
-            {
-              label: 'Stack Overflow',
-              href: 'https://stackoverflow.com/questions/tagged/docusaurus',
-            },
-            {
-              label: 'Discord',
-              href: 'https://discordapp.com/invite/docusaurus',
-            },
-            {
-              label: 'X',
-              href: 'https://x.com/docusaurus',
-            },
-          ],
-        },
-        {
-          title: 'More',
-          items: [
-            {
-              label: 'GitHub',
-              href: 'https://github.com/facebook/docusaurus',
-            },
+            { label: 'GitHub', href: 'https://github.com/aaronbassett/rover' },
+            { label: 'crates.io', href: 'https://crates.io/crates/rover-fetch' },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} My Project, Inc. Built with Docusaurus.`,
+      copyright: 'MIT / Apache-2.0 · Rover',
     },
     prism: {
       theme: prismThemes.github,
