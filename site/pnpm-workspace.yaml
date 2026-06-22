@@ -1,21 +1,7 @@
 # Supply-chain hardening. See docs/superpowers/specs/2026-06-22-docs-site-design.md §8.
 minimumReleaseAge: 4320            # 3 days, in minutes — no newer versions install
-minimumReleaseAgeStrict: true      # fail resolution if no version satisfies the gate
+minimumReleaseAgeStrict: false     # fall back to newest ≥3-day-old version instead of hard-failing
 strictDepBuilds: true              # error on any unreviewed dependency build script
 dangerouslyAllowAllBuilds: false   # never auto-run all dependency build scripts
 allowBuilds:
-  "@swc/core": true    # native binary downloader — required by Docusaurus @docusaurus/faster
-  "core-js": true      # JS polyfills — safe postinstall, required by Docusaurus
-minimumReleaseAgeExclude:          # packages confirmed on npm but younger than 3 days at install time (2026-06-22)
-  - "@jsonjoy.com/fs-core@4.57.8"
-  - "@jsonjoy.com/fs-fsa@4.57.8"
-  - "@jsonjoy.com/fs-node-builtins@4.57.8"
-  - "@jsonjoy.com/fs-node-to-fsa@4.57.8"
-  - "@jsonjoy.com/fs-node-utils@4.57.8"
-  - "@jsonjoy.com/fs-node@4.57.8"
-  - "@jsonjoy.com/fs-print@4.57.8"
-  - "@jsonjoy.com/fs-snapshot@4.57.8"
-  - "http-proxy-middleware@2.0.10"
-  - "memfs@4.57.8"
-  - "nanoid@3.3.14"
-  - "semver@7.8.5"
+  "core-js": false   # block postinstall — not required by standard webpack/babel build
