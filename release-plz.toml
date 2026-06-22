@@ -1,0 +1,10 @@
+# release-plz configuration — https://release-plz.dev/docs/config
+[workspace]
+# dist (cargo-dist) owns the GitHub Release and uploads the binaries; release-plz
+# only publishes to crates.io and pushes the tag that triggers dist. Without this
+# the two tools fight over creating the GitHub Release.
+git_release_enable = false
+# Tag as `vX.Y.Z` — dist's canonical single-app tag, matched by its release.yml
+# trigger glob. The repo is a one-member workspace, whose release-plz default
+# would otherwise be `rover-fetch-vX.Y.Z`.
+git_tag_name = "v{{ version }}"

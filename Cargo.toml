@@ -1,14 +1,15 @@
 [package]
 # `rover` is taken on crates.io by an unrelated Cosmos project, so the crate
-# is published as `rover-mcp`. The installed binary is still `rover` (see the
+# is published as `rover-fetch`. The installed binary is still `rover` (see the
 # `[[bin]]` section) and the library is still imported as `rover` (`[lib]`),
 # so only the crates.io package name differs.
-name = "rover-mcp"
-version = "0.1.0-alpha.1"
+name = "rover-fetch"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "An MCP server for fetching and prepping web content for LLM agents."
 repository = "https://github.com/aaronbassett/rover"
+homepage = "https://github.com/aaronbassett/rover"
 readme = "README.md"
 keywords = ["mcp", "web", "scraping", "markdown", "llm"]
 categories = ["command-line-utilities", "web-programming"]
@@ -100,8 +101,41 @@ injection-model = ["dep:ort"]
 # `strip` cannot operate on the foreign ELF.
 strip = "symbols"
 
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 [lints.rust]
 warnings = "deny"
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
+
+# Config for 'dist'
+[workspace.metadata.dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.32.0"
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
+# The installers to generate for each app
+installers = ["shell", "homebrew"]
+# Publish jobs to run in CI
+publish-jobs = ["homebrew"]
+# A GitHub repo to push Homebrew formulas to
+tap = "aaronbassett/homebrew-tap"
+# Customize the Homebrew formula name
+formula = "rover"
+# CI backends to support
+ci = "github"
+# Path that installers should place binaries in
+install-path = "CARGO_HOME"
+# Whether to install an updater program
+install-updater = false
+
+[package.metadata.dist]
+features = ["headless"]
+default-features = false
+
+[package.metadata.dist.dependencies.homebrew]
+chromium = { version = "*", stage = ["run"] }

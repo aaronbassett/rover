@@ -4918,8 +4918,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "rover-mcp"
-version = "0.1.0-alpha.1"
+name = "rover-fetch"
+version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",

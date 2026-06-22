@@ -6,23 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 stability expectations are spelled out in [`docs/versioning.md`](docs/versioning.md).
 
-## [Unreleased]
+## [0.1.0] - 2026-06-22
 
 ### Added
 
 - `SECURITY.md` with a private disclosure address and a pre-1.0 supported-versions
   policy (#22).
-- Release infrastructure: a tag-triggered `release.yml` that builds 4 targets ×
-  5 feature variants, publishes a GitHub Release with `SHA256SUMS`, publishes the
-  crate to crates.io, and bumps the Homebrew tap; `LICENSE-MIT` / `LICENSE-APACHE`;
-  a Homebrew formula generator (`scripts/render-homebrew-formulas.sh`); and a
-  release runbook (`docs/releasing.md`).
+- Automated release pipeline: [release-plz](https://release-plz.dev) drives
+  versioning, the changelog, the crates.io publish, and tagging;
+  [dist](https://opensource.axo.dev/cargo-dist/) builds the four target binaries
+  (`--features headless`), creates the GitHub Release with a `curl | sh`
+  installer and SHA-256 checksums, and publishes a single `rover` Homebrew
+  formula (`depends_on "chromium"`) to `aaronbassett/homebrew-tap`.
+  `LICENSE-MIT` / `LICENSE-APACHE`; a release runbook (`docs/releasing.md`).
 
 ### Changed
 
-- The crate is published on crates.io as `rover-mcp` (the `rover` name is held by
-  an unrelated project). The installed binary and the importable library are both
-  still named `rover`.
+- The crate is published on crates.io as `rover-fetch` (the `rover` name is held
+  by an unrelated project). The installed binary and the importable library are
+  both still named `rover`.
 - Release builds now strip symbols (`[profile.release] strip = "symbols"`).
 
 ### Removed
@@ -56,7 +58,7 @@ Pre-1.0 stability expectations are spelled out in [`docs/versioning.md`](docs/ve
   an SSRF gap where a page could make Rover fetch private, loopback, or
   cloud-metadata addresses during image download or caption filtering (#23).
 
-## [0.1.0-alpha.1] — 2026-05-28
+## 0.1.0-alpha.1 — 2026-05-28
 
 First tagged pre-release. Summarises the work from the initial fetch path
 (M1) through the pre-release hardening pass (#21).
@@ -103,5 +105,4 @@ First tagged pre-release. Summarises the work from the initial fetch path
   the production panic surface (#13).
 - HTTP `Authorization` credentials are scrubbed from tracing events (#20).
 
-[Unreleased]: https://github.com/aaronbassett/rover/compare/v0.1.0-alpha.1...HEAD
-[0.1.0-alpha.1]: https://github.com/aaronbassett/rover/releases/tag/v0.1.0-alpha.1
+[0.1.0]: https://github.com/aaronbassett/rover/releases/tag/v0.1.0

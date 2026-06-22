@@ -112,7 +112,7 @@ rover doctor                                       # sanity-check the install
 ## Install
 
 > [!NOTE]
-> Rover is pre-1.0 (`0.1.0-alpha.1`). The build-from-source path below works today; the packaged channels (Homebrew tap, prebuilt tarballs, crates.io) come online with the first tagged release.
+> Rover is pre-1.0 (`0.1.0`). The build-from-source path below works today; the packaged channels (Homebrew tap, prebuilt tarballs, crates.io) come online with the first tagged release.
 
 All channels install a binary named `rover`.
 
@@ -133,20 +133,32 @@ The default build (~20 MiB) needs no model downloads, no Chrome, and no extra ru
 brew install aaronbassett/tap/rover
 ```
 
-The `rover` formula is the lean default build. Optional-feature variants are separate formulas — `rover-complete`, `rover-headless`, `rover-local-inference` — and Homebrew installs one at a time (they all provide `rover`).
+The `rover` formula ships the JavaScript-rendering (`headless`) build and `depends_on "chromium"`. Other optional features (e.g. `local-inference`) are available from source via `cargo install` — see crates.io below.
 
 **Prebuilt binary (Linux & macOS) — on release:**
 
-Download the tarball for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify it against `SHA256SUMS`, and drop `rover` on your `PATH`. Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS, each in four feature variants (`basic`, `local-inference`, `headless`, `complete`).
+One-line installer:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aaronbassett/rover/releases/latest/download/rover-fetch-installer.sh | sh
+```
+
+Or download a `.tar.xz` from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify its checksum, then extract it and move the `rover` binary onto your `PATH`:
+
+```sh
+tar xf rover-fetch-<target>.tar.xz   # then move the extracted `rover` onto your PATH
+```
+
+Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. The prebuilt binary includes the `headless` feature (JavaScript-rendered pages).
 
 **crates.io — on release:**
 
 ```sh
-cargo install rover-mcp          # crate is rover-mcp; binary is rover
+cargo install rover-fetch --features headless   # crate is rover-fetch; binary is rover
 ```
 
 > [!NOTE]
-> The crate publishes as `rover-mcp` because `rover` on crates.io is held by an unrelated project. The installed binary is still `rover`.
+> The crate publishes as `rover-fetch` because `rover` on crates.io is held by an unrelated project. The installed binary is still `rover`. `cargo install` builds with the crate's default (basic) features; add `--features headless` to match the prebuilt and Homebrew binary.
 
 **Requirements:** Rust 1.96+ (edition 2024). See [`docs/versioning.md`](docs/versioning.md) for the stability and MSRV policy.
 
