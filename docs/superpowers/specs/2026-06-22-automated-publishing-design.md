@@ -207,9 +207,10 @@ later add, not in scope.)
 
 ## First release / versioning
 
-`rover-fetch` is unpublished, so release-plz's first Release PR establishes the
-baseline version. Decision deferred to the implementation plan: either keep
-`0.1.0-alpha.1` or cut a clean `0.1.0`. After the first release, release-plz
+`rover-fetch` is unpublished, so the first release establishes the baseline
+version. **Decision: cut a clean `0.1.0`** (not a pre-release). The crate version
+is set to `0.1.0` as part of this work; the first tag is `v0.1.0`, published as a
+normal (non-prerelease) GitHub Release. After the first release, release-plz
 drives all version bumps from commit history.
 
 ## Testing / validation
