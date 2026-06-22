@@ -29,6 +29,23 @@ const config: Config = {
     locales: ['en'],
   },
 
+  plugins: [
+    [
+      '@signalwire/docusaurus-plugin-llms-txt',
+      {
+        // Per-route clean Markdown twins (append .md to any URL) + llms.txt index.
+        // Disable the whole-site concatenation (llms-full.txt) per spec.
+        content: {
+          enableMarkdownFiles: true,   // emit <route>.md beside every page
+          enableLlmsFullTxt: false,    // keep llms-full.txt OFF per spec
+          includeDocs: true,
+          includeBlog: false,
+          includePages: false,
+        },
+      },
+    ],
+  ],
+
   presets: [
     [
       'classic',
@@ -79,6 +96,7 @@ const config: Config = {
           items: [
             { label: 'GitHub', href: 'https://github.com/aaronbassett/rover' },
             { label: 'crates.io', href: 'https://crates.io/crates/rover-fetch' },
+            { label: 'llms.txt', to: 'pathname:///llms.txt' },
           ],
         },
       ],
