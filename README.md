@@ -240,12 +240,11 @@ Sub-requests (CSS, fonts, beacons) are deliberately excluded so the HAR file sta
 
 ### Optional features (Cargo feature flags)
 
-Three independent features for users who want more than the default:
+Two independent features for users who want more than the default:
 
 | Feature | Adds | Approx. size |
 | --- | --- | --- |
 | `local-inference` | Local LLM summarisation via [`mistral.rs`](https://github.com/EricLBuehler/mistral.rs) (default model: Qwen 3.5 0.8B) | ~80 MB |
-| `local-vision` | Local image captioning via SmolVLM (shares `mistral.rs` with `local-inference`) | ~5 MB additional |
 | `headless` | JavaScript-rendered SPA support via [`chromiumoxide`](https://github.com/mattsse/chromiumoxide) (uses system Chrome) | ~32 MB |
 
 Install any combination from source via crates.io (the prebuilt binary and
@@ -254,13 +253,10 @@ Homebrew formula ship only the `headless` build):
 ```sh
 cargo install rover-fetch --features local-inference
 cargo install rover-fetch --features headless
-cargo install rover-fetch --features local-inference,local-vision,headless
+cargo install rover-fetch --features local-inference,headless
 ```
 
 Local models are downloaded on first use (or ahead of time with `rover model download <repo_id>`) and live under `$HF_HOME/hub`. Manage the cache with `rover model {list,download,remove}`.
-
-> [!WARNING]
-> Cloud captioners (OpenAI, Anthropic, Gemini, OpenAI-compatible) are **always compiled in** — they don't need any feature flag. The `local-vision` feature only adds the option of a fully-offline captioner.
 
 > [!IMPORTANT]
 > The `headless` feature needs a Chrome/Chromium browser on the host. Rover auto-detects standard install paths on Linux/macOS/Windows; override with `[headless] chrome_executable`. `rover doctor` verifies the launch path.
@@ -326,7 +322,7 @@ The full reference — every section, every key, every default — lives in [`do
 | [`docs/mcp-tools.md`](docs/mcp-tools.md) | MCP tool schemas: `fetch`, `batch_fetch`, `summarize`, `get_metadata`, `count_tokens`. |
 | [`docs/configuration.md`](docs/configuration.md) | Every config section and key, with defaults, types, and worked examples. |
 | [`docs/backends.md`](docs/backends.md) | Summarisation backend reference: extractive (TextRank) and cloud (genai) providers. |
-| [`docs/features.md`](docs/features.md) | Cargo feature flags: `local-inference`, `local-vision`, `headless` — setup, models, sizes. |
+| [`docs/features.md`](docs/features.md) | Cargo feature flags: `local-inference`, `headless` — setup, models, sizes. |
 | [`docs/security.md`](docs/security.md) | SSRF levels, address floor, DNS rebinding mitigation, secret redaction, cache poisoning, known limitations. |
 
 ## Subcommands at a glance

@@ -45,7 +45,7 @@ Pre-1.0 stability expectations are spelled out in [`docs/versioning.md`](docs/ve
   an SSRF gap where a page could make Rover fetch private, loopback, or
   cloud-metadata addresses during image download or caption filtering (#23).
 
-## [0.1.0-alpha.1] — 2026-05-28
+## 0.1.0-alpha.1 — 2026-05-28
 
 First tagged pre-release. Summarises the work from the initial fetch path
 (M1) through the pre-release hardening pass (#21).
@@ -92,5 +92,4 @@ First tagged pre-release. Summarises the work from the initial fetch path
   the production panic surface (#13).
 - HTTP `Authorization` credentials are scrubbed from tracing events (#20).
 
-[0.1.0]: https://github.com/aaronbassett/rover/compare/v0.1.0-alpha.1...v0.1.0
-[0.1.0-alpha.1]: https://github.com/aaronbassett/rover/releases/tag/v0.1.0-alpha.1
+[0.1.0]: https://github.com/aaronbassett/rover/releases/tag/v0.1.0
