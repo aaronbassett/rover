@@ -1,14 +1,15 @@
 [package]
 # `rover` is taken on crates.io by an unrelated Cosmos project, so the crate
-# is published as `rover-mcp`. The installed binary is still `rover` (see the
+# is published as `rover-fetch`. The installed binary is still `rover` (see the
 # `[[bin]]` section) and the library is still imported as `rover` (`[lib]`),
 # so only the crates.io package name differs.
-name = "rover-mcp"
-version = "0.1.0-alpha.1"
+name = "rover-fetch"
+version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "An MCP server for fetching and prepping web content for LLM agents."
 repository = "https://github.com/aaronbassett/rover"
+homepage = "https://github.com/aaronbassett/rover"
 readme = "README.md"
 keywords = ["mcp", "web", "scraping", "markdown", "llm"]
 categories = ["command-line-utilities", "web-programming"]
