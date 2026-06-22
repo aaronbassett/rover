@@ -99,6 +99,9 @@ impl SummarizerBackend for LocalMistralRs {
     fn model_id(&self) -> &str {
         &self.repo_id
     }
+    fn uses_model_prompt(&self) -> bool {
+        true
+    }
 
     async fn compact(&self, content: &str, opts: &CompactOpts) -> Result<String, BackendError> {
         let _guard = self

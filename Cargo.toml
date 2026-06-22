@@ -46,6 +46,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 readabilityrs = "0.1"
 regex = "1"
+aho-corasick = "1"
+fancy-regex = "0.13"
 rusqlite = { version = "0.37", features = ["hooks"] }
 tokio-rusqlite = { version = "0.7", features = ["bundled"] }
 uuid = { version = "1", features = ["v7", "std"] }
@@ -64,6 +66,7 @@ har = "0.9"
 robotxt = { version = "0.6", default-features = false, features = ["parser"] }
 httpdate = "1"
 unicode-segmentation = "1"
+unicode-normalization = "0.1"
 genai = "0.4"
 zstd = { version = "0.13", default-features = false }
 futures = "0.3"
@@ -71,6 +74,7 @@ base64 = "0.22"
 chromiumoxide = { version = "0.9.1", optional = true, default-features = false }
 tempfile = { version = "3", optional = true }
 mistralrs = { version = "0.8.1", optional = true, default-features = false }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "download-binaries", "tls-rustls", "copy-dylibs"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mistralrs = { version = "0.8.1", optional = true, default-features = false, features = ["metal"] }
@@ -88,6 +92,7 @@ default = []
 test-loopback = []
 headless = ["dep:chromiumoxide", "dep:tempfile"]
 local-inference = ["dep:mistralrs"]
+injection-model = ["dep:ort"]
 
 [profile.release]
 # Strip symbols at link time so release artefacts (and the prebuilt release

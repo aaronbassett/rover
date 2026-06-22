@@ -65,6 +65,22 @@ async fn call_tool_any(
 }
 
 #[tokio::test]
+async fn covered_tools_advertise_security_note() {
+    let tmp = tempfile::tempdir().unwrap();
+    seed_default_tokenizer(tmp.path());
+    let client = spawn_client(tmp.path()).await;
+    let tools = client.list_all_tools().await.expect("list");
+    let fetch = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "fetch_tool")
+        .expect("fetch_tool present");
+    let desc = fetch.description.as_deref().unwrap_or("");
+    assert!(desc.contains("security"), "no security note: {desc}");
+    assert!(desc.contains("disable_patterns"), "no field note: {desc}");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn lists_three_tools() {
     let tmp = tempfile::tempdir().unwrap();
     let client = spawn_client(tmp.path()).await;

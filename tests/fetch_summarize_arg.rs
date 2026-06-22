@@ -70,8 +70,8 @@ async fn fetch_with_summarize_arg_returns_summary_body() {
         "auto_summarized should be absent when agent supplied summarize arg: {v}"
     );
     assert!(
-        !v["markdown"].as_str().unwrap().is_empty(),
-        "summary markdown should be non-empty: {v}"
+        !v["content"].as_str().unwrap().is_empty(),
+        "summary content should be non-empty: {v}"
     );
 
     client.cancel().await.unwrap();

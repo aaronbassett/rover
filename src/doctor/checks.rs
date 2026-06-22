@@ -487,6 +487,52 @@ impl Check for LocalInferenceModelCached {
     }
 }
 
+#[cfg(feature = "injection-model")]
+pub struct PromptInjectionModelCached;
+
+#[cfg(feature = "injection-model")]
+#[async_trait]
+impl Check for PromptInjectionModelCached {
+    fn name(&self) -> &'static str {
+        "prompt_injection_model_cached"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        let model = ctx.config.prompt_injection.model.as_str();
+        if model == "disabled" {
+            return CheckReport {
+                check: self.name(),
+                status: CheckStatus::Skip,
+                detail: Some("prompt_injection.model = \"disabled\"".into()),
+            };
+        }
+        let repo = match crate::guard::model::resolve_preset(model) {
+            Ok((repo, _)) => repo,
+            Err(e) => {
+                return CheckReport {
+                    check: self.name(),
+                    status: CheckStatus::Fail,
+                    detail: Some(format!("invalid prompt_injection.model `{model}`: {e}")),
+                };
+            }
+        };
+        if crate::model_integrity::is_cached(&repo) {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some(format!("model {repo} is cached")),
+            }
+        } else {
+            CheckReport {
+                check: self.name(),
+                status: CheckStatus::Fail,
+                detail: Some(format!(
+                    "model {repo} not cached. It will download on first use; pre-warm with a single guarded fetch."
+                )),
+            }
+        }
+    }
+}
+
 /// Verifies the integrity manifest of every cached HuggingFace model. Present
 /// only when a local-model feature is compiled in.
 #[cfg(feature = "local-inference")]

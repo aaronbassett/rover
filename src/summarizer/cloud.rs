@@ -283,6 +283,10 @@ impl SummarizerBackend for CloudBackend {
     fn model_id(&self) -> &str {
         &self.model
     }
+
+    fn uses_model_prompt(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

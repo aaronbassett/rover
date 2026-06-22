@@ -52,10 +52,7 @@ async fn summarize_returns_extractive_output_on_cache_miss() {
     assert!(!res.is_error.unwrap_or(false), "tool errored: {res:?}");
 
     let blob = serde_json::to_string(&res).unwrap();
-    assert!(
-        blob.contains("\"summary_md\""),
-        "missing summary_md: {blob}"
-    );
+    assert!(blob.contains("\"content\""), "missing content: {blob}");
     assert!(
         blob.contains("\"mode\":\"extractive\""),
         "expected mode=extractive: {blob}"
@@ -92,7 +89,7 @@ async fn summarize_returns_extractive_output_on_cache_miss() {
             .is_empty()
     );
     assert_eq!(v["metadata"]["preserve"], serde_json::json!([]));
-    assert!(!v["summary_md"].as_str().unwrap().is_empty());
+    assert!(!v["content"].as_str().unwrap().is_empty());
 
     client.cancel().await.unwrap();
     drop(server);

@@ -32,7 +32,7 @@
 //! `*_at(root, …)` helpers. Tests drive the `*_at` helpers against a temp
 //! directory so they never mutate the process-global `HF_HOME`.
 
-#![cfg(feature = "local-inference")]
+#![cfg(any(feature = "local-inference", feature = "injection-model"))]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -481,7 +481,7 @@ pub fn record_fresh_download(repo_id: &str) {
 /// integration-style tests elsewhere (the doctor check, the summarizer/vlm
 /// cache helpers) must exercise the env-resolving public API; they share this
 /// lock so they cannot stomp each other's `HF_HOME` when run in parallel.
-#[cfg(test)]
+#[cfg(all(test, feature = "local-inference"))]
 pub(crate) static HF_HOME_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]

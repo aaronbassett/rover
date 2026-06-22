@@ -104,6 +104,13 @@ pub trait SummarizerBackend: Send + Sync {
     fn model_id(&self) -> &str {
         ""
     }
+
+    /// Whether this backend feeds `content` into a model prompt (and is thus an
+    /// injection target needing HIGH internal hardening). Prompt-free backends
+    /// (e.g. extractive TextRank) return `false`.
+    fn uses_model_prompt(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
