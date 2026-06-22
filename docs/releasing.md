@@ -55,6 +55,8 @@ Other optional features (e.g. `local-inference`) work the same way.
 | `x86_64-apple-darwin` | `macos` |
 | `aarch64-apple-darwin` | `macos` (native) |
 
+cargo-dist builds each target on a native runner — no cross-compilation.
+
 Windows is out of scope. Targets live in `[workspace.metadata.dist]` in
 `Cargo.toml`.
 

@@ -58,7 +58,13 @@ One-line installer (downloads the right tarball for your platform and installs `
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aaronbassett/rover/releases/latest/download/rover-fetch-installer.sh | sh
 ```
 
-Or download a `.tar.xz` for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify its checksum, and extract the `rover` binary onto your `PATH`. Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. The prebuilt binary includes the `headless` feature (JavaScript-rendered pages).
+Or download a `.tar.xz` for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify its checksum, then extract it and move the `rover` binary onto your `PATH`:
+
+```sh
+tar xf rover-fetch-<target>.tar.xz   # then move the extracted `rover` onto your PATH
+```
+
+Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. The prebuilt binary includes the `headless` feature (JavaScript-rendered pages).
 
 **crates.io:**
 
@@ -242,8 +248,8 @@ Three independent features for users who want more than the default:
 | `local-vision` | Local image captioning via SmolVLM (shares `mistral.rs` with `local-inference`) | ~5 MB additional |
 | `headless` | JavaScript-rendered SPA support via [`chromiumoxide`](https://github.com/mattsse/chromiumoxide) (uses system Chrome) | ~32 MB |
 
-Install with any combination via crates.io (or use the matching Homebrew
-formula / prebuilt variant tarball):
+Install any combination from source via crates.io (the prebuilt binary and
+Homebrew formula ship only the `headless` build):
 
 ```sh
 cargo install rover-fetch --features local-inference
