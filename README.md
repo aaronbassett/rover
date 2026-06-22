@@ -40,38 +40,34 @@ Rover fixes all three. The extraction layer is the battle-tested [`readabilityrs
 
 Pick whichever channel fits. All of them install a binary named `rover`.
 
-**Homebrew (macOS):**
+**Homebrew:**
 
 ```sh
 brew install aaronbassett/tap/rover
 ```
 
-The `rover` formula is the lean `basic` build. Variants with optional features
-are separate formulas — `rover-complete` (everything), `rover-headless`,
-`rover-local-inference`, `rover-local-vision`. Homebrew only lets one be
-installed at a time (they all provide `rover`).
+The `rover` formula ships the JavaScript-rendering (`headless`) build and
+`depends_on "chromium"`. Other optional features are available from source via
+`cargo install` (see the crates.io option below).
 
 **Prebuilt binary (Linux & macOS):**
 
-Download the tarball for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify it against `SHA256SUMS`, and drop `rover` on your `PATH`:
+One-line installer (downloads the right tarball for your platform and installs `rover`):
 
 ```sh
-tar xzf rover-<version>-<target>-basic.tar.gz
-install rover-*/rover ~/.local/bin/rover
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/aaronbassett/rover/releases/latest/download/rover-fetch-installer.sh | sh
 ```
 
-Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. Each
-target ships in five feature variants (`basic`, `local-inference`,
-`local-vision`, `headless`, `complete`).
+Or download a `.tar.xz` for your platform from the [latest release](https://github.com/aaronbassett/rover/releases/latest), verify its checksum, and extract the `rover` binary onto your `PATH`. Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. The prebuilt binary includes the `headless` feature (JavaScript-rendered pages).
 
 **crates.io:**
 
 ```sh
-cargo install rover-mcp          # crate is rover-mcp; binary is rover
+cargo install rover-fetch --features headless   # crate is rover-fetch; binary is rover
 ```
 
 > [!NOTE]
-> The crate is published as `rover-mcp` because the `rover` name on crates.io is held by an unrelated project. The installed binary is still `rover`.
+> The crate is published as `rover-fetch` because the `rover` name on crates.io is held by an unrelated project. The installed binary is still `rover`. `cargo install` builds from source with the crate's default (basic) features; add `--features headless` to match the prebuilt and Homebrew binary.
 
 **From source (for hacking):**
 
@@ -250,9 +246,9 @@ Install with any combination via crates.io (or use the matching Homebrew
 formula / prebuilt variant tarball):
 
 ```sh
-cargo install rover-mcp --features local-inference
-cargo install rover-mcp --features headless
-cargo install rover-mcp --features local-inference,local-vision,headless
+cargo install rover-fetch --features local-inference
+cargo install rover-fetch --features headless
+cargo install rover-fetch --features local-inference,local-vision,headless
 ```
 
 Local models are downloaded on first use (or ahead of time with `rover model download <repo_id>`) and live under `$HF_HOME/hub`. Manage the cache with `rover model {list,download,remove}`.

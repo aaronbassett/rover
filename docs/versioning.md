@@ -12,9 +12,9 @@ While Rover is `0.y.z`, it is **unstable**:
   [CHANGELOG](../CHANGELOG.md) before bumping the minor.
 - **Patch** versions (`0.y.PATCH`) are bug-fix-only. They will not change the MCP
   tool schema or remove/rename CLI flags.
-- **Pre-release** tags (`-alpha.N`, `-beta.N`) are for validating the release
-  pipeline and gathering feedback; treat them as more volatile than a plain
-  patch.
+- **Pre-release** versions (`-rc.N`, `-beta.N`) are published to crates.io and the
+  GitHub Releases for feedback but do **not** update the Homebrew formula; treat
+  them as more volatile than a plain patch.
 
 ## 1.0.0 and beyond
 

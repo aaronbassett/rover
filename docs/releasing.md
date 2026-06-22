@@ -1,88 +1,118 @@
 # Releasing
 
-Rover ships through three channels, all driven by one workflow
-([`.github/workflows/release.yml`](../.github/workflows/release.yml)):
+Rover's releases are automated by two tools:
 
-1. **GitHub Releases** — prebuilt tarballs for 4 targets × 5 feature variants,
-   plus a `SHA256SUMS` manifest.
-2. **Homebrew tap** — `aaronbassett/homebrew-tap`, five formulas, bumped
-   automatically on a stable release.
-3. **crates.io** — published as `rover-mcp` (the binary is still `rover`).
+- **[release-plz](https://release-plz.dev)** — versions, changelog, the crates.io
+  publish, and the git tag.
+- **[dist](https://opensource.axo.dev/cargo-dist/)** (cargo-dist) — cross-platform
+  binaries, the GitHub Release, the `curl | sh` installer, and the Homebrew formula.
 
-## Build matrix
+Three channels, all automated:
 
-| Target | Runner | Notes |
-| ------ | ------ | ----- |
-| `x86_64-unknown-linux-gnu` | `ubuntu-latest` | native |
-| `aarch64-unknown-linux-gnu` | `ubuntu-latest` | via `cross` |
-| `x86_64-apple-darwin` | `macos-latest` | cross-compiled from arm64 |
-| `aarch64-apple-darwin` | `macos-latest` | native |
+1. **crates.io** — `rover-fetch` (the binary is still `rover`).
+2. **GitHub Releases** — prebuilt tarballs for 4 targets, SHA-256 checksums, and a
+   shell installer.
+3. **Homebrew** — a single `rover` formula in `aaronbassett/homebrew-tap`, built
+   `--features headless` (so it `depends_on "chromium"`).
 
-| Variant | Feature flags |
-| ------- | ------------- |
-| `basic` | `--no-default-features` |
-| `local-inference` | `--no-default-features --features local-inference` |
-| `headless` | `--no-default-features --features headless` |
-| `complete` | `--no-default-features --features local-inference,headless` |
+## How it fits together
 
-Tarballs are named `rover-<version>-<target>-<variant>.tar.gz` and contain the
-`rover` binary, both licenses, and a short README.
+```
+push to main ──► release-plz opens a "Release PR" (version bump + changelog)
+     │
+     ▼ merge the Release PR
+release-plz: cargo publish rover-fetch ──► crates.io
+            push tag vX.Y.Z ─────────────► triggers dist
+     │
+     ▼
+dist: build 4 targets (--features headless) ──► GitHub Release + shell installer
+      publish the `rover` formula ───────────► aaronbassett/homebrew-tap
+```
+
+release-plz creates the **tag**; dist creates the **GitHub Release**.
+`git_release_enable = false` in `release-plz.toml` is what keeps them from
+colliding.
+
+## The distributed binary vs. `cargo install`
+
+The prebuilt tarballs and the Homebrew formula ship `rover` built with
+`--features headless --no-default-features`. The crate's own default feature set
+is empty (`default = []`), so **`cargo install rover-fetch` builds the *basic*
+binary**. To match the prebuilt binary from source:
+
+```sh
+cargo install rover-fetch --features headless
+```
+
+Other optional features (e.g. `local-inference`) work the same way.
+
+## Targets
+
+| Target | Runner |
+| ------ | ------ |
+| `x86_64-unknown-linux-gnu` | `ubuntu` (native) |
+| `aarch64-unknown-linux-gnu` | `ubuntu` arm64 (native) |
+| `x86_64-apple-darwin` | `macos` |
+| `aarch64-apple-darwin` | `macos` (native) |
+
+Windows is out of scope. Targets live in `[workspace.metadata.dist]` in
+`Cargo.toml`.
 
 ## One-time setup
 
 Repository secrets (Settings → Secrets and variables → Actions):
 
-- `CRATES_IO_TOKEN` — a crates.io API token with publish scope for `rover-mcp`.
-- `HOMEBREW_TAP_GITHUB_TOKEN` — a fine-grained PAT scoped to
-  `aaronbassett/homebrew-tap` with `contents: write`.
-- `GPG_PRIVATE_KEY` *(optional)* — armored private key; if present, the workflow
-  signs `SHA256SUMS` into `SHA256SUMS.asc`. If absent, signing is skipped (a
-  documented v2 follow-up).
+| Secret | Used by | Purpose |
+| ------ | ------- | ------- |
+| `CARGO_REGISTRY_TOKEN` | release-plz | `cargo publish` to crates.io |
+| `RELEASE_PLZ_TOKEN` | release-plz | push the tag (a **PAT/App token**, not the default `GITHUB_TOKEN`, or the tag won't trigger dist) and open the Release PR |
+| `HOMEBREW_TAP_TOKEN` | dist | push the formula to `aaronbassett/homebrew-tap` |
 
-The tap repo (`aaronbassett/homebrew-tap`) must exist with a `Formula/`
-directory. The formulas are generated, so it can start empty.
+dist creates the GitHub Release with the auto-provided `GITHUB_TOKEN`.
+`RELEASE_PLZ_TOKEN` needs `contents: write` + `pull-requests: write` on this
+repo; `HOMEBREW_TAP_TOKEN` needs write access to the tap repo. The tap repo must
+exist with a `Formula/` directory (it may start empty).
 
 ## Cutting a release
 
-1. Bump `version` in `Cargo.toml`, update `CHANGELOG.md` (move `[Unreleased]`
-   into a dated version section), and merge to `main`.
-2. Dry-run the build matrix without publishing:
-   Actions → **Release** → **Run workflow** (leave `dry_run` checked). This
-   builds and uploads all 20 tarballs as run artefacts but touches nothing
-   external.
-3. Tag and push:
-   ```sh
-   git tag v0.1.0-alpha.1
-   git push origin v0.1.0-alpha.1
-   ```
-   The tag push runs the full pipeline. A tag containing a hyphen
-   (e.g. `-alpha.1`) is published as a **pre-release** and **does not** bump the
-   Homebrew tap; a plain tag (e.g. `v0.1.0`) does both.
+Normal releases are hands-off:
 
-## Homebrew variants
+1. Land changes on `main` using Conventional Commits (`feat:`, `fix:`, …).
+2. release-plz opens/updates a **Release PR** that bumps the version and updates
+   `CHANGELOG.md`. Review it.
+3. **Merge the Release PR.** release-plz publishes to crates.io and pushes
+   `vX.Y.Z`; the tag triggers dist, which builds the binaries, creates the GitHub
+   Release, and updates the Homebrew tap.
 
-Homebrew conflict detection means only one rover formula can be installed at a
-time; each installs a `rover` binary.
+A pre-release version (`X.Y.Z-rc.1`) is published to crates.io and GitHub but
+**does not** update the Homebrew formula (dist skips prereleases).
 
-- `rover` — the `basic` variant (default `brew install aaronbassett/tap/rover`).
-- `rover-complete` — all features (`depends_on "chromium"`).
-- `rover-local-inference` — single-feature; models download on first use, no
-  extra system deps.
-- `rover-headless` — `depends_on "chromium"`.
+## The first release (v0.1.0)
 
-Formulas are rendered by
-[`scripts/render-homebrew-formulas.sh`](../scripts/render-homebrew-formulas.sh)
-from the release `SHA256SUMS`; the `bump-homebrew` job commits them to the tap.
+`rover-fetch` is unpublished, and `Cargo.toml` is already at `0.1.0` with a
+curated `## [0.1.0]` changelog section. Once this lands on `main`:
+
+- release-plz detects `0.1.0` is not on crates.io and publishes it. If it instead
+  opens a Release PR, merge that PR to perform the release.
+- Confirm the `v0.1.0` tag appears, the GitHub Release is created with the four
+  tarballs + checksums + installer, and the `rover` formula lands in the tap.
 
 ## Post-release validation
 
-- `brew install aaronbassett/tap/rover` on macOS (arm64 and x86_64).
-- Download a tarball from the GitHub Release, verify against `SHA256SUMS`, run
-  `./rover --help`.
-- `cargo install rover-mcp` once the crates.io publish lands.
+- `brew install aaronbassett/tap/rover` (macOS arm64 + x86_64); `rover --help`.
+- Run the shell installer from the Release page; `rover --help`.
+- `cargo install rover-fetch --features headless`; `rover --help`.
+- Download a tarball, verify its checksum, run `./rover --help`.
 
-## v2 follow-ups
+## Updating dist
 
-- Sign `SHA256SUMS` with a project GPG key (wire `GPG_PRIVATE_KEY`).
-- Consider Linux package formats (deb/rpm) and a Windows target if demand
-  appears (currently out of scope).
+dist is pinned via `cargo-dist-version` in `Cargo.toml`. To upgrade:
+
+```sh
+cargo install cargo-dist --locked   # install the new version
+dist init --yes                     # re-read config, bump the pin
+dist generate                       # regenerate .github/workflows/release.yml
+git add Cargo.toml .github/workflows/release.yml && git commit
+```
+
+Never hand-edit `.github/workflows/release.yml`; it is generated.
