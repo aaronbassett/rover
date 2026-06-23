@@ -6,14 +6,15 @@
 @media(max-width:560px){.grid4{grid-template-columns:1fr}}
 .card{border:1px solid var(--rover-rule);border-radius:.7rem;padding:1.1rem;background:var(--rover-surface)}
 .card h3{font-family:var(--rover-font-display);font-size:1.05rem;color:var(--rover-hunter);margin:0 0 .4rem}
-.card p{font-size:.92rem;margin:0}
+.card p{font-size:1rem;line-height:1.55;margin:0}
 .compare{width:100%;border-collapse:collapse;font-size:.92rem}
 .compare th,.compare td{border:1px solid var(--rover-rule);padding:.6rem .7rem;text-align:left}
 .compare thead th{font-family:var(--rover-font-ui);color:var(--rover-hunter)}
 .tools{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 @media(max-width:700px){.tools{grid-template-columns:1fr}}
 .tool{border-left:3px solid var(--rover-brass);padding:.3rem 0 .3rem 1rem}
-.tool code{font-family:var(--rover-font-mono);color:var(--rover-hunter);font-weight:600}
+.tool code{font-family:var(--rover-font-mono);color:var(--rover-hunter);font-weight:600;background:transparent;padding:0;border:0}
+.tool p{font-size:1rem;line-height:1.55}
 .cta{text-align:center;border:1px solid var(--rover-rule);border-radius:1rem;background:var(--rover-surface);margin:2rem 0 4rem}
 .ctaCmd{display:inline-block;font-family:var(--rover-font-mono);background:var(--ifm-code-background);color:var(--ifm-code-color);padding:.7rem 1rem;border-radius:.55rem;margin:0 .8rem 1rem 0}
 .getback{display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:center}

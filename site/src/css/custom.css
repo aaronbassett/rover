@@ -1,16 +1,16 @@
 /* ===== Self-hosted fonts (filenames must match Task 3 Step 1) ===== */
-@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:swap}
-@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-900.woff2') format('woff2');font-weight:900;font-style:normal;font-display:swap}
-@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-400italic.woff2') format('woff2');font-weight:400;font-style:italic;font-display:swap}
-@font-face{font-family:'Spectral';src:url('/fonts/spectral-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:'Spectral';src:url('/fonts/spectral-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:swap}
-@font-face{font-family:'Spectral';src:url('/fonts/spectral-400italic.woff2') format('woff2');font-weight:400;font-style:italic;font-display:swap}
-@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-500.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap}
-@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-700.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap}
-@font-face{font-family:'IBM Plex Mono';src:url('/fonts/ibm-plex-mono-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
-@font-face{font-family:'IBM Plex Mono';src:url('/fonts/ibm-plex-mono-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:optional}
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-900.woff2') format('woff2');font-weight:900;font-style:normal;font-display:optional}
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-400italic.woff2') format('woff2');font-weight:400;font-style:italic;font-display:optional}
+@font-face{font-family:'Spectral';src:url('/fonts/spectral-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'Spectral';src:url('/fonts/spectral-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:optional}
+@font-face{font-family:'Spectral';src:url('/fonts/spectral-400italic.woff2') format('woff2');font-weight:400;font-style:italic;font-display:optional}
+@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-500.woff2') format('woff2');font-weight:500;font-style:normal;font-display:optional}
+@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-700.woff2') format('woff2');font-weight:700;font-style:normal;font-display:optional}
+@font-face{font-family:'IBM Plex Mono';src:url('/fonts/ibm-plex-mono-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'IBM Plex Mono';src:url('/fonts/ibm-plex-mono-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:optional}
 
 /* ===== Brand tokens ===== */
 :root{

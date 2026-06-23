@@ -9,6 +9,17 @@ const config: Config = {
   tagline: 'Turn the web into clean, token-efficient Markdown your agent can trust.',
   favicon: 'img/favicon.png',
 
+  // Preload the above-the-fold faces so they're ready at first paint. Combined
+  // with `font-display: optional` (see custom.css), this avoids the visible
+  // fallback→web-font swap (FOUT) on the landing and docs headers.
+  headTags: [
+    { tagName: 'link', attributes: { rel: 'preload', href: '/fonts/fraunces-900.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' } },
+    { tagName: 'link', attributes: { rel: 'preload', href: '/fonts/spectral-400.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' } },
+    { tagName: 'link', attributes: { rel: 'preload', href: '/fonts/spectral-400italic.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' } },
+    { tagName: 'link', attributes: { rel: 'preload', href: '/fonts/space-grotesk-500.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' } },
+    { tagName: 'link', attributes: { rel: 'preload', href: '/fonts/ibm-plex-mono-400.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' } },
+  ],
+
   // Set the production url of your site here
   url: 'https://rover-fetch.com',
   // Set the /<baseUrl>/ pathname under which your site is served

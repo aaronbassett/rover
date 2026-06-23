@@ -14,7 +14,7 @@ export default function Home(): ReactNode {
           <div>
             <p className="rover-kicker">An MCP server for the open web</p>
             <h1 className={styles.heroTitle}>
-              Give your agent the web it can actually <em>trust</em>.
+              Give your agent the web it can actually <em>trust</em>
             </h1>
             <p className={`rover-dek ${styles.heroDek}`}>
               Rover fetches a URL, strips the ads and chrome, and hands your agent clean Markdown

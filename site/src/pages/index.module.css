@@ -9,5 +9,5 @@
 .badges{display:flex;gap:.9rem;flex-wrap:wrap;font-family:var(--rover-font-ui);font-size:.8rem;opacity:.75}
 .badges span::before{content:'◆ ';color:var(--rover-brass)}
 .heroFigure{margin:0;text-align:center}
-.heroFigure img{max-width:320px;width:100%}
+.heroFigure img{max-width:320px;width:100%;-webkit-mask-image:radial-gradient(circle closest-side,#000 92%,transparent 100%);mask-image:radial-gradient(circle closest-side,#000 92%,transparent 100%)}
 .heroFigure figcaption{font-size:.8rem;margin-top:.4rem}
