@@ -34,14 +34,7 @@ const sidebars: SidebarsConfig = {
         'backends',
         'features',
         'security',
-        'versioning',
       ],
-    },
-    {
-      type: 'category',
-      label: 'Project',
-      collapsed: true,
-      items: ['releasing'],
     },
   ],
 };

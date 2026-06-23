@@ -7,7 +7,7 @@ title: MCP tools
 
 Rover exposes five tools over MCP on stdio (`rover mcp`): `fetch`, `batch_fetch`, `summarize`, `get_metadata`, and `count_tokens`. Every argument is validated against a JSON Schema with `deny_unknown_fields`. Pass a key Rover doesn't recognize and the call is rejected with `invalid_args` rather than silently ignored.
 
-Errors come back as a single stable envelope. The shape is fixed; the set of codes may grow, since Rover is pre-1.0 (see [Versioning](/docs/versioning)).
+Errors come back as a single stable envelope. The shape is fixed; the set of codes may grow, since Rover is pre-1.0.
 
 ```jsonc
 { "code": "<stable_string>", "message": "<human_readable>" }
