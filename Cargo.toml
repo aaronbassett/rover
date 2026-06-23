@@ -13,6 +13,8 @@ homepage = "https://github.com/aaronbassett/rover"
 readme = "README.md"
 keywords = ["mcp", "web", "scraping", "markdown", "llm"]
 categories = ["command-line-utilities", "web-programming"]
+# The docs site (site/) and local planning artifacts are never part of the crate.
+exclude = ["/site", "/.superpowers", "/docs"]
 rust-version = "1.96.0"
 
 [lib]

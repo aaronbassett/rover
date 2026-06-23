@@ -26,3 +26,18 @@ target
 
 # lefthook local overrides (per-developer, not committed)
 /lefthook-local.yml
+
+# Brainstorming visual companion working files
+/.superpowers/
+
+# Docs site build artifacts
+site/node_modules
+site/build
+site/.docusaurus
+
+# Local planning artifacts (specs/plans) — not version controlled
+/docs/superpowers/
+
+# macOS cruft
+.DS_Store
+**/.DS_Store

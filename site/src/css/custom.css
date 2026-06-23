@@ -1,0 +1,66 @@
+/* ===== Self-hosted fonts (filenames must match Task 3 Step 1) ===== */
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:optional}
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-900.woff2') format('woff2');font-weight:900;font-style:normal;font-display:optional}
+@font-face{font-family:'Fraunces';src:url('/fonts/fraunces-400italic.woff2') format('woff2');font-weight:400;font-style:italic;font-display:optional}
+@font-face{font-family:'Spectral';src:url('/fonts/spectral-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'Spectral';src:url('/fonts/spectral-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:optional}
+@font-face{font-family:'Spectral';src:url('/fonts/spectral-400italic.woff2') format('woff2');font-weight:400;font-style:italic;font-display:optional}
+@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-500.woff2') format('woff2');font-weight:500;font-style:normal;font-display:optional}
+@font-face{font-family:'Space Grotesk';src:url('/fonts/space-grotesk-700.woff2') format('woff2');font-weight:700;font-style:normal;font-display:optional}
+@font-face{font-family:'IBM Plex Mono';src:url('/fonts/ibm-plex-mono-400.woff2') format('woff2');font-weight:400;font-style:normal;font-display:optional}
+@font-face{font-family:'IBM Plex Mono';src:url('/fonts/ibm-plex-mono-600.woff2') format('woff2');font-weight:600;font-style:normal;font-display:optional}
+
+/* ===== Brand tokens ===== */
+:root{
+  --rover-parchment:#FAF6EC; --rover-surface:#F1E9D6; --rover-ink:#20231C;
+  --rover-hunter:#2A4A33; --rover-brass:#9C7A3C; --rover-ox:#7A2E26;
+  --rover-rule:rgba(32,35,28,.16);
+  --rover-font-display:'Fraunces',Georgia,serif;
+  --rover-font-body:'Spectral',Georgia,serif;
+  --rover-font-ui:'Space Grotesk',system-ui,sans-serif;
+  --rover-font-mono:'IBM Plex Mono',ui-monospace,monospace;
+
+  /* Infima overrides (light) */
+  --ifm-background-color:var(--rover-parchment);
+  --ifm-background-surface-color:var(--rover-surface);
+  --ifm-color-primary:#2A4A33;
+  --ifm-color-primary-dark:#264430; --ifm-color-primary-darker:#23402c; --ifm-color-primary-darkest:#1d3526;
+  --ifm-color-primary-light:#2f5239; --ifm-color-primary-lighter:#33583d; --ifm-color-primary-lightest:#3c6447;
+  --ifm-font-color-base:var(--rover-ink);
+  --ifm-heading-font-family:var(--rover-font-display);
+  --ifm-font-family-base:var(--rover-font-body);
+  --ifm-font-family-monospace:var(--rover-font-mono);
+  --ifm-navbar-background-color:var(--rover-parchment);
+  --ifm-code-background:#11271B; --ifm-code-color:#E7E0CF;
+  --ifm-link-color:var(--rover-hunter);
+}
+
+/* Dark Estate */
+[data-theme='dark']{
+  --rover-parchment:#0E1611; --rover-surface:#16211A; --rover-ink:#E9E2D1;
+  --rover-hunter:#2F6B49; --rover-brass:#E0B450; --rover-ox:#7FCB9B;
+  --rover-rule:rgba(233,226,209,.16);
+  --ifm-background-color:#0E1611; --ifm-background-surface-color:#16211A;
+  --ifm-color-primary:#7FCB9B;
+  --ifm-color-primary-dark:#63bf86; --ifm-color-primary-darker:#56ba7c; --ifm-color-primary-darkest:#3f9c63;
+  --ifm-color-primary-light:#9bd7b0; --ifm-color-primary-lighter:#a8dcba; --ifm-color-primary-lightest:#cfecd9;
+  --ifm-font-color-base:#E9E2D1;
+  --ifm-navbar-background-color:#0E1611;
+  --ifm-code-background:#0A0F0C; --ifm-code-color:#9FD8B4;
+  --ifm-link-color:var(--rover-brass);
+}
+
+/* ===== Editorial base ===== */
+.navbar__title,.navbar__brand b{font-family:var(--rover-font-display);font-weight:900}
+h1,h2,h3{letter-spacing:-.01em}
+.rover-kicker{font-family:var(--rover-font-ui);font-size:.75rem;letter-spacing:.2em;text-transform:uppercase;color:var(--rover-brass);font-weight:500}
+.rover-dek{font-family:var(--rover-font-body);font-style:italic;color:var(--rover-ink);opacity:.85}
+.rover-rule{height:1px;background:var(--rover-rule);border:0}
+/* Inline code: force the intended cream-on-ink chip in both themes. Infima
+   otherwise lets inline code inherit the surrounding text colour, which is
+   dark-on-dark (unreadable) against the dark code background in light mode.
+   `:not(pre) > code` scopes this to inline code and leaves Prism code blocks
+   (which live inside <pre>) to the syntax theme. */
+:not(pre) > code{color:var(--ifm-code-color);background-color:var(--ifm-code-background)}

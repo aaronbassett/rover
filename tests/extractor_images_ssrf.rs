@@ -1,7 +1,7 @@
 //! End-to-end check that `extractor::images::apply` carries the active
 //! `SsrfLevel` into the dial-time resolver. Before this, the image-fetch
 //! helpers issued un-scoped requests, so SSRF policy never reached them
-//! (the gap noted in `docs/security.md` §"DNS rebinding").
+//! (the gap noted in `https://rover-fetch.com/docs/security` §"DNS rebinding").
 //!
 //! `apply` swallows per-image download failures (it logs and keeps the
 //! original markdown), so we assert behaviourally: a loopback image under

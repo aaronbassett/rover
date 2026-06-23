@@ -34,7 +34,7 @@ supported release lines.
 ## Threat model
 
 Rover fetches and processes untrusted web content, and its threat model is not
-obvious. Before reporting, read [`docs/security.md`](docs/security.md) — it
+obvious. Before reporting, read [`rover-fetch.com/docs/security`](https://rover-fetch.com/docs/security) — it
 documents the assets Rover protects, the adversaries it defends against, and the
 known limitations that are accepted by design (for example, opt-in HAR debug
 output is intentionally not redacted).
