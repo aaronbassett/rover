@@ -17,14 +17,13 @@ Global flags:
 
 | Flag | Description |
 | --- | --- |
-| `--config <path>` | Load this TOML file for the invocation. |
+| `--config <path>` | Load this TOML file for the invocation. The file must exist. |
 
-With `--config <path>`, Rover loads that file for the run. Without it, `fetch`, `mcp`, `cache`, `task`, `batch`, and `doctor` run on built-in defaults. No file is read, no default path is searched.
-
-`rover config show` and `rover config set` are the exception. When `--config` is absent, they resolve a default path in order: `ROVER_CONFIG`, then the platform config dir (`~/.config/rover/config.toml` on Linux/macOS), then `./rover.toml`. To apply a config to a running server, wire it explicitly:
+Every subcommand — `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — resolves the same config file. With `--config <path>`, Rover loads that file and errors if it is missing. Without it, Rover loads the default config: the file named by `ROVER_CONFIG` if set, otherwise the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) or a project-local `./rover.toml`, whichever exists first. If none exists, built-in defaults apply. A file written by `rover config set` is therefore picked up by `rover fetch` and `rover mcp` without passing `--config`.
 
 ```sh
-rover mcp --config ~/.config/rover/config.toml
+rover config set ssrf.level loopback   # writes ~/.config/rover/rover.toml
+rover fetch http://127.0.0.1:8080/      # honors it — no --config needed
 ```
 
 See [Configuration](/docs/configuration) for the full key reference.
@@ -83,7 +82,7 @@ rover mcp [--ignore-robots]
           [--global-concurrency <N>] [--max-retries <N>]
 ```
 
-Starts the MCP server over stdio. Takes the same `--rate-limit-*` and `--ignore-robots` overrides as `fetch`, applied for the lifetime of the server rather than a single request. Reads no config unless you pass `--config`. See [MCP tools](/docs/mcp-tools) for the tool surface it exposes.
+Starts the MCP server over stdio. Takes the same `--rate-limit-*` and `--ignore-robots` overrides as `fetch`, applied for the lifetime of the server rather than a single request. Loads the resolved default config (or `--config <path>`) at startup, like every other subcommand. See [MCP tools](/docs/mcp-tools) for the tool surface it exposes.
 
 ## `rover cache`
 
@@ -167,7 +166,7 @@ Example output:
 
 ```toml
 # rover effective configuration
-# defaults | file (~/.config/rover/config.toml) | env
+# defaults | file (~/.config/rover/rover.toml) | env
 
 [cache]
 default_ttl = "1h"  # from: defaults (cache.default_ttl)

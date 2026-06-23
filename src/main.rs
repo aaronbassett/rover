@@ -347,7 +347,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
             .await
         }
         Command::Doctor(args) => {
-            let cfg = match rover::config::load(cli.config.as_deref()) {
+            let cfg = match rover::config::load_resolved(cli.config.as_deref()) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("rover: loading config: {e}");

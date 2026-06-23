@@ -50,7 +50,7 @@ pub async fn run_with_writers<W: Write>(
     config_path: Option<&Path>,
     out: &mut W,
 ) -> anyhow::Result<()> {
-    let _cfg = config::load(config_path).context("loading config")?;
+    let _cfg = config::load_resolved(config_path).context("loading config")?;
     let data_dir = crate::paths::data_dir();
     let db = Db::open(data_dir.join("rover.db"))
         .await

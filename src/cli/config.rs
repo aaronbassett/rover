@@ -6,16 +6,23 @@
 
 use anyhow::Context;
 
-use crate::config::{Config, provenance};
+use crate::config::{Config, default_config_path, provenance, resolve_existing_config_path};
 
 pub struct ShowArgs {
-    /// Optional config path. `None` falls back to `ROVER_CONFIG` or the
-    /// platform default config dir.
+    /// Optional config path. `None` resolves the active config file
+    /// (`ROVER_CONFIG`, platform config dir, then `./rover.toml`), falling back
+    /// to the canonical default path for display when none exists.
     pub config_path: Option<std::path::PathBuf>,
 }
 
 pub fn show(args: ShowArgs) -> anyhow::Result<i32> {
-    let path = args.config_path.unwrap_or_else(default_config_path);
+    // Read the same file the runtime would load. When none exists, fall back to
+    // the canonical default path so the header still points at where a config
+    // would live; the read below then yields an empty (defaults) view.
+    let path = args
+        .config_path
+        .or_else(resolve_existing_config_path)
+        .unwrap_or_else(default_config_path);
     let file_text = std::fs::read_to_string(&path).unwrap_or_default();
 
     // Validate the file parses cleanly. `show` shouldn't run against a broken
@@ -77,7 +84,12 @@ pub struct SetArgs {
 }
 
 pub fn set(args: SetArgs) -> anyhow::Result<i32> {
-    let path = args.config_path.unwrap_or_else(default_config_path);
+    // Modify the active config file when one already exists (so a set lands in
+    // the file the runtime reads); otherwise create the canonical default.
+    let path = args
+        .config_path
+        .or_else(resolve_existing_config_path)
+        .unwrap_or_else(default_config_path);
     // Ensure parent dir exists so a first-time set creates the file cleanly.
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -102,16 +114,6 @@ pub fn set(args: SetArgs) -> anyhow::Result<i32> {
             Ok(1)
         }
     }
-}
-
-fn default_config_path() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("ROVER_CONFIG") {
-        return std::path::PathBuf::from(p);
-    }
-    if let Some(dir) = dirs::config_dir() {
-        return dir.join("rover").join("config.toml");
-    }
-    std::path::PathBuf::from("rover.toml")
 }
 
 /// Build a `dotted-key → TOML-formatted-string` map of effective values by

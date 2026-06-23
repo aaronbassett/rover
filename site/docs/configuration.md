@@ -5,9 +5,9 @@ title: Configuration
 
 # Configuration
 
-Rover reads a config file only when you pass `--config <path>`. Run `fetch`, `mcp`, `cache`, `task`, `batch`, or `doctor` without it and you get built-in defaults: no file is read, no default path is searched. A config sitting on disk does nothing until a command points at it, like `rover mcp --config ~/.config/rover/config.toml`.
+Every subcommand resolves the same config file. Pass `--config <path>` to load a specific file (it must exist). Without `--config`, Rover loads the default config: the file named by `ROVER_CONFIG` if set, otherwise the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) or a project-local `./rover.toml`, whichever exists first. If none exists, built-in defaults apply.
 
-Two commands are the exception. `rover config show` and `rover config set` resolve a default path themselves, reading `config.toml` in order: `ROVER_CONFIG`, then `~/.config/rover/config.toml` (Linux/macOS), then `./rover.toml` as a last resort. `rover config show` prints the effective settings. `rover config set <dotted.key> <value>` changes one. See the [CLI reference](/docs/cli).
+This is uniform across `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — so a file written by `rover config set` is read back by `rover fetch` and `rover mcp` without `--config`. `rover config show` prints the effective settings; `rover config set <dotted.key> <value>` changes one. See the [CLI reference](/docs/cli).
 
 Every section and key is optional, and the defaults below apply when a key is absent. Unknown keys are rejected at load time (`deny_unknown_fields`), so a typo fails loudly instead of being silently ignored. Durations parse via `humantime`: `"1h"`, `"5m"`, `"7d"`, `"500ms"`.
 
@@ -255,7 +255,7 @@ When the `[backends]` map is empty, Rover installs an implicit `default` extract
 
 | Env var | Overrides | Notes |
 | --- | --- | --- |
-| `ROVER_CONFIG` | config file path | Used by `rover config show` / `set` when no `--config` is passed. |
+| `ROVER_CONFIG` | config file path | Overrides the default config location for every subcommand when no `--config` is passed. |
 | `ROVER_DATA_DIR` | data dir (cache db, downloads) | |
 | `ROVER_OUTPUT_DIR` | `output.dir` | |
 | `ROVER_LOG_LEVEL` | `debug.log_level` | |

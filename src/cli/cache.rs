@@ -16,7 +16,7 @@ pub enum Args {
 }
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
-    let _cfg = config::load(config_path).context("loading config")?;
+    let _cfg = config::load_resolved(config_path).context("loading config")?;
     let data_dir = crate::paths::data_dir();
     std::fs::create_dir_all(&data_dir).context("creating data dir")?;
     let db = Db::open(data_dir.join("rover.db"))
