@@ -77,8 +77,9 @@ const config: Config = {
         srcDark: 'img/logo-dark.png',
       },
       items: [
-        { to: '/docs/intro', label: 'Docs', position: 'left' },
-        { to: '/docs/mcp-tools', label: 'Tools', position: 'left' },
+        { to: '/docs/intro', label: 'Get started', position: 'left' },
+        { to: '/docs/output', label: 'Guides', position: 'left' },
+        { to: '/docs/mcp-tools', label: 'Reference', position: 'left' },
         { to: '/docs/security', label: 'Security', position: 'left' },
         { href: 'https://github.com/aaronbassett/rover', label: 'GitHub', position: 'right' },
       ],
@@ -87,11 +88,29 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Docs',
+          title: 'Get started',
           items: [
-            { label: 'Getting started', to: '/docs/intro' },
-            { label: 'CLI', to: '/docs/cli' },
+            { label: 'Introduction', to: '/docs/intro' },
+            { label: 'Installation', to: '/docs/install' },
+            { label: 'Quickstart', to: '/docs/quickstart' },
+          ],
+        },
+        {
+          title: 'Guides',
+          items: [
+            { label: 'Anatomy of a document', to: '/docs/output' },
+            { label: 'Trust & prompt injection', to: '/docs/trust' },
+            { label: 'Summarising pages', to: '/docs/summarizing' },
+            { label: 'Caching & freshness', to: '/docs/caching' },
+          ],
+        },
+        {
+          title: 'Reference',
+          items: [
             { label: 'MCP tools', to: '/docs/mcp-tools' },
+            { label: 'CLI', to: '/docs/cli' },
+            { label: 'Configuration', to: '/docs/configuration' },
+            { label: 'Security', to: '/docs/security' },
           ],
         },
         {

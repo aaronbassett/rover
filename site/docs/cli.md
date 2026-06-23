@@ -1,9 +1,11 @@
 ---
 id: cli
-title: CLI reference
+title: CLI
 ---
 
 # Rover CLI
+
+**One binary, two jobs.** `rover` runs as a long-lived MCP server over stdio, or as a one-shot CLI that fetches a URL and prints clean Markdown to stdout. Every other subcommand exists to inspect or maintain what those two produce — the cache, background tasks, config, and local models.
 
 Synopsis:
 
@@ -15,19 +17,28 @@ Global flags:
 
 | Flag | Description |
 | --- | --- |
-| `--config <path>` | Override the config-file path. When absent, Rover falls back to `ROVER_CONFIG`, then the platform config dir (`~/.config/rover/config.toml` on Linux/macOS). |
+| `--config <path>` | Load this TOML file for the invocation. |
+
+**`--config` is explicit, not implicit.** Pass `--config <path>` and Rover loads that file for this run. Leave it off and the `fetch`, `mcp`, `cache`, `task`, `batch`, and `doctor` subcommands run on built-in defaults — no file is read, no default path is searched. The single exception is `rover config show` / `rover config set`, which resolve a default path when `--config` is absent: `ROVER_CONFIG`, then the platform config dir (`~/.config/rover/config.toml` on Linux/macOS), then `./rover.toml`. So to apply a config to a running server, wire it explicitly:
+
+```sh
+rover mcp --config ~/.config/rover/config.toml
+```
+
+See [Configuration](/docs/configuration) for the full key reference.
 
 Subcommands:
 
-- `fetch <url>` — one-shot fetch, prints Markdown + frontmatter to stdout.
+- `fetch <url>` — one-shot fetch; prints Markdown + frontmatter to stdout.
 - `mcp` — start the MCP server over stdio.
 - `cache <list|get|purge|stats>` — cache operations.
-- `task <id>` — inspect/monitor a long-running task.
-- `batch <id>` — inspect/monitor a `batch_fetch` task (alias for `task` with a kind check).
+- `task <id>` — inspect or monitor a long-running task.
+- `batch <id>` — inspect or monitor a `batch_fetch` task (alias for `task` with a kind check).
 - `doctor` — run environment diagnostics.
 - `config <show|set>` — inspect or update the config file.
+- `model <download|list|remove|verify>` — manage the local model cache (feature-gated).
 
-Exit code `0` on success; `1` on any failure (config parse error, fetch error, doctor check failure, etc.).
+Exit code `0` on success; `1` on any failure — config parse error, fetch error, doctor check failure, and so on. `doctor` is the one subcommand whose exit code is a verdict; see its section below.
 
 ## `rover fetch`
 
@@ -48,8 +59,19 @@ Fetches `<url>` through the cache-aware orchestrator (`fetch_with_cache`), runs 
 | `--per-host-concurrency <N>` | u32 | from `[rate_limit]` | Override `per_domain_concurrency`. Clamped to `>= 1`. |
 | `--global-concurrency <N>` | u32 | from `[rate_limit]` | Override `global_concurrency`. Clamped to `>= 1`. |
 | `--max-retries <N>` | u8 | from `[rate_limit]` | Override `max_retries`. |
-| `--max-tokens <N>` | usize | unset | Token budget. **v1 note:** parsed and validated; the canonical auto-summarize path is the MCP `fetch` tool. |
-| `--summarize <JSON>` | string | unset | JSON blob with the same shape as the MCP `summarize` args minus `url`. **v1 note:** validated only; use the MCP `summarize` tool for the canonical surface. |
+| `--max-tokens <N>` | usize | unset | Token budget. Auto-summarises the extracted body toward `N` when it runs over. |
+| `--summarize <JSON>` | string | unset | Explicit summarise blob, applied before `--max-tokens`. |
+
+**`--max-tokens` is a target, not a ceiling.** When the extracted body exceeds `N`, Rover auto-summarises it toward the budget through the configured `[summarization]` backend — the offline extractive backend by default. The result is best-effort: the extractive backend budgets by summing per-sentence token counts, so the joined summary can land a few tokens over `N`. It emits the summary anyway; it does not error. That is the difference from the MCP `fetch` tool's `max_tokens`, which is a single-shot hard ceiling that can return `max_tokens_exceeded`. See [Managing token budgets](/docs/token-budgets).
+
+**`--summarize` runs first.** Pass a JSON blob with the same shape as the MCP `summarize` tool's args minus `url` — for example:
+
+```sh
+rover fetch https://example.com/long-report \
+  --summarize '{"mode":"abstractive","target_tokens":500}'
+```
+
+The body is replaced with the summary, then `--max-tokens` applies on top if you also set it. Both flags run the configured `[summarization]` backend. See [Summarising pages](/docs/summarizing).
 
 ## `rover mcp`
 
@@ -59,7 +81,7 @@ rover mcp [--ignore-robots]
           [--global-concurrency <N>] [--max-retries <N>]
 ```
 
-Starts the MCP server over stdio. Long-running. Same `--rate-limit-*` / `--ignore-robots` overrides as `fetch`, but applied for the lifetime of the server.
+Starts the MCP server over stdio. Long-running. Same `--rate-limit-*` and `--ignore-robots` overrides as `fetch`, applied for the lifetime of the server rather than a single request. The server reads no config unless you pass `--config` — see the global flags above and [MCP tools](/docs/mcp-tools) for the tool surface it exposes.
 
 ## `rover cache`
 
@@ -70,12 +92,16 @@ rover cache purge <pattern> [--all]
 rover cache stats
 ```
 
+Operations against the cache database. See [Caching & freshness](/docs/caching) for TTL and revalidation behaviour.
+
 | Subcommand | Description |
 | --- | --- |
 | `list` | List cached URLs, most recent first. `--limit` defaults to `20`, `--offset` to `0`. |
 | `get <url>` | Print the cached Markdown body for `<url>`. |
 | `purge <pattern>` | Delete cache entries whose URL matches the glob (`*`, `?`). The pattern `*` requires `--all` as a safety interlock. |
-| `stats` | Print cache size, entry count, expired-entry count. |
+| `stats` | Print cache size, entry count, and expired-entry count. |
+
+**The `*` purge needs `--all` on purpose.** A bare `rover cache purge '*'` wipes the entire cache, so it refuses to run without the explicit flag. Get the glob wrong without that interlock and you pay for every page again.
 
 ## `rover task`
 
@@ -84,14 +110,14 @@ rover task <id> [--monitor] [--cancel]
                 [--format human|ndjson] [--from-event <N>]
 ```
 
-Pure reader except for `--cancel`. Reads `tasks` + `task_events` from the cache database. No HTTP, no scheduler responsibilities.
+A pure reader, except for `--cancel`. Reads `tasks` and `task_events` from the cache database — no HTTP, no scheduler responsibilities.
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--monitor` | off | Stream task events as they're appended. Combine with `--from-event` to resume. |
-| `--cancel` | off | Set the task's `cancellation_requested` flag (a single UPDATE). |
+| `--cancel` | off | Set the task's `cancellation_requested` flag — a single UPDATE. |
 | `--format <fmt>` | `human` | `human` prints one line per event; `ndjson` emits one JSON object per line. |
-| `--from-event <N>` | unset | Start streaming after this event id (use with `--monitor`). |
+| `--from-event <N>` | unset | Start streaming after this event id; use with `--monitor`. |
 
 ## `rover batch`
 
@@ -100,7 +126,7 @@ rover batch <id> [--monitor] [--cancel]
                  [--format human|ndjson] [--from-event <N>]
 ```
 
-Same flags and semantics as `rover task`, but the loaded task's `kind` must be `batch_fetch`. Returns an error if the id refers to a non-batch task.
+Same flags and semantics as `rover task`, with one guard: the loaded task's `kind` must be `batch_fetch`. Point it at a non-batch id and it errors rather than guessing. See [Batch & background tasks](/docs/batch).
 
 ## `rover doctor`
 
@@ -108,7 +134,7 @@ Same flags and semantics as `rover task`, but the loaded task's `kind` must be `
 rover doctor [--format human|ndjson]
 ```
 
-Runs the built-in diagnostic battery sequentially:
+Runs the diagnostic battery sequentially, cheap checks first. The always-run checks:
 
 1. **sqlite_open** — cache database opens cleanly.
 2. **sqlite_wal_mode** — WAL journal mode active.
@@ -117,12 +143,15 @@ Runs the built-in diagnostic battery sequentially:
 5. **network_reachable** — `HEAD https://example.com` succeeds.
 6. **extractive_synthesis** — the extractive backend produces output on a fixed input.
 7. **backends_authenticate** — every cloud `[backends.*]` block authenticates.
+8. **captioners_authenticate** — every configured image captioner authenticates.
+
+Feature-gated checks appear only when the matching feature is compiled in: the headless browser launch check (`headless`), and the local model cache and integrity checks (`local-inference` / `injection-model`). See [Optional features](/docs/features) for the feature matrix.
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--format <fmt>` | `human` | `human`: one line per check with `✓` / `✗` / `-` markers and a summary footer (`all checks ok` / `one or more checks failed`). `ndjson`: one `{check, status, detail?}` JSON object per line. |
 
-Exit code: `0` iff no check failed (`skip` is non-failing). `1` otherwise.
+**The exit code is the verdict.** `0` iff no check failed — a `skip` is non-failing, so a feature you didn't compile in won't fail the run. `1` otherwise. That makes `rover doctor` safe to drop straight into CI.
 
 ## `rover config show`
 
@@ -130,7 +159,7 @@ Exit code: `0` iff no check failed (`skip` is non-failing). `1` otherwise.
 rover config show
 ```
 
-Prints the effective configuration as TOML, every leaf annotated with its source (`defaults`, `file`, or `env`). The full dotted key is included in each comment so `grep ssrf.level` against the output matches the right line.
+Prints the effective configuration as TOML, every leaf annotated with its source — `defaults`, `file`, or `env`. The full dotted key is included in each comment, so `grep ssrf.level` against the output matches the right line.
 
 Example output:
 
@@ -150,7 +179,7 @@ min_ttl = "5m"      # from: defaults (cache.min_ttl)
 rover config set <dotted.key> <value>
 ```
 
-In-place edit of the config file. Creates the parent directory and the file itself if missing. Preserves comments and key ordering for keys that already exist; appends new keys at the bottom of the appropriate `[section]`. Prints `✓ <key> = <value>  (wrote <path>)` on success.
+Edits the config file in place. Creates the parent directory and the file itself if missing. Preserves comments and key ordering for keys that already exist; appends new keys at the bottom of the appropriate `[section]`. Prints `✓ <key> = <value>  (wrote <path>)` on success.
 
 Settable keys:
 
@@ -164,8 +193,8 @@ Settable keys:
 - `tokenizer.default`
 - `mcp.heartbeat_interval`, `mcp.reap_threshold`
 - `debug.log_level`, `debug.har_path`, `debug.har_body_cap`
-- `headless.max_concurrent`, `headless.chrome_executable` (M9)
-- `image_captions.default`, `image_captions.max_tokens`, `image_captions.max_per_page`, `image_captions.min_width`, `image_captions.min_height`, `image_captions.max_bytes`, `image_captions.max_concurrent` (M9)
+- `headless.max_concurrent`, `headless.chrome_executable`
+- `image_captions.default`, `image_captions.max_tokens`, `image_captions.max_per_page`, `image_captions.min_width`, `image_captions.min_height`, `image_captions.max_bytes`, `image_captions.max_concurrent`
 
 Examples:
 
@@ -178,7 +207,7 @@ rover config set image_captions.default cloud
 rover config set headless.max_concurrent 8
 ```
 
-## `rover model` (M9)
+## `rover model`
 
 ```text
 rover model download <repo_id>
@@ -187,9 +216,9 @@ rover model remove <repo_id>
 rover model verify [<repo_id>]
 ```
 
-Download, list, remove, and verify cached local models from HuggingFace Hub. Requires the `local-inference` feature at compile time; the subcommand is absent without it.
+Download, list, remove, and verify cached local models from HuggingFace Hub. Gated by the `local-inference` feature at compile time — without it, the subcommand is absent.
 
-Models are cached under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`). All three subcommands work with this cache directory.
+Models live under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`). All four subcommands work against that cache directory.
 
 ### `rover model download`
 
@@ -197,11 +226,11 @@ Models are cached under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`). A
 rover model download <repo_id>
 ```
 
-Download a model from HuggingFace ahead-of-time. Displays per-file progress to stderr; completes with a confirmation message.
+Download a model ahead of time. Displays per-file progress to stderr; finishes with a confirmation line.
 
 Example output:
 
-```
+```text
 downloading Qwen/Qwen3.5-0.8B from HuggingFace…
   config.json                                                4 KB / 4 KB
   tokenizer.json                                         11 MB / 11 MB
@@ -219,7 +248,7 @@ List all cached models with their disk sizes.
 
 Example output:
 
-```
+```text
 ~/.cache/huggingface/hub
   Qwen/Qwen3.5-0.8B   1.6 GB
   Qwen/Qwen3-4B       8.1 GB
@@ -231,11 +260,11 @@ Example output:
 rover model remove <repo_id>
 ```
 
-Remove a cached model and free disk space. Returns a confirmation with the freed size.
+Remove a cached model and free the disk it held. Returns a confirmation with the freed size.
 
 Example output:
 
-```
+```text
 removed ~/.cache/huggingface/hub/models--Qwen--Qwen3.5-0.8B (1.6 GB freed)
 ```
 
@@ -245,26 +274,18 @@ removed ~/.cache/huggingface/hub/models--Qwen--Qwen3.5-0.8B (1.6 GB freed)
 rover model verify [<repo_id>]
 ```
 
-Re-hash cached model files and compare them against the integrity manifest
-(`.rover-integrity.toml`) recorded at download time. With a `<repo_id>`, verifies
-that one model; without, verifies every cached model. Exits non-zero if any file
-has been modified or is missing. See [Security](/docs/security) §"Local
-model files" for the full integrity model.
+**`verify` is the integrity check you can run by hand.** It re-hashes cached model files and compares them against the integrity manifest (`.rover-integrity.toml`) recorded at download time. With a `<repo_id>`, it verifies that one model; without, it verifies every cached model. Exits non-zero if any file has been modified or is missing. See [Security & threat model](/docs/security) §"Local model files" for the full integrity model.
 
 Example output:
 
-```
+```text
 OK    Qwen/Qwen3.5-0.8B  (4 files, revision a1b2c3d)
 FAIL  Qwen/Qwen3-4B  (revision e4f5a6b)
         model.safetensors: modified (expected sha256:…, got sha256:…)
 ```
 
-A model integrity verification also runs before any local model is loaded for
-inference; the `local_model_integrity` check in `rover doctor` reports the same
-status. Bypass with `--unsafe-disable-model-integrity-check` (or
-`ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`) — a security-sensitive escape
-hatch that logs a warning at startup.
+The same check runs automatically before any local model is loaded for inference, and the `local_model_integrity` check in `rover doctor` reports the same status. Bypass it with `--unsafe-disable-model-integrity-check` (or `ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`) — a security-sensitive escape hatch that logs a warning at startup. Turning off tamper detection for downloaded weights is the kind of thing you do knowingly, not by accident.
 
 :::note
-Gated by `local-inference`. When it is not compiled, `rover model --help` returns an unrecognized subcommand error.
+Gated by `local-inference`. When it is not compiled in, `rover model --help` returns an unrecognized-subcommand error.
 :::

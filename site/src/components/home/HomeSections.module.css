@@ -16,3 +16,10 @@
 .tool code{font-family:var(--rover-font-mono);color:var(--rover-hunter);font-weight:600}
 .cta{text-align:center;border:1px solid var(--rover-rule);border-radius:1rem;background:var(--rover-surface);margin:2rem 0 4rem}
 .ctaCmd{display:inline-block;font-family:var(--rover-font-mono);background:var(--ifm-code-background);color:var(--ifm-code-color);padding:.7rem 1rem;border-radius:.55rem;margin:0 .8rem 1rem 0}
+.getback{display:grid;grid-template-columns:1fr 1fr;gap:2rem;align-items:center}
+@media(max-width:760px){.getback{grid-template-columns:1fr}}
+.getbackText{font-size:1.02rem;margin:0}
+.sampleFigure{margin:0}
+.sample{font-family:var(--rover-font-mono);font-size:.78rem;line-height:1.55;background:var(--ifm-code-background);color:var(--ifm-code-color);padding:1rem 1.1rem;border-radius:.7rem;overflow-x:auto;margin:0 0 .5rem;border:1px solid var(--rover-rule)}
+.sampleFigure figcaption{font-size:.8rem;text-align:center}
+.legend{font-family:var(--rover-font-ui);font-size:.78rem;opacity:.7;margin-top:.7rem}

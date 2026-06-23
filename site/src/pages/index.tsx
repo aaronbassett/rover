@@ -14,19 +14,21 @@ export default function Home(): ReactNode {
           <div>
             <p className="rover-kicker">An MCP server for the open web</p>
             <h1 className={styles.heroTitle}>
-              Turn the web into Markdown your agent can <em>trust</em>.
+              Give your agent the web it can actually <em>trust</em>.
             </h1>
             <p className={`rover-dek ${styles.heroDek}`}>
-              Rover fetches a URL, strips the chrome, extracts the real content, counts the
-              tokens, and wraps it so the model knows it&apos;s untrusted data — not instructions.
+              Rover fetches a URL, strips the ads and chrome, and hands your agent clean Markdown
+              with a token count attached. Every page comes back wrapped as untrusted data, not
+              instructions.
             </p>
             <div className={styles.heroActions}>
               <code className={styles.cmd}>claude mcp add rover -- rover mcp</code>
-              <Link className="button button--primary button--lg" to="/docs/intro">Read the docs →</Link>
+              <Link className="button button--primary button--lg" to="/docs/install">Install in one command</Link>
+              <Link className="button button--secondary button--lg" to="/docs/intro">Read the docs →</Link>
               <Link className="button button--secondary button--lg" href="https://github.com/aaronbassett/rover">GitHub</Link>
             </div>
             <p className={styles.badges}>
-              <span>SSRF protection</span><span>Injection guard</span><span>HTTP caching</span><span>Token budgets</span>
+              <span>Clean Markdown</span><span>Token budgeting</span><span>Prompt-injection guard</span><span>Single-user local</span>
             </p>
           </div>
           <figure className={styles.heroFigure}>

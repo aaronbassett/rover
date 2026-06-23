@@ -3,13 +3,13 @@ id: configuration
 title: Configuration
 ---
 
-# Rover Configuration
+# Configuration
 
-Rover reads a single TOML file. Default location: `$XDG_CONFIG_HOME/rover/config.toml` (typically `~/.config/rover/config.toml`). Override with `--config <path>` on every subcommand, or set `ROVER_CONFIG=/path/to/config.toml`.
+**A config file is loaded only when you pass `--config <path>`.** Run `fetch`, `mcp`, `cache`, `task`, `batch`, or `doctor` without `--config` and Rover uses built-in defaults — no file is read, and no default path is searched. So a config that lives on disk does nothing for fetching or the server until you point a command at it: `rover mcp --config ~/.config/rover/config.toml`.
 
-All sections and keys are optional — defaults below apply when absent. Unknown keys are rejected at load time (`deny_unknown_fields`). Durations parse via `humantime` (e.g. `"1h"`, `"5m"`, `"7d"`, `"500ms"`).
+Only `rover config show` and `rover config set` resolve a default path on their own. They operate on `config.toml` under the platform config dir, in order: `ROVER_CONFIG`, then `~/.config/rover/config.toml` (Linux/macOS), then `./rover.toml` as a last resort. Inspect the effective settings with `rover config show`; change one with `rover config set <dotted.key> <value>`. See the [CLI reference](/docs/cli).
 
-Inspect the effective configuration with `rover config show`. Mutate a single setting with `rover config set <dotted.key> <value>` — see [CLI reference](/docs/cli).
+Every section and key is optional — the defaults below apply when absent. Unknown keys are rejected at load time (`deny_unknown_fields`), so a typo fails loudly instead of being silently ignored. Durations parse via `humantime` (e.g. `"1h"`, `"5m"`, `"7d"`, `"500ms"`).
 
 ## `[fetch]`
 
@@ -18,7 +18,7 @@ Inspect the effective configuration with `rover config show`. Mutate a single se
 | `user_agent` | string | `Rover/<version> (+https://github.com/aaronbassett/rover)` | UA header on every outbound HTTP request. |
 | `timeout_secs` | integer | `15` | Per-request timeout in seconds. Must be `> 0`. |
 
-## `[ssrf]` (M8)
+## `[ssrf]`
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -35,11 +35,11 @@ Inspect the effective configuration with `rover config show`. Mutate a single se
 | `lan` | Project + RFC1918 + IPv6 ULAs (`fc00::/7`). |
 | `none` | Trust the user. The always-floor (link-local, multicast, broadcast, `0.0.0.0`, `::`) is still blocked. |
 
-Unknown level strings are rejected the first time the SSRF policy is consulted (typed `SsrfError::UnknownLevel`).
+Unknown level strings are rejected the first time the SSRF policy is consulted (typed `SsrfError::UnknownLevel`). The always-floor blocks the dangerous ranges at every level, including `none` — see [Security & threat model](/docs/security) for why server-side request forgery is the threat this guards against.
 
 ## `[prompt_injection]`
 
-Layered prompt-injection guard for the content-returning MCP tools (`fetch`, `summarize`, `get_metadata`, and — transitively — `batch_fetch`). See [MCP tools](/docs/mcp-tools) for the wire contract (the `content` field, the nonce wrapper, and the `prompt_injection` telemetry object).
+Layered prompt-injection guard for the content-returning MCP tools (`fetch`, `summarize`, `get_metadata`, and — transitively — `batch_fetch`). These keys tune the detectors that run on output; they do not control the nonce wrapper, which is always on and can't be turned off. See [Trust & prompt injection](/docs/trust) for the model behind the layers, and [MCP tools](/docs/mcp-tools) for the wire contract (the `content` field, the nonce wrapper, and the `prompt_injection` telemetry object).
 
 ```toml
 [prompt_injection]
@@ -69,7 +69,7 @@ level = false
 
 Both the `level`/`model` strings are validated at first use (`guard::GuardConfig::from_config`), surfacing a typed error rather than a serde error — unknown values are accepted by the TOML parser and rejected when the guard is built.
 
-The model detector (`model`) requires building Rover with `--features injection-model` (downloads an ONNX DeBERTa classifier from HuggingFace on first use; verify with `rover doctor`). When the feature is not compiled, a configured `model` is ignored with a warning. Methods 1 (structural wrapper) and 2 (pattern detector) are always compiled. Internal-inference hardening (cleaning content Rover feeds to its own summarizer/caption models) is always on and cannot be disabled.
+The model detector (`model`) requires building Rover with the `injection-model` feature — it downloads an ONNX DeBERTa classifier from HuggingFace on first use; verify with `rover doctor`. When the feature is not compiled, a configured `model` is ignored with a warning. The structural wrapper and the pattern detector are always compiled, so the guard never drops to zero coverage. Internal-inference hardening — cleaning content Rover feeds to its own summarizer and caption models — is always on and can't be turned off. See [Optional features](/docs/features) for the full feature-flag matrix.
 
 ## `[cache]`
 
@@ -87,16 +87,16 @@ The model detector (`model`) requires building Rover with `--features injection-
 
 When a cache entry's `expires_at` has passed:
 
-- **Within `stale_while_revalidate_window`:** the MCP server returns the stale row immediately and enqueues a background `revalidate` task. The agent sees `cache_status: "stale"` and a `revalidation_task_id` it can monitor.
+- **Within `stale_while_revalidate_window`:** the MCP server returns the stale row immediately and enqueues a background `revalidate` task. The agent sees `cache_status: "stale"` and a `revalidation` block it can monitor.
 - **Beyond `stale_while_revalidate_window`:** the row is treated as a miss; `fetch` refetches synchronously and writes through the cache.
 
-The CLI (`rover fetch`) **always** revalidates synchronously regardless of the window — a one-shot CLI process has no in-process scheduler to drain the background task queue, so it cannot rely on SWR. Set `default_ttl` and `max_ttl` to reflect how fresh you actually need cached content; set `stale_while_revalidate_window` to bound how stale the SWR fast-path is allowed to serve.
+The CLI (`rover fetch`) **always** revalidates synchronously regardless of the window — a one-shot CLI process has no in-process scheduler to drain the background task queue, so it cannot rely on SWR. Set `default_ttl` and `max_ttl` to reflect how fresh you actually need cached content; set `stale_while_revalidate_window` to bound how stale the SWR fast-path is allowed to serve. See [Caching & freshness](/docs/caching) for how these knobs interact with upstream `Cache-Control`.
 
 ## `[tokenizer]`
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `default` | enum | `"o200k"` | Default tokenizer family. One of `o200k` (GPT-4o), `cl100k` (GPT-4), `claude`. |
+| `default` | enum | `"o200k"` | Default tokenizer family for token counting. One of `o200k` (GPT-4o, the default), `cl100k` (GPT-4), `claude`, `llama3`, `qwen3`. Pick the family that matches the model you actually pay for — token counts differ between them, and an estimate against the wrong tokenizer is an estimate against the wrong budget. |
 
 ## `[mcp]`
 
@@ -154,18 +154,18 @@ Controls the per-table defaults consumed by the `tables: {mode: "summarize"}` ho
 | `target_tokens` | integer | `150` | Target token count for each generated table summary. |
 | `focus` | string | `"Describe what this table shows. Highlight any extreme values or notable rows."` | Focus prompt passed to the summarizer for every table. |
 
-## `[image_captions]` (M9)
+## `[image_captions]`
 
-Configuration for image caption generation when `images.mode = "caption"` is used in the MCP `fetch` tool.
+Defaults for image caption generation when `images.mode = "caption"` is used in the MCP `fetch` tool. See [Images & captioning](/docs/images) for how captions land in the returned content.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `default` | string | `"default"` | Name of a configured `[captioners.<name>]` block to use when no `captioner` override is supplied in the MCP tool call. |
-| `max_tokens` | integer | `100` | Maximum token count per caption. |
+| `default` | string | unset | Name of a configured `[captioners.<name>]` block to use when no `captioner` override is supplied in the MCP tool call. When unset and exactly one captioner is configured, that one is used — so a single-captioner setup needs no `default`. |
+| `max_tokens` | integer | `50` | Maximum token count per caption. Captions are descriptions, not summaries; a tight cap keeps them from eating the budget the page itself needs. |
 | `max_per_page` | integer | `10` | Maximum number of images to caption per page. Captions are generated for the first N images; the rest are dropped. |
-| `min_width` | integer | `32` | Skip images narrower than this (pixels). |
-| `min_height` | integer | `32` | Skip images shorter than this (pixels). |
-| `max_bytes` | integer | `2097152` | Skip images larger than this (bytes; default 2 MiB). |
+| `min_width` | integer | `200` | Skip images narrower than this (pixels). Filters out spacers, icons, and tracking pixels before they cost a caption. |
+| `min_height` | integer | `200` | Skip images shorter than this (pixels). |
+| `max_bytes` | integer | `10485760` | Skip images larger than this (bytes; default 10 MiB). Accepts raw bytes or a humansize string (`"10MiB"`). |
 | `max_concurrent` | integer | `2` | Number of concurrent caption-generation tasks. |
 
 Example:
@@ -177,11 +177,11 @@ max_tokens = 80
 max_per_page = 5
 min_width = 64
 min_height = 64
-max_bytes = 1048576
+max_bytes = "1MiB"
 max_concurrent = 4
 ```
 
-## `[captioners.<name>]` (M9)
+## `[captioners.<name>]`
 
 Free-form section: repeat for each named captioner. Mirrors the `[backends.<name>]` structure.
 
@@ -210,9 +210,9 @@ model = "llama3.2-vision"
 base_url = "http://localhost:11434/v1"
 ```
 
-## `[headless]` (M9)
+## `[headless]`
 
-Configuration for the headless browser renderer when the `headless` feature is compiled in.
+Configuration for the headless browser renderer. The renderer requires building Rover with the `headless` feature; when it isn't compiled, these keys are inert and a requested headless render falls back to the static fetch. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when a page needs a real browser at all.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -226,19 +226,19 @@ The MCP `fetch` tool accepts a typed `headless` argument (see [MCP tools](/docs/
 
 ## `[backends.<name>]`
 
-Free-form section: repeat for each named backend. See [Backends](/docs/backends) for the full reference and worked examples.
+Free-form section: repeat for each named backend. See [Summarisation backends](/docs/backends) for the full reference and worked examples, and [Summarising pages](/docs/summarizing) for how backends, modes, and styles combine at call time.
 
 | Key | Type | Required | Description |
 | --- | --- | --- | --- |
-| `kind` | string | yes | `extractive`, `cloud`, or `local`. |
+| `kind` | string | yes | `extractive`, `cloud`, or `local`. The `local` kind runs an in-process model and requires building Rover with the `local-inference` feature. |
 | `provider` | string | yes (cloud) | One of `openai`, `anthropic`, `gemini`, `xai`, `groq`, `deepseek`, `together`, `fireworks`, `openai_compat`. Ignored for `kind = "local"`. |
-| `model` | string | yes | For cloud: literal model id (e.g. `gpt-4o-mini`). For local: HuggingFace repo id (requires `local-inference` feature). |
+| `model` | string | yes | For cloud: literal model id (e.g. `gpt-4o-mini`). For local: HuggingFace repo id (requires the `local-inference` feature). |
 | `base_url` | string | yes for `openai_compat`; unused otherwise | Custom endpoint. For `openai_compat`, auto-normalized to end in `/v1/`. |
 | `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.). Unused for `kind = "local"`. |
 
 When the `[backends]` map is empty, Rover installs an implicit `default` extractive backend so a fresh install works offline without any configuration. Adding any explicit `[backends.*]` block disables that implicit injection.
 
-## `[debug]` (M8)
+## `[debug]`
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
