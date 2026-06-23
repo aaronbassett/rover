@@ -5,7 +5,7 @@ title: Installation
 
 # Installation
 
-**Install with Homebrew, a prebuilt binary, or from source.** Every channel installs a binary named `rover`. Current release: `v0.1.0`.
+Install with Homebrew, a prebuilt binary, or from source. Every channel installs a binary named `rover`. Current release: `v0.1.0`.
 
 ## Homebrew (macOS)
 

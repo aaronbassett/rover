@@ -5,7 +5,7 @@ title: Optional features
 
 # Optional features
 
-**The default build is fetch-and-extract with no Cargo features and no model weights.** Three opt-in features add capability: `headless` for JavaScript-rendered pages, `local-inference` for on-device summarisation, and `injection-model` for the ONNX prompt-injection classifier. Each pulls in its own dependencies; two download a model on first use.
+The default build is fetch-and-extract with no Cargo features and no model weights. Three opt-in features add capability: `headless` for JavaScript-rendered pages, `local-inference` for on-device summarisation, and `injection-model` for the ONNX prompt-injection classifier. Each pulls in its own dependencies; two download a model on first use.
 
 ## Enabling features
 

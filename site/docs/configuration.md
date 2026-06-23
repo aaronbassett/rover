@@ -5,7 +5,7 @@ title: Configuration
 
 # Configuration
 
-**A config file is loaded only when you pass `--config <path>`.** Run `fetch`, `mcp`, `cache`, `task`, `batch`, or `doctor` without it and Rover uses built-in defaults — no file is read, no default path is searched. A config on disk does nothing until you point a command at it: `rover mcp --config ~/.config/rover/config.toml`.
+A config file is loaded only when you pass `--config <path>`. Run `fetch`, `mcp`, `cache`, `task`, `batch`, or `doctor` without it and Rover uses built-in defaults — no file is read, no default path is searched. A config on disk does nothing until you point a command at it: `rover mcp --config ~/.config/rover/config.toml`.
 
 Only `rover config show` and `rover config set` resolve a default path on their own. They read `config.toml` in order: `ROVER_CONFIG`, then `~/.config/rover/config.toml` (Linux/macOS), then `./rover.toml` as a last resort. `rover config show` prints the effective settings; `rover config set <dotted.key> <value>` changes one. See the [CLI reference](/docs/cli).
 

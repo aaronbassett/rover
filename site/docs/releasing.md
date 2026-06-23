@@ -5,7 +5,7 @@ title: Releasing
 
 # Releasing
 
-**This page is for maintainers cutting a Rover release.** It documents how a version goes from a merge on `main` to a published crate, a GitHub Release, and a Homebrew formula. To run Rover, start with [Installation](/docs/install). For how version numbers and stability promises work, see [Versioning & stability](/docs/versioning).
+This page is for maintainers cutting a Rover release. It documents how a version goes from a merge on `main` to a published crate, a GitHub Release, and a Homebrew formula. To run Rover, start with [Installation](/docs/install). For how version numbers and stability promises work, see [Versioning & stability](/docs/versioning).
 
 Two tools split the work cleanly:
 
@@ -38,7 +38,7 @@ release-plz creates the **tag**; dist creates the **GitHub Release**. They never
 
 ## The distributed binary vs. `cargo install`
 
-**The prebuilt binary and the one `cargo install` gives you are not the same build.** The tarballs and the Homebrew formula ship `rover` built with `--features headless --no-default-features`. The crate's default feature set is empty (`default = []`), so `cargo install rover-fetch` builds the *basic* binary. To match the distributed binary from source, ask for the feature:
+The prebuilt binary and the one `cargo install` gives you are not the same build. The tarballs and the Homebrew formula ship `rover` built with `--features headless --no-default-features`. The crate's default feature set is empty (`default = []`), so `cargo install rover-fetch` builds the *basic* binary. To match the distributed binary from source, ask for the feature:
 
 ```sh
 cargo install rover-fetch --features headless

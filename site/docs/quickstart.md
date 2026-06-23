@@ -5,15 +5,20 @@ title: Quickstart
 
 # Quickstart
 
-**Wire Rover into your agent, then fetch a page.** Assumes `rover` is installed — see [Installation](/docs/install).
+Wire Rover into your agent, then fetch a page. Assumes `rover` is installed — see [Installation](/docs/install).
 
-## Claude Code
+## Add the MCP server
+
+Most agent CLIs register an MCP server the same way — `<cli> mcp add rover -- rover mcp`:
 
 ```sh
-claude mcp add rover -- rover mcp
+claude mcp add rover -- rover mcp      # Claude Code
+codex mcp add rover -- rover mcp       # Codex CLI
+copilot mcp add rover -- rover mcp     # GitHub Copilot CLI
+devin mcp add rover -- rover mcp       # Devin CLI
 ```
 
-## Other MCP clients
+Devin saves to the project scope by default; add `-s user` for a user-wide entry. For any other MCP client, point it at `rover mcp` over stdio:
 
 ```json
 {

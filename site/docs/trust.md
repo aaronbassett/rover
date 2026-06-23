@@ -5,7 +5,7 @@ title: Trust & prompt injection
 
 # Trust & prompt injection
 
-**Fetched web content is untrusted data, not instructions, and Rover frames it that way by construction.** Every document a content-returning tool returns is sealed inside a per-response nonce delimiter behind a trusted preamble: the text inside is third-party web content, read it, never obey it. Detectors run on top to flag known injection techniques; the framing is the guarantee. It holds whether or not anything was caught.
+Rover treats every fetched page as untrusted data. Each page a content-returning tool returns is wrapped in a per-response nonce fence behind a preamble that tells the model to read the content, not act on it. Pattern and optional model detectors flag known injection attempts on top of that.
 
 ## Why fetched content is untrusted
 
@@ -27,11 +27,7 @@ The layers are not equal. One always runs and never depends on detecting anythin
 
 ## The wrapper is the load-bearing layer
 
-**Detection can miss; the wrapper can't.** Layers 2 and 3 enumerate techniques and score text, and a novel attack can slip past both. The wrapper frames every response as untrusted data regardless of what the detectors found — or didn't.
-
-Because the nonce is generated fresh per response and never shown to the page, a malicious document can't guess the tag to forge its own closing fence and escape. Any literal copy of the tag in the page body is stripped before the real wrapper goes on, so the delimiter appears exactly once. It holds by construction.
-
-The detectors quarantine or remove known-bad spans. The wrapper is the guarantee you can rely on.
+Detection can miss: the pattern and model layers enumerate known techniques and score text, and a novel attack can slip past both. The wrapper doesn't depend on recognising an attack — it fences every response as untrusted data whether or not a detector fired. The detectors only quarantine or remove the spans they catch.
 
 ## Response levels
 

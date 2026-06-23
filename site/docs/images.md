@@ -34,7 +34,7 @@ Set the mode inline on a `fetch` call:
 
 ## Captioning
 
-**Captioning is always compiled in — there is no Cargo feature flag to enable it.** The only thing missing from a default install is a captioner pointed at a model. Captioning runs through cloud vision models via the `genai` crate, the same client the summarisation backends use.
+Captioning is always compiled in — there is no Cargo feature flag to enable it. The only thing missing from a default install is a captioner pointed at a model. Captioning runs through cloud vision models via the `genai` crate, the same client the summarisation backends use.
 
 Declare a captioner in a `[captioners.<name>]` block. The shape mirrors a summariser backend:
 
@@ -88,7 +88,7 @@ The dimension gate is cheap by design. Rover reads width and height from the ima
 
 ## Reading the results
 
-**Every image the pipeline touches reports its own outcome.** The `fetch` response carries an `images_processed` list — one entry per image — and the same data renders into the document's frontmatter. Each entry names the `src`, a `decision` of `captioned` or `skipped`, and a `reason` when the image was skipped:
+Every image the pipeline touches reports its own outcome. The `fetch` response carries an `images_processed` list — one entry per image — and the same data renders into the document's frontmatter. Each entry names the `src`, a `decision` of `captioned` or `skipped`, and a `reason` when the image was skipped:
 
 | `reason` | Why the image was skipped |
 | --- | --- |

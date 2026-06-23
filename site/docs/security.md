@@ -5,7 +5,7 @@ title: Security & threat model
 
 # Security & threat model
 
-**Rover treats the web as hostile by default.** Every outbound request is policed before a byte leaves the host, every page is fenced as untrusted data before it reaches your agent, and credentials are scrubbed before anything lands in a log. This page documents the boundaries Rover enforces, the typed errors it raises when those boundaries are crossed, and the deliberate tradeoffs in the design.
+Rover treats the web as hostile by default. Every outbound request is policed before a byte leaves the host, every page is fenced as untrusted data before it reaches your agent, and credentials are scrubbed before anything lands in a log. This page documents the boundaries Rover enforces, the typed errors it raises when those boundaries are crossed, and the deliberate tradeoffs in the design.
 
 ## SSRF protection
 
@@ -69,7 +69,7 @@ The custom tracing formatter (`RedactingFormatEvent`) scrubs two classes of secr
 
 ## Prompt-injection guard
 
-**Fetched web content is untrusted data, not instructions, and Rover enforces that boundary before any page reaches your agent.** Every document a content-returning tool hands back is framed by a trusted preamble and sealed inside a per-response nonce delimiter that tells the model the enclosed text is third-party content to read, never obey. The wrapper never depends on catching anything.
+Fetched web content is untrusted data, not instructions, and Rover enforces that boundary before any page reaches your agent. Every document a content-returning tool hands back is framed by a trusted preamble and sealed inside a per-response nonce delimiter that tells the model the enclosed text is third-party content to read, never obey. The wrapper never depends on catching anything.
 
 For the full layering — the literal and regex pattern detectors, the optional model classifier, the response levels, and the allowlist and override surface — see [Trust & prompt injection](/docs/trust). For the shape of the wrapped `content` string and the per-tool telemetry, see [MCP tools](/docs/mcp-tools).
 
@@ -103,7 +103,7 @@ Sub-requests that would violate the policy are intercepted via the CDP Fetch dom
 
 The HAR recorder records only the top-level navigation. Sub-resources (CSS, JS, images, fonts, beacons) are not in the HAR file. This keeps HAR files navigable and stops sub-resources from masking what Rover actually returned.
 
-**A malicious page can't use Rover's headless renderer to scan internal networks.** Embedded `<iframe>`, `<img>`, or `fetch()` calls can't reach destinations the SSRF policy forbids. The always-floor address set (link-local, multicast, `0.0.0.0`, broadcast) plus the `block_third_party = true` default cover the common attack paths. Operators who set `[ssrf] level = "none"` opt out of these checks; the WARN line at startup documents that choice. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when the renderer runs at all.
+A malicious page can't use Rover's headless renderer to scan internal networks. Embedded `<iframe>`, `<img>`, or `fetch()` calls can't reach destinations the SSRF policy forbids. The always-floor address set (link-local, multicast, `0.0.0.0`, broadcast) plus the `block_third_party = true` default cover the common attack paths. Operators who set `[ssrf] level = "none"` opt out of these checks; the WARN line at startup documents that choice. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when the renderer runs at all.
 
 ## Local model files
 

@@ -5,7 +5,7 @@ title: Versioning & stability
 
 # Versioning & stability
 
-**Rover is pre-1.0 and unstable at the minor level — pin to an exact version in any agent harness.** A minor bump can break the MCP tool schema or the CLI flag set. Read the [CHANGELOG](https://github.com/aaronbassett/rover/blob/main/CHANGELOG.md) before you bump. Rover follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html), with the pre-1.0 rules below.
+Rover is pre-1.0 and unstable at the minor level — pin to an exact version in any agent harness. A minor bump can break the MCP tool schema or the CLI flag set. Read the [CHANGELOG](https://github.com/aaronbassett/rover/blob/main/CHANGELOG.md) before you bump. Rover follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html), with the pre-1.0 rules below.
 
 ## Release types (pre-1.0)
 

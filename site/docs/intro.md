@@ -6,7 +6,7 @@ slug: /intro
 
 # Introduction
 
-**Rover fetches a URL and returns clean, token-counted Markdown your agent can treat as untrusted data.** It strips ads, nav, and chrome with [`readabilityrs`](https://crates.io/crates/readabilityrs), normalises to Markdown, counts the tokens, optionally summarises to a budget, and wraps the body so the model reads the page as data, not instructions. Rover is an MCP server and a CLI.
+Rover fetches a URL and returns clean, token-counted Markdown your agent can treat as untrusted data. It strips ads, nav, and chrome with [`readabilityrs`](https://crates.io/crates/readabilityrs), normalises to Markdown, counts the tokens, optionally summarises to a budget, and wraps the body so the model reads the page as data, not instructions. Rover is an MCP server and a CLI.
 
 ## What you get back
 

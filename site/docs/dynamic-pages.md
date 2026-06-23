@@ -5,7 +5,7 @@ title: JavaScript & dynamic pages
 
 # JavaScript & dynamic pages
 
-**A JavaScript-rendered page hands a plain HTTP client an empty shell.** The server returns a near-empty root `<div>`, the content renders later in JavaScript, and a plain fetch never runs it. Readability keeps nothing and `extraction_quality` in the [response envelope](/docs/output) comes back low. Headless rendering fixes this — a real Chrome/Chromium over the DevTools Protocol runs the page's scripts before Rover extracts.
+A JavaScript-rendered page hands a plain HTTP client an empty shell. The server returns a near-empty root `<div>`, the content renders later in JavaScript, and a plain fetch never runs it. Readability keeps nothing and `extraction_quality` in the [response envelope](/docs/output) comes back low. Headless rendering fixes this — a real Chrome/Chromium over the DevTools Protocol runs the page's scripts before Rover extracts.
 
 ## When you need it
 
@@ -48,7 +48,7 @@ The MCP `fetch` tool takes a `headless` argument that decides, per call, whether
 
 The default mode comes from the `[headless] auto_detect_spa` config key — `auto` when `true` (the default), `off` when `false`. Set `wait` to choose a render-complete condition (below) and `timeout_secs` to bound the render. See [MCP tools](/docs/mcp-tools) for the full `fetch` argument shape.
 
-**Behaviour without the feature is deliberate.** When the `headless` feature is not compiled in, `mode: "off"` and an absent argument are no-ops — the HTTP path is all you get anyway. `mode: "on"` returns the `headless_feature_not_compiled` error, because you asked for rendering the binary can't do and a silent fallback would hide that. `mode: "auto"` keeps the HTTP result with no error, since auto only ever promised to render *if it could*.
+Behaviour without the feature is deliberate. When the `headless` feature is not compiled in, `mode: "off"` and an absent argument are no-ops — the HTTP path is all you get anyway. `mode: "on"` returns the `headless_feature_not_compiled` error, because you asked for rendering the binary can't do and a silent fallback would hide that. `mode: "auto"` keeps the HTTP result with no error, since auto only ever promised to render *if it could*.
 
 ## Choosing a wait condition
 

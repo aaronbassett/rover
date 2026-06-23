@@ -5,11 +5,11 @@ title: Anatomy of a Rover document
 
 # Anatomy of a Rover document
 
-**A fetch returns a single `content` string plus a few envelope fields.** The `content` string is a trusted preamble, then a nonce-fenced wrapper holding YAML frontmatter over the Markdown body. This page documents each part. For the tool arguments, see [MCP tools](/docs/mcp-tools).
+A fetch returns a single `content` string plus a few envelope fields. The `content` string is a trusted preamble, then a nonce-fenced wrapper holding YAML frontmatter over the Markdown body. This page documents each part. For the tool arguments, see [MCP tools](/docs/mcp-tools).
 
 ## The trust wrapper
 
-**The `content` string opens with a plain-text preamble, rendered outside the wrapper.** It tells the agent the enclosed text is third-party web content, to be treated as data only, never as instructions. Below it, frontmatter and body are fenced inside a per-response delimiter with a random nonce: `<untrusted-content-NNNNNN>` … `</untrusted-content-NNNNNN>`.
+The `content` string opens with a plain-text preamble, rendered outside the wrapper. It tells the agent the enclosed text is third-party web content, to be treated as data only, never as instructions. Below it, frontmatter and body are fenced inside a per-response delimiter with a random nonce: `<untrusted-content-NNNNNN>` … `</untrusted-content-NNNNNN>`.
 
 The nonce is a fresh 6-hex-character value generated for each response and never shown to the page. Because the page can't see it, a malicious document can't predict the tag or forge its own closing fence to break out. Literal copies of the open or close tags in the body are stripped before wrapping, so an echoed guess can't close the fence early either.
 
@@ -31,11 +31,11 @@ Rust is a multi-paradigm, general-purpose programming language…
 </untrusted-content-a3f9c1>
 ```
 
-For the threat model — what the detectors catch, what the fence guarantees regardless — see [Trust & prompt injection](/docs/trust).
+For the threat model and how the guard works, see [Trust & prompt injection](/docs/trust).
 
 ## The frontmatter
 
-**The frontmatter is a YAML block at the top of the wrapped document, before the body.** It carries what an agent needs to identify, budget, and re-use the document without re-reading the body. Unwrapped:
+The frontmatter is a YAML block at the top of the wrapped document, before the body. It carries what an agent needs to identify, budget, and re-use the document without re-reading the body. Unwrapped:
 
 ```yaml
 ---
@@ -73,17 +73,17 @@ A second group records what Rover did while extracting. `tables_transformed` app
 
 ## Extraction quality
 
-**`extraction_quality` is a score in [0, 1] that tells you whether the body is worth reading.** It's roughly the ratio of visible extracted text to the page's raw HTML text, with a small bonus for a recovered title and a larger one for metadata. A high score means the page extracted cleanly: most of what mattered survived, little chrome came along. A low score means the body may be thin, garbled, or mostly stripped — usually because the content rendered in JavaScript or the page fought the extractor.
+`extraction_quality` is a score in [0, 1] that reports how cleanly the body extracted — roughly the ratio of visible extracted text to the page's raw HTML, with a small bonus for a recovered title and a larger one for metadata. A high score (`0.98`) means most of what mattered survived and little chrome came along; a low score (`0.12`) means the body is thin, garbled, or mostly stripped, usually because the content rendered in JavaScript or the page fought the extractor.
 
-Read it before you spend tokens on the body. A score of `0.98` is a clean article; `0.12` is a near-empty shell, and your token budget pays the same either way. When a page scores low and you need the content, the fix is headless rendering or a different fetch strategy, not re-reading the same thin body.
+In a `fetch` response the body is already in context next to the score, so the score doesn't gate loading the body — it gates whether the body is worth reasoning over. A low score is the signal to re-fetch with [headless rendering](/docs/dynamic-pages) instead of spending tokens analysing a near-empty shell. To read the score *before* pulling the body, call [`get_metadata`](/docs/mcp-tools) first — it returns `extraction_quality` with no Markdown body.
 
 ## The body
 
-**The body is clean Markdown — the page's content, with nav, ads, cookie banners, and chrome removed.** Headings stay headings, links stay links, tables become Markdown tables (or a chosen table mode). The body is what `estimated_tokens` measures and what `content_hash` digests.
+The body is clean Markdown — the page's content, with nav, ads, cookie banners, and chrome removed. Headings stay headings, links stay links, tables become Markdown tables (or a chosen table mode). The body is what `estimated_tokens` measures and what `content_hash` digests.
 
 ## Envelope fields
 
-**The envelope fields sit alongside `content`, not inside the wrapped document.** They describe how this response was produced. `cache_status` is always present and is one of `hit`, `miss`, or `stale`. The rest appear only when they apply:
+The envelope fields sit alongside `content`, not inside the wrapped document. They describe how this response was produced. `cache_status` is always present and is one of `hit`, `miss`, or `stale`. The rest appear only when they apply:
 
 - `revalidation` — present when `cache_status` is `stale` and a background revalidate task was queued. See [Caching & freshness](/docs/caching).
 - `summarized: true` — the inline `summarize` argument was used and `content` is the summary.

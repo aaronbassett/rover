@@ -5,7 +5,7 @@ title: Summarising pages
 
 # Summarising pages
 
-**`summarize` compresses a page to a shorter version on a backend you choose.** The defaults need no configuration; the arguments below steer length, focus, format, and backend. Summaries count against your [token budget](/docs/token-budgets).
+`summarize` compresses a page to a shorter version on a backend you choose. The defaults need no configuration; the arguments below steer length, focus, format, and backend. Summaries count against your [token budget](/docs/token-budgets).
 
 ## Two ways to summarise
 

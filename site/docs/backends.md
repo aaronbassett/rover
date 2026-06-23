@@ -16,7 +16,7 @@ A third kind, **`local`**, runs an LLM on your own machine and requires the `loc
 
 ## The implicit default
 
-**An empty `[backends]` map still gives you a working summariser.** With nothing declared, Rover installs an implicit `default` extractive backend, so a fresh install summarises offline with zero configuration.
+An empty `[backends]` map still gives you a working summariser. With nothing declared, Rover installs an implicit `default` extractive backend, so a fresh install summarises offline with zero configuration.
 
 Adding any explicit `[backends.*]` block disables that injection. From there the validation rules apply strictly:
 
@@ -72,7 +72,7 @@ Whitespace around the URL is trimmed before normalisation, so a stray pasted spa
 
 ## Fallback selection
 
-**A failing cloud call doesn't have to fail the request.** With `[summarization] fallback_to_extractive = true`, a cloud failure — auth, rate limit, model error, invalid request — retries against an extractive backend. The agent gets a summary, just a cheaper one.
+A failing cloud call doesn't have to fail the request. With `[summarization] fallback_to_extractive = true`, a cloud failure — auth, rate limit, model error, invalid request — retries against an extractive backend. The agent gets a summary, just a cheaper one.
 
 The fallback backend is chosen deterministically:
 

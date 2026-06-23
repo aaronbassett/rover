@@ -63,7 +63,7 @@ Fetches `<url>` through the cache-aware orchestrator (`fetch_with_cache`), runs 
 | `--max-tokens <N>` | usize | unset | Token budget. Auto-summarises the extracted body toward `N` when it runs over. |
 | `--summarize <JSON>` | string | unset | Explicit summarise blob, applied before `--max-tokens`. |
 
-**`--max-tokens` is a target, not a ceiling.** When the extracted body exceeds `N`, Rover auto-summarises it toward the budget through the configured `[summarization]` backend — the offline extractive backend by default. The result is best-effort: the extractive backend budgets by summing per-sentence token counts, so the joined summary can land a few tokens over `N`. It emits the summary anyway; it does not error. That is the difference from the MCP `fetch` tool's `max_tokens`, a single-shot hard ceiling that can return `max_tokens_exceeded`. See [Managing token budgets](/docs/token-budgets).
+`--max-tokens` is a target, not a ceiling. When the extracted body exceeds `N`, Rover auto-summarises it toward the budget through the configured `[summarization]` backend — the offline extractive backend by default. The result is best-effort: the extractive backend budgets by summing per-sentence token counts, so the joined summary can land a few tokens over `N`. It emits the summary anyway; it does not error. That is the difference from the MCP `fetch` tool's `max_tokens`, a single-shot hard ceiling that can return `max_tokens_exceeded`. See [Managing token budgets](/docs/token-budgets).
 
 **`--summarize` runs first.** Pass a JSON blob with the same shape as the MCP `summarize` tool's args minus `url` — for example:
 
@@ -152,7 +152,7 @@ Feature-gated checks appear only when the matching feature is compiled in: the h
 | --- | --- | --- |
 | `--format <fmt>` | `human` | `human`: one line per check with `✓` / `✗` / `-` markers and a summary footer (`all checks ok` / `one or more checks failed`). `ndjson`: one `{check, status, detail?}` JSON object per line. |
 
-**The exit code is the verdict.** `0` iff no check failed — a `skip` is non-failing, so a feature you didn't compile in won't fail the run. `1` otherwise. That makes `rover doctor` safe to drop straight into CI.
+The exit code is the verdict. `0` iff no check failed — a `skip` is non-failing, so a feature you didn't compile in won't fail the run. `1` otherwise. That makes `rover doctor` safe to drop straight into CI.
 
 ## `rover config show`
 

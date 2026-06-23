@@ -5,7 +5,7 @@ title: Caching & freshness
 
 # Caching & freshness
 
-**Rover caches every fetch and bounds how stale a cached copy can get.** A single SQLite database in WAL mode backs the cache, keyed by a hash of the canonical URL. Cache decisions follow upstream HTTP semantics: an origin that says "fresh for an hour" gets an hour, and one that says "don't store this" is honoured. The default TTL is short on purpose.
+Rover caches every fetch and bounds how stale a cached copy can get. A single SQLite database in WAL mode backs the cache, keyed by a hash of the canonical URL. Cache decisions follow upstream HTTP semantics: an origin that says "fresh for an hour" gets an hour, and one that says "don't store this" is honoured. The default TTL is short on purpose.
 
 ## How the cache decides
 
