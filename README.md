@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/aaronbassett/rover/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronbassett/rover/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Rust 1.96+](https://img.shields.io/badge/rustc-1.96+-orange.svg)](https://rover-fetch.com/docs/versioning)
+[![Rust 1.96+](https://img.shields.io/badge/rustc-1.96+-orange.svg)](#install)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](#install)
 
 [Quick start](#quick-start-wire-it-into-your-agent) · [Why Rover](#why-rover) · [How it compares](#how-your-agent-gets-the-web) · [MCP tools](#the-mcp-tools) · [Security](#security--trust) · [Features](#features) · [Docs](#documentation)
@@ -160,7 +160,7 @@ cargo install rover-fetch --features headless   # crate is rover-fetch; binary i
 > [!NOTE]
 > The crate publishes as `rover-fetch` because `rover` on crates.io is held by an unrelated project. The installed binary is still `rover`. `cargo install` builds with the crate's default (basic) features; add `--features headless` to match the prebuilt and Homebrew binary.
 
-**Requirements:** Rust 1.96+ (edition 2024). See [`rover-fetch.com/docs/versioning`](https://rover-fetch.com/docs/versioning) for the stability and MSRV policy.
+**Requirements:** Rust 1.96+ (edition 2024). Rover is pre-1.0: minor releases may include breaking changes, and the minimum supported Rust version can rise in any release.
 
 ## The MCP tools
 
@@ -401,7 +401,6 @@ Full reference, exit codes, and NDJSON event shapes: [`rover-fetch.com/docs/cli`
 | [Backends](https://rover-fetch.com/docs/backends) | Summarisation backend reference: extractive (TextRank) and cloud providers. |
 | [Features](https://rover-fetch.com/docs/features) | Cargo feature flags: `headless`, `local-inference`, `injection-model` — setup, models, sizes. |
 | [Security](https://rover-fetch.com/docs/security) | SSRF levels, address floor, DNS-rebinding mitigation, secret redaction, prompt-injection guard, known limitations. |
-| [Versioning](https://rover-fetch.com/docs/versioning) | Stability and MSRV policy. |
 
 Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md) · Security policy: [`SECURITY.md`](SECURITY.md) · Changelog: [`CHANGELOG.md`](CHANGELOG.md).
 
