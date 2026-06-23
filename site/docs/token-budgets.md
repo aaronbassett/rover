@@ -11,11 +11,11 @@ Most of a page's token cost is fixed before its body reaches your model. Rover r
 
 Every Rover document carries its own cost. The frontmatter includes `estimated_tokens` and `tokenizer` at the top; see [Anatomy of a Rover document](/docs/output) for the full shape.
 
-To get a count without pulling the body, use the [`count_tokens`](/docs/mcp-tools) tool. It has two modes.
+To get a count without the body landing in your context, use the [`count_tokens`](/docs/mcp-tools) tool. It fetches and extracts the page server-side but returns only the count, never the body. It has two modes.
 
 `single` is the default and returns one count. Pass exactly one of `text` (an in-process string) or `url` (the extracted body of a page). Supplying both or neither is an error.
 
-`estimates` is URL-only and returns four counts in a single round-trip. It rejects `text`. You get `extracted_md`, `summary_short` (~250 target tokens), `summary_medium` (~750 target tokens), and `raw_html`. The `raw_html` count appears only when `[cache] store_raw_html = true` and a valid stored blob exists, and is omitted otherwise. Estimates always run on the offline extractive backend, so they cost no API calls. They need at least one extractive backend configured.
+`estimates` is URL-only and returns four counts in a single round-trip. It rejects `text`. You get `extracted_md`, `summary_short` (~250 target tokens), `summary_medium` (~750 target tokens), and `raw_html`. The `raw_html` count appears only when `cache.store_raw_html = true` and a valid stored blob exists, and is omitted otherwise. Estimates always run on the offline extractive backend, so they cost no API calls. They need at least one extractive backend configured.
 
 [`fetch`](/docs/mcp-tools) with `count_only = true` returns the token count of the extracted body and nothing else.
 
@@ -31,7 +31,7 @@ A count is only useful if it counts the way your model does. Rover ships five to
 | `llama3` | Llama 3 |
 | `qwen3` | Qwen3 |
 
-The default is `[tokenizer] default` in your config, set to `o200k`; see [Configuration](/docs/configuration). `fetch`, `summarize`, `count_tokens`, and `get_metadata` each accept a per-call `tokenizer` argument to override it. Tokenizers lazy-download on first use, so the first count with a new family pays a one-time fetch. Every count after that is local.
+The default is `tokenizer.default` in your config, set to `o200k`; see [Configuration](/docs/configuration). `fetch`, `summarize`, `count_tokens`, and `get_metadata` each accept a per-call `tokenizer` argument to override it. Tokenizers lazy-download on first use, so the first count with a new family pays a one-time fetch. Every count after that is local.
 
 ## Fit a page to a budget
 
@@ -54,10 +54,10 @@ The `--summarize` blob takes the same shape as the [`summarize`](/docs/summarizi
 
 ## A budgeting workflow
 
-Estimate, decide, then fetch, in that order. The estimate is cheap and offline. The fetch is the part that costs you.
+Estimate, decide, then pull the body — in that order. The network fetch happens at step 1, not step 3: estimating a URL makes Rover fetch and extract the page server-side, then cache it. What step 1 doesn't spend is the expensive part — no summariser API call, and no body in your context window. Step 3 reuses that cached copy, so the only new cost it adds is the context tokens for the body itself.
 
-1. Estimate. Run `count_tokens` in `estimates` mode against the URL. One call gives you the full extracted size and two summary sizes, with no API spend.
-2. Decide. If the page fits, fetch it as-is. If it's close, fetch with a `max_tokens` budget. If it's far over, summarise deliberately to the size you want.
-3. Fetch. Pull the page with the choice you made: full size, capped to a ceiling, or pre-summarised.
+1. Estimate. Run `count_tokens` in `estimates` mode against the URL. One call returns the full extracted size and two summary sizes, computed on the offline extractive backend — no API spend, nothing in your context.
+2. Decide. If the page fits, pull it as-is. If it's close, pull it with a `max_tokens` budget. If it's far over, summarise deliberately to the size you want.
+3. Pull the body. Call `fetch` with the choice you made: full size, capped to a ceiling, or pre-summarised. It serves the copy cached at step 1 — no second round-trip — and this is where the context tokens are spent.
 
-The numbers come from the same offline extractive backend whether you estimate, cap, or summarise, so the size you see at step 1 is the size you act on at step 3. A second fetch of a page you already estimated reuses the stored copy instead of paying the round-trip again; see [Caching & freshness](/docs/caching).
+The token counts come from the same offline extractive backend whether you estimate, cap, or summarise, so the size you see at step 1 is the size you act on at step 3. You pay the HTTP fetch once, at the estimate; the body costs you context tokens only when you pull it at step 3. See [Caching & freshness](/docs/caching).
