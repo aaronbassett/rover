@@ -5,21 +5,21 @@ title: Images & captioning
 
 # Images & captioning
 
-The `fetch` tool takes an `images` argument that controls how every `<img>` on the page is handled: keep it, strip it to alt text, download it, drop it, or caption it with a vision model. The default is `alt_text_only` — no downloads, no model calls.
+The `fetch` tool's `images` argument controls what happens to every `<img>` on the page. You can keep the tag, strip it to alt text, download the file, drop it, or caption it with a vision model. The default is `alt_text_only`: no downloads, no model calls.
 
 ## Image modes
 
-`images.mode` sets per-image handling. The five modes are distinct operations.
+`images.mode` sets per-image handling. Each of the five modes is a distinct operation.
 
 | `mode` | What happens to each image |
 | --- | --- |
 | `keep` | Preserves the image tag as `![alt](src)`, still pointing at the remote URL. |
-| `alt_text_only` | Replaces each image with its alt text — no tag, no link. The default. |
+| `alt_text_only` | Replaces each image with its alt text. No tag, no link. The default. |
 | `download` | Fetches each image, writes it to the output directory, and rewrites the Markdown to reference the local file. |
 | `drop` | Removes every image tag. Nothing replaces it. |
 | `caption` | Replaces each image with a model-generated caption. Requires a configured captioner. |
 
-`alt_text_only` is the default because alt text is the part of an image a model can act on, and it costs nothing. Most page images — logos, spacers, decorative borders — have no alt text worth keeping, so this mode drops them while preserving the few that describe something.
+`alt_text_only` is the default because alt text is the part of an image a model can act on, and it costs nothing to keep. Most page images are logos, spacers, and decorative borders with no alt text worth keeping, so this mode drops them and keeps the few that describe something.
 
 Set the mode inline on a `fetch` call:
 
@@ -30,11 +30,11 @@ Set the mode inline on a `fetch` call:
 }
 ```
 
-`caption` mode needs at least one configured captioner. The captioner comes from `[image_captions] default`; `images.captioner` overrides it for a single call. See [MCP tools](/docs/mcp-tools) for the full `fetch` schema.
+`caption` mode needs at least one configured captioner. The captioner comes from `[image_captions] default`, and `images.captioner` overrides it for a single call. The full `fetch` schema lives in [MCP tools](/docs/mcp-tools).
 
 ## Captioning
 
-Captioning is always compiled in — there is no Cargo feature flag to enable it. The only thing missing from a default install is a captioner pointed at a model. Captioning runs through cloud vision models via the `genai` crate, the same client the summarisation backends use.
+Captioning is always compiled in. There's no Cargo feature flag to enable it, and a default install is missing only one thing: a captioner pointed at a model. Captioning runs through cloud vision models via the `genai` crate, the same client the summarisation backends use.
 
 Declare a captioner in a `[captioners.<name>]` block. The shape mirrors a summariser backend:
 
@@ -49,11 +49,11 @@ api_key_env = "OPENAI_API_KEY"
 default = "openai"
 ```
 
-`provider` accepts `openai`, `anthropic`, `gemini`, `openai_compat`, and the rest of the cloud provider set. `api_key_env` names the environment variable holding the key — Rover reads the value at request time, so the key never lands in the config file. The `[image_captions] default` line picks which captioner runs when a call doesn't name one. See [Configuration](/docs/configuration) and [Summarisation backends](/docs/backends) for the shared backend mechanics.
+`provider` accepts `openai`, `anthropic`, `gemini`, `openai_compat`, and the rest of the cloud provider set. `api_key_env` names the environment variable holding the key. Rover reads the value at request time, so the key never lands in the config file. The `[image_captions] default` line picks which captioner runs when a call doesn't name one. For the shared backend mechanics, see [Configuration](/docs/configuration) and [Summarisation backends](/docs/backends).
 
 ## Local captioning
 
-There is no native local vision backend. For local captioning, point `provider = "openai_compat"` at a vision server you run yourself. Ollama and LM Studio both expose an OpenAI-compatible endpoint, and a vision model like `llama3.2-vision` answers image prompts over it. No API key required, no image data leaving the machine.
+There's no native local vision backend. To caption locally, point `provider = "openai_compat"` at a vision server you run yourself. Ollama and LM Studio both expose an OpenAI-compatible endpoint, and a vision model like `llama3.2-vision` answers image prompts over it. No API key, no image data leaving the machine.
 
 ```toml
 [captioners.local]
@@ -66,11 +66,11 @@ base_url = "http://localhost:11434"
 default = "local"
 ```
 
-`base_url` is required for `openai_compat` and gets normalised to end in `/v1/` — `http://localhost:11434` becomes `http://localhost:11434/v1/`, so supply the host and Rover fills in the rest. Leave `api_key_env` off entirely for a keyless local server.
+`base_url` is required for `openai_compat` and gets normalised to end in `/v1/`. Supply `http://localhost:11434` and Rover turns it into `http://localhost:11434/v1/`, so you give the host and it fills in the rest. Leave `api_key_env` off entirely for a keyless local server.
 
 ## Which images get captioned
 
-Captioning every image on a page is slow and expensive, so `[image_captions]` gates which images are worth the model call. The defaults screen out icons, spacers, and tracking pixels before any caption request is made.
+Captioning every image on a page is slow and expensive, so `[image_captions]` gates which images are worth a model call. The defaults screen out icons, spacers, and tracking pixels before any caption request goes out.
 
 | Key | Default | What it gates |
 | --- | --- | --- |
@@ -82,13 +82,13 @@ Captioning every image on a page is slow and expensive, so `[image_captions]` ga
 | `max_bytes` | `10 MiB` | Skip anything larger. |
 | `max_concurrent` | `2` | How many captions run in parallel. |
 
-The dimension gate is cheap by design. Rover reads width and height from the image file header, not by decoding the whole image — a 5 MB hero image that fails the size check costs almost nothing to reject. The `min_width` / `min_height` defaults of 200 px screen out the icon-and-spacer layer without a manual allowlist.
+The dimension gate is cheap by design. Rover reads width and height from the image file header instead of decoding the whole image, so a 5 MB hero image that fails the size check costs almost nothing to reject. The `min_width` and `min_height` defaults of 200 px screen out the icon-and-spacer layer with no manual allowlist.
 
-`max_per_page` caps spend on image-heavy pages: the first ten qualifying images get captioned, and everything after is dropped rather than queued. Tune these in `[image_captions]` or per call via the `images` argument. See [Configuration](/docs/configuration) for the full file layout.
+`max_per_page` caps spend on image-heavy pages. The first ten qualifying images get captioned, and everything after is dropped rather than queued. Tune these in `[image_captions]`, or override per call via the `images` argument. The full file layout is in [Configuration](/docs/configuration).
 
 ## Reading the results
 
-Every image the pipeline touches reports its own outcome. The `fetch` response carries an `images_processed` list — one entry per image — and the same data renders into the document's frontmatter. Each entry names the `src`, a `decision` of `captioned` or `skipped`, and a `reason` when the image was skipped:
+Every image the pipeline touches reports its own outcome. The `fetch` response carries an `images_processed` list, one entry per image, and the same data renders into the document's frontmatter. Each entry names the `src`, a `decision` of `captioned` or `skipped`, and a `reason` when the image was skipped:
 
 | `reason` | Why the image was skipped |
 | --- | --- |
@@ -97,10 +97,10 @@ Every image the pipeline touches reports its own outcome. The `fetch` response c
 | `per_page_budget` | Past the `max_per_page` cap for this page. |
 | `captioner_error` | The captioner was attempted and failed; the entry carries the error string. |
 
-Each entry carries the supporting detail behind its decision — the measured dimensions, the byte count, the caption text on a hit, or the error string on a failure. The frontmatter adds three running counters: `images_seen`, `images_downloaded`, and `images_failed`. A skipped image is not a failed one — `per_page_budget` and `below_min_dimensions` are the gates doing their job, not errors. See [Anatomy of a Rover document](/docs/output) for where these fields sit in the frontmatter envelope.
+Each entry also carries the detail behind its decision: the measured dimensions, the byte count, the caption text on a hit, or the error string on a failure. The frontmatter adds three running counters, `images_seen`, `images_downloaded`, and `images_failed`. A skipped image isn't a failed one. `per_page_budget` and `below_min_dimensions` are the gates doing their job, not errors. For where these fields sit in the frontmatter envelope, see [Anatomy of a Rover document](/docs/output).
 
 ## Security
 
-Every image download — and every dimension or byte probe the caption gate runs — is validated against the active SSRF policy, exactly like the page fetch itself. That check rejects a literal-IP target such as a cloud-metadata endpoint, whether the URL came from the page body or an `<img>` Rover was about to caption. A page that embeds `<img src="http://169.254.169.254/latest/meta-data/">` gets the same rejection the page URL would. See [Security & threat model](/docs/security/) for the SSRF levels and what each one blocks.
+Every image download is validated against the active SSRF policy, exactly like the page fetch itself, and so is every dimension or byte probe the caption gate runs. That check rejects a literal-IP target such as a cloud-metadata endpoint, whether the URL came from the page body or an `<img>` Rover was about to caption. A page that embeds `<img src="http://169.254.169.254/latest/meta-data/">` gets the same rejection the page URL would. For the SSRF levels and what each one blocks, see [Security & threat model](/docs/security/).
 
-Captioning does nothing until you configure a captioner. See [Optional features](/docs/features) for the rest of the passes that work the same way.
+Captioning does nothing until you configure a captioner. The rest of the passes that work the same way are covered in [Optional features](/docs/features).

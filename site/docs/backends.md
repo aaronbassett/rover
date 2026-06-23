@@ -5,29 +5,29 @@ title: Summarisation backends
 
 # Summarisation backends
 
-Declare backends as `[backends.<name>]` entries; pick the active one with `[summarization] default_backend`. The MCP `summarize` tool and the inline `summarize` sub-arg on `fetch` accept a per-call `backend` override, so a client can switch backends without touching the config. See [Summarising pages](/docs/summarizing) for how modes and styles flow through.
+Declare backends as `[backends.<name>]` entries and pick the active one with `[summarization] default_backend`. The MCP `summarize` tool and the inline `summarize` sub-arg on `fetch` accept a per-call `backend` override, so a client can switch backends without touching the config. See [Summarising pages](/docs/summarizing) for how modes and styles flow through.
 
-Two kinds are always available, no feature flag required:
+Two kinds need no feature flag and are always available:
 
-- **`extractive`** — offline, CPU-only, pure Rust. Selects sentences from the source using the TextRank-flavoured implementation in `summarizer::extractive`. No network, no API key, no setup.
-- **`cloud`** — calls a hosted LLM through the [`genai`](https://crates.io/crates/genai) crate. You bring the provider and the key.
+- `extractive` is offline, CPU-only, pure Rust. It selects sentences from the source using the TextRank-flavoured implementation in `summarizer::extractive`. No network, no API key, no setup.
+- `cloud` calls a hosted LLM through the [`genai`](https://crates.io/crates/genai) crate. You bring the provider and the key.
 
-A third kind, **`local`**, runs an LLM on your own machine and requires the `local-inference` Cargo feature; the stock binary doesn't have it. For `kind = "local"`, `model` is a HuggingFace repo id, not a provider model id, and `provider` is ignored. Setup, model sizes, and build flags live in [Optional features](/docs/features).
+A third kind, `local`, runs an LLM on your own machine and requires the `local-inference` Cargo feature, which the stock binary doesn't ship. For `kind = "local"`, `model` is a HuggingFace repo id rather than a provider model id, and `provider` is ignored. Setup, model sizes, and build flags live in [Optional features](/docs/features).
 
 ## The implicit default
 
 An empty `[backends]` map still gives you a working summariser. With nothing declared, Rover installs an implicit `default` extractive backend, so a fresh install summarises offline with zero configuration.
 
-Adding any explicit `[backends.*]` block disables that injection. From there the validation rules apply strictly:
+Adding any explicit `[backends.*]` block turns that injection off. The validation rules then apply strictly:
 
 1. `[summarization] default_backend` must name an existing `[backends.*]` entry.
-2. If `[summarization] fallback_to_extractive = true` — the default — at least one extractive backend must exist.
+2. If `[summarization] fallback_to_extractive = true` (the default), at least one extractive backend must exist.
 
-Declare one `cloud` backend and you've opted out of the fallback unless you re-add an extractive one. Most configs keep a `[backends.default]` extractive block for that reason.
+So declaring a single `cloud` backend opts you out of the fallback unless you re-add an extractive one. That's why most configs keep a `[backends.default]` extractive block around.
 
 ## Cloud providers
 
-The `provider` string picks which hosted API the `cloud` kind talks to. Each native provider resolves its key from a default environment variable; `openai_compat` covers anything that speaks the OpenAI Chat Completions shape.
+The `provider` string picks which hosted API the `cloud` kind talks to. Each native provider resolves its key from a default environment variable. `openai_compat` covers anything that speaks the OpenAI Chat Completions shape.
 
 | `provider` | Notes |
 | --- | --- |
@@ -41,7 +41,7 @@ The `provider` string picks which hosted API the `cloud` kind talks to. Each nat
 | `fireworks` | Fireworks AI. Default env: `FIREWORKS_API_KEY`. |
 | `openai_compat` | Any endpoint speaking the OpenAI Chat Completions shape. Requires `base_url`. |
 
-For native providers, leave `api_key_env` unset and `genai` resolves the default env var for you. For `openai_compat`, `api_key_env` is optional — Rover hands the client a `"noop"` key when none is configured, which is what most local servers want anyway.
+For native providers, leave `api_key_env` unset and `genai` resolves the default env var for you. For `openai_compat`, `api_key_env` is optional. Rover hands the client a `"noop"` key when none is configured, which is what most local servers want anyway.
 
 ## `[backends.<name>]` fields
 
@@ -57,7 +57,7 @@ The `model` split is the easy thing to get wrong. A `cloud` backend wants the st
 
 ### `openai_compat` base URL normalisation
 
-Rover normalises the `base_url` for `openai_compat` so it always ends in `/v1/`. This applies to both `[backends.*]` and `[captioners.*]`. The normalisation is idempotent — a URL that already ends `/v1/` is left alone.
+Rover normalises the `base_url` for `openai_compat` so it always ends in `/v1/`. This applies to both `[backends.*]` and `[captioners.*]`. The normalisation is idempotent: a URL that already ends `/v1/` is left alone.
 
 | Input | Normalised |
 | --- | --- |
@@ -72,7 +72,7 @@ Whitespace around the URL is trimmed before normalisation, so a stray pasted spa
 
 ## Fallback selection
 
-A failing cloud call doesn't have to fail the request. With `[summarization] fallback_to_extractive = true`, a cloud failure — auth, rate limit, model error, invalid request — retries against an extractive backend. The agent gets a summary, just a cheaper one.
+A failing cloud call doesn't have to fail the request. With `[summarization] fallback_to_extractive = true`, a cloud failure (auth, rate limit, model error, invalid request) retries against an extractive backend. The agent still gets a summary, just a cheaper one.
 
 The fallback backend is chosen deterministically:
 
@@ -179,13 +179,13 @@ default_backend = "fast"
 fallback_to_extractive = true
 ```
 
-Per-call override from an MCP client:
+A client overrides the backend per call:
 
 ```jsonc
 { "url": "https://...", "backend": "deep", "mode": "abstractive", "style": "executive" }
 ```
 
-The full set of config keys and where this file lives is documented in [Configuration](/docs/configuration).
+The full set of config keys, and where this file lives, is documented in [Configuration](/docs/configuration).
 
 ## Validating backend setup
 
@@ -196,4 +196,4 @@ rover doctor                # checks extractive synthesis + every cloud backend 
 rover doctor --format ndjson
 ```
 
-The `extractive_synthesis` and `backends_authenticate` checks run as part of the default battery. Build with `local-inference` and the battery adds the local-model checks, so a misconfigured `local` backend surfaces here rather than on the first agent call.
+The `extractive_synthesis` and `backends_authenticate` checks run as part of the default battery. Build with `local-inference` and the battery adds the local-model checks, so a misconfigured `local` backend surfaces here instead of on the first agent call.

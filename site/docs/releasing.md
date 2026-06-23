@@ -5,22 +5,22 @@ title: Releasing
 
 # Releasing
 
-This page is for maintainers cutting a Rover release. It documents how a version goes from a merge on `main` to a published crate, a GitHub Release, and a Homebrew formula. To run Rover, start with [Installation](/docs/install). For how version numbers and stability promises work, see [Versioning & stability](/docs/versioning).
+For maintainers cutting a Rover release. This page covers how a version travels from a merge on `main` to a published crate, a GitHub Release, and a Homebrew formula. To run Rover, see [Installation](/docs/install). For how version numbers and stability promises work, see [Versioning & stability](/docs/versioning).
 
-Two tools split the work cleanly:
+Two tools split the work:
 
-- **[release-plz](https://release-plz.dev)** owns versions, the changelog, the crates.io publish, and the git tag.
-- **[dist](https://opensource.axo.dev/cargo-dist/)** (cargo-dist) owns the cross-platform binaries, the GitHub Release, the `curl | sh` installer, and the Homebrew formula.
+- [release-plz](https://release-plz.dev) owns versions, the changelog, the crates.io publish, and the git tag.
+- [dist](https://opensource.axo.dev/cargo-dist/) (cargo-dist) owns the cross-platform binaries, the GitHub Release, the `curl | sh` installer, and the Homebrew formula.
 
-A release ships through three channels, all automated:
+Every release ships through three automated channels:
 
-1. **crates.io** — published as `rover-fetch`; the installed binary is still `rover`.
-2. **GitHub Releases** — prebuilt tarballs for 4 targets, SHA-256 checksums, and a shell installer.
-3. **Homebrew** — a single `rover` formula in `aaronbassett/homebrew-tap`, built `--features headless`, so it `depends_on "chromium"`.
+1. crates.io, published as `rover-fetch`; the installed binary is still `rover`.
+2. GitHub Releases, with prebuilt tarballs for 4 targets, SHA-256 checksums, and a shell installer.
+3. Homebrew, a single `rover` formula in `aaronbassett/homebrew-tap`, built `--features headless` so it `depends_on "chromium"`.
 
 ## How it fits together
 
-The handoff runs one direction: release-plz publishes and tags, the tag triggers dist, dist builds and uploads.
+The handoff runs one direction. release-plz publishes and tags, the tag triggers dist, dist builds and uploads.
 
 ```text
 push to main ──► release-plz opens a "Release PR" (version bump + changelog)
@@ -34,17 +34,17 @@ dist: build 4 targets (--features headless) ──► GitHub Release + shell ins
       publish the `rover` formula ───────────► aaronbassett/homebrew-tap
 ```
 
-release-plz creates the **tag**; dist creates the **GitHub Release**. They never both create the Release because `git_release_enable = false` in `release-plz.toml` turns off release-plz's side. Drop that line and the two tools fight over the same Release.
+release-plz creates the tag; dist creates the GitHub Release. Neither one creates the other's artifact because `git_release_enable = false` in `release-plz.toml` turns off release-plz's Release. Drop that line and both tools try to create the same Release.
 
 ## The distributed binary vs. `cargo install`
 
-The prebuilt binary and the one `cargo install` gives you are not the same build. The tarballs and the Homebrew formula ship `rover` built with `--features headless --no-default-features`. The crate's default feature set is empty (`default = []`), so `cargo install rover-fetch` builds the *basic* binary. To match the distributed binary from source, ask for the feature:
+The prebuilt binary and the one `cargo install` gives you are different builds. The tarballs and the Homebrew formula ship `rover` built with `--features headless --no-default-features`. The crate's default feature set is empty (`default = []`), so `cargo install rover-fetch` builds the basic binary. To match the distributed binary from source, ask for the feature:
 
 ```sh
 cargo install rover-fetch --features headless
 ```
 
-Other optional features (`local-inference`, and the rest) work the same way. The full list is in [Optional features](/docs/features).
+Other optional features (`local-inference` and the rest) work the same way. The full list is in [Optional features](/docs/features).
 
 ## Targets
 
@@ -57,11 +57,11 @@ dist builds four targets, each on a native runner where it can:
 | `x86_64-apple-darwin` | `macos` |
 | `aarch64-apple-darwin` | `macos` (native) |
 
-`x86_64-apple-darwin` is the exception — cross-compiled on the arm64 macOS runner. Windows is out of scope. Targets live in `[workspace.metadata.dist]` in `Cargo.toml`.
+`x86_64-apple-darwin` is the exception, cross-compiled on the arm64 macOS runner. Windows is out of scope. Targets live in `[workspace.metadata.dist]` in `Cargo.toml`.
 
 ## One-time setup
 
-Three repository secrets make the pipeline run (Settings → Secrets and variables → Actions):
+Three repository secrets make the pipeline run (Settings > Secrets and variables > Actions):
 
 | Secret | Used by | Purpose |
 | ------ | ------- | ------- |
@@ -69,21 +69,21 @@ Three repository secrets make the pipeline run (Settings → Secrets and variabl
 | `RELEASE_PLZ_TOKEN` | release-plz | push the tag and open the Release PR |
 | `HOMEBREW_TAP_TOKEN` | dist | push the formula to `aaronbassett/homebrew-tap` |
 
-`RELEASE_PLZ_TOKEN` has to be a PAT or App token, not the default `GITHUB_TOKEN` — a tag pushed with `GITHUB_TOKEN` won't trigger the dist workflow, so the release stalls after the publish. It needs `contents: write` plus `pull-requests: write` on this repo. `HOMEBREW_TAP_TOKEN` needs write access to the tap repo, which must already exist with a `Formula/` directory (it can start empty). dist creates the GitHub Release itself with the auto-provided `GITHUB_TOKEN`.
+`RELEASE_PLZ_TOKEN` has to be a PAT or App token, not the default `GITHUB_TOKEN`. A tag pushed with `GITHUB_TOKEN` won't trigger the dist workflow, so the release stalls after the publish. The token needs `contents: write` plus `pull-requests: write` on this repo. `HOMEBREW_TAP_TOKEN` needs write access to the tap repo, which must already exist with a `Formula/` directory (it can start empty). dist creates the GitHub Release itself with the auto-provided `GITHUB_TOKEN`.
 
 ## Cutting a release
 
-Normal releases are hands-off — three steps, two of them review:
+Normal releases are hands-off. Three steps, two of them review:
 
 1. Land changes on `main` using Conventional Commits (`feat:`, `fix:`, and the rest).
-2. release-plz opens or updates a **Release PR** that bumps the version and updates `CHANGELOG.md`. Review it.
-3. **Merge the Release PR.** release-plz publishes to crates.io and pushes `vX.Y.Z`; the tag triggers dist, which builds the binaries, creates the GitHub Release, and updates the Homebrew tap.
+2. release-plz opens or updates a Release PR that bumps the version and updates `CHANGELOG.md`. Review it.
+3. Merge the Release PR. release-plz publishes to crates.io and pushes `vX.Y.Z`; the tag triggers dist, which builds the binaries, creates the GitHub Release, and updates the Homebrew tap.
 
-A pre-release version (`X.Y.Z-rc.1`) publishes to crates.io and GitHub but does *not* update the Homebrew formula. dist skips prereleases on purpose, so the tap always points at the latest stable build.
+A pre-release version (`X.Y.Z-rc.1`) publishes to crates.io and GitHub but does not update the Homebrew formula. dist skips prereleases on purpose, so the tap always points at the latest stable build.
 
 ## Post-release validation
 
-Install the release four ways and run `rover --help` each time. If one path is broken, you want to know before a user does:
+Install the release four ways and run `rover --help` each time. If one path is broken, catch it before a user does:
 
 - `brew install aaronbassett/tap/rover` (macOS arm64 and x86_64).
 - Run the shell installer from the Release page.

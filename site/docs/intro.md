@@ -6,11 +6,11 @@ slug: /intro
 
 # Introduction
 
-Rover fetches a URL and returns clean, token-counted Markdown your agent can treat as untrusted data. It strips ads, nav, and chrome with [`readabilityrs`](https://crates.io/crates/readabilityrs), normalises to Markdown, counts the tokens, optionally summarises to a budget, and wraps the body so the model reads the page as data, not instructions. Rover is an MCP server and a CLI.
+Rover fetches a URL and hands back clean, token-counted Markdown your agent can treat as untrusted data. It strips ads, nav, and chrome with [`readabilityrs`](https://crates.io/crates/readabilityrs), normalises the page to Markdown, counts the tokens, optionally summarises to a budget, and wraps the body so the model reads the page as data, not instructions. Rover runs as an MCP server and a CLI.
 
 ## What you get back
 
-A Markdown document with YAML frontmatter — content hash, token count, language, extraction-quality score — behind a per-response nonce fence that marks the body as untrusted. The hash and token count make it reusable: cache it, re-read it on the next prompt, diff a later fetch against it.
+Every fetch returns a Markdown document with YAML frontmatter: content hash, token count, language, and an extraction-quality score. The body sits behind a per-response nonce fence that marks it as untrusted. The hash and token count are what make the result reusable. Cache it, re-read it on the next prompt, or diff a later fetch against it.
 
 ```yaml
 ---
@@ -27,7 +27,7 @@ extraction_quality: 0.98
 Rust is a multi-paradigm, general-purpose programming language…
 ```
 
-Field reference: [Anatomy of a Rover document](/docs/output).
+Every field is documented in [Anatomy of a Rover document](/docs/output).
 
 ## What it handles
 
@@ -50,9 +50,9 @@ It also does extractive and cloud summarisation, inline image captioning, and ba
 | `get_metadata` | Schema.org / Open Graph / Twitter Card metadata, no body. |
 | `count_tokens` | A URL's token cost across five tokenisers. |
 
-Full schemas: [MCP tools](/docs/mcp-tools).
+Full schemas live in [MCP tools](/docs/mcp-tools).
 
 ## Start here
 
-- [Installation](/docs/install) — Homebrew, prebuilt binary, or build from source.
-- [Quickstart](/docs/quickstart) — wire Rover in and make a first fetch.
+- [Installation](/docs/install) covers Homebrew, the prebuilt binary, and building from source.
+- [Quickstart](/docs/quickstart) wires Rover in and runs a first fetch.
