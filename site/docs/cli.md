@@ -141,7 +141,7 @@ Runs the diagnostic battery sequentially, cheap checks first. The always-run che
 1. `sqlite_open`: cache database opens cleanly.
 2. `sqlite_wal_mode`: WAL journal mode active.
 3. `sqlite_schema_version`: schema version matches the binary.
-4. `output_dir_writable`: `[output] dir` (or its default) is writable.
+4. `output_dir_writable`: `output.dir` (or its default) is writable.
 5. `network_reachable`: `HEAD https://example.com` succeeds.
 6. `extractive_synthesis`: the extractive backend produces output on a fixed input.
 7. `backends_authenticate`: every cloud `[backends.*]` block authenticates.

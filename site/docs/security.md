@@ -9,13 +9,13 @@ Rover treats the web as hostile. Outbound requests are policed before a byte lea
 
 ## SSRF protection
 
-`[ssrf] level` governs the policy. Every outbound URL is checked twice: scheme and host at parse time (`validate_url`), and every resolved address before the connection opens (`validate_addresses`). The second check catches the address that only appears once DNS resolves.
+`ssrf.level` governs the policy. Every outbound URL is checked twice: scheme and host at parse time (`validate_url`), and every resolved address before the connection opens (`validate_addresses`). The second check catches the address that only appears once DNS resolves.
 
 | Level | Allows |
 | --- | --- |
 | `strict` (default) | Public IPs only; `http` / `https` only. |
 | `loopback` | Strict + `127.0.0.0/8` + `::1`. |
-| `project` | Loopback + `file://` URLs descendant of `[ssrf] project_root` after symlink resolution. |
+| `project` | Loopback + `file://` URLs descendant of `ssrf.project_root` after symlink resolution. |
 | `lan` | Project + RFC1918 + IPv6 ULAs (`fc00::/7`). |
 | `none` | Trust the user. The always-floor (below) is still enforced. |
 
@@ -51,7 +51,7 @@ The image-fetch helpers in `extractor::images` (`download_image_bytes`, `partial
 
 ## `file://` symlink handling
 
-A symlink is a redirect the filesystem honors, so `file://` access is resolved before it's trusted. At `[ssrf] level` `project`, `lan`, or `none`, `file://` URLs are allowed. The path is canonicalized via `std::fs::canonicalize`, which resolves every symlink in the path, then checked against the canonicalized `project_root`. A symlink whose target lives outside `project_root` is rejected after resolution with `SsrfError::FileOutsideProjectRoot`. URLs at `strict` and `loopback` are rejected with `SsrfError::FileSchemeNotAllowed` without touching the filesystem.
+A symlink is a redirect the filesystem honors, so `file://` access is resolved before it's trusted. At `ssrf.level` `project`, `lan`, or `none`, `file://` URLs are allowed. The path is canonicalized via `std::fs::canonicalize`, which resolves every symlink in the path, then checked against the canonicalized `project_root`. A symlink whose target lives outside `project_root` is rejected after resolution with `SsrfError::FileOutsideProjectRoot`. URLs at `strict` and `loopback` are rejected with `SsrfError::FileSchemeNotAllowed` without touching the filesystem.
 
 ## Secret redaction
 
@@ -61,7 +61,7 @@ URL query-string values whose key name contains any of these substrings, case-in
 
 HTTP `Authorization`-style credentials, in two shapes. A field literally named `authorization` (case-insensitive) has its entire value replaced with `<redacted>`. Any value embedding a `Bearer <token>` or `Basic <token>` shape, regardless of field name, has the credential portion replaced with `<redacted>`. The second shape catches debug-printed `HeaderMap`s and similar.
 
-Two things are deliberately not redacted. Request and response bodies in HAR files (`[debug] har_path`) stay intact: HAR is opt-in debug instrumentation for inspecting raw traffic, so redacting the bytes you enabled HAR to read would defeat the point. Protect the HAR file with filesystem permissions and treat it as sensitive. Environment variables also stay out of logs by construction: the `api_key_env` config field is a pointer, and the resolved value is held in memory and never logged.
+Two things are deliberately not redacted. Request and response bodies in HAR files (`debug.har_path`) stay intact: HAR is opt-in debug instrumentation for inspecting raw traffic, so redacting the bytes you enabled HAR to read would defeat the point. Protect the HAR file with filesystem permissions and treat it as sensitive. Environment variables also stay out of logs by construction: the `api_key_env` config field is a pointer, and the resolved value is held in memory and never logged.
 
 ## Prompt-injection guard
 
@@ -77,9 +77,9 @@ The cache doesn't validate authenticity. A fresh entry is served until its TTL e
 
 Operators handling adversarial upstreams have three levers:
 
-1. Lower `[cache] default_ttl` (and possibly `max_ttl`) to bound the staleness window.
+1. Lower `cache.default_ttl` (and possibly `max_ttl`) to bound the staleness window.
 2. Use `force_refresh` on the MCP tool calls or `--force-refresh` on the CLI for traffic that must hit origin.
-3. Avoid `[cache] override_no_store` for any host that legitimately sends `no-store`.
+3. Avoid `cache.override_no_store` for any host that legitimately sends `no-store`.
 
 See [Caching & freshness](/docs/caching) for how TTLs are derived and revalidated.
 
@@ -89,17 +89,17 @@ The rate limiter and concurrency semaphores live in process memory, not SQLite. 
 
 ## Robots.txt fail-closed cache window
 
-When a robots.txt fetch returns 5xx or times out, Rover fails closed. It caches a `disallow_all` sentinel for `[robots] failure_ttl` (default `5m`), and during that window all fetches to that host are refused with `robots_fetch_failed` / `robots_disallowed`. The short TTL means recovered servers are picked up quickly. For hosts whose robots endpoint is chronically broken, raise `failure_ttl` or list the host in `[robots] ignore_domains`.
+When a robots.txt fetch returns 5xx or times out, Rover fails closed. It caches a `disallow_all` sentinel for `robots.failure_ttl` (default `5m`), and during that window all fetches to that host are refused with `robots_fetch_failed` / `robots_disallowed`. The short TTL means recovered servers are picked up quickly. For hosts whose robots endpoint is chronically broken, raise `failure_ttl` or list the host in `robots.ignore_domains`.
 
 ## Headless asset interception and SSRF
 
-A rendered page issues sub-requests Rover never wrote, and every one of them runs through the same SSRF validator the top-level fetch uses. With the `headless` feature enabled and a fetch running in `headless: { mode: "on" }` (or triggered via `mode: "auto"`), the browser fetches CSS, fonts, images, and whatever else the page asks for. Each intercepted sub-request URL is checked against the configured `[ssrf] level` before it's allowed out.
+A rendered page issues sub-requests Rover never wrote, and every one of them runs through the same SSRF validator the top-level fetch uses. With the `headless` feature enabled and a fetch running in `headless: { mode: "on" }` (or triggered via `mode: "auto"`), the browser fetches CSS, fonts, images, and whatever else the page asks for. Each intercepted sub-request URL is checked against the configured `ssrf.level` before it's allowed out.
 
 Sub-requests that would violate the policy are intercepted via the CDP Fetch domain and fulfilled with an empty `200` response, never aborted. Aborting causes many SPAs to error out on missing CSS, font, or image references; an empty `200` keeps the page rendering.
 
 The HAR recorder records only the top-level navigation. Sub-resources (CSS, JS, images, fonts, beacons) are not in the HAR file. That keeps HAR files navigable and stops sub-resources from masking what Rover actually returned.
 
-A malicious page can't use Rover's headless renderer to scan internal networks. Embedded `<iframe>`, `<img>`, or `fetch()` calls can't reach destinations the SSRF policy forbids. The always-floor address set (link-local, multicast, `0.0.0.0`, broadcast) plus the `block_third_party = true` default cover the common attack paths. Operators who set `[ssrf] level = "none"` opt out of these checks, and the WARN line at startup documents that choice. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when the renderer runs at all.
+A malicious page can't use Rover's headless renderer to scan internal networks. Embedded `<iframe>`, `<img>`, or `fetch()` calls can't reach destinations the SSRF policy forbids. The always-floor address set (link-local, multicast, `0.0.0.0`, broadcast) plus the `block_third_party = true` default cover the common attack paths. Operators who set `ssrf.level = "none"` opt out of these checks, and the WARN line at startup documents that choice. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when the renderer runs at all.
 
 ## Local model files
 

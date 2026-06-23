@@ -30,7 +30,7 @@ Set the mode inline on a `fetch` call:
 }
 ```
 
-`caption` mode needs at least one configured captioner. The captioner comes from `[image_captions] default`, and `images.captioner` overrides it for a single call. The full `fetch` schema lives in [MCP tools](/docs/mcp-tools).
+`caption` mode needs at least one configured captioner. The captioner comes from `image_captions.default`, and `images.captioner` overrides it for a single call. The full `fetch` schema lives in [MCP tools](/docs/mcp-tools).
 
 ## Captioning
 
@@ -49,7 +49,7 @@ api_key_env = "OPENAI_API_KEY"
 default = "openai"
 ```
 
-`provider` accepts `openai`, `anthropic`, `gemini`, `openai_compat`, and the rest of the cloud provider set. `api_key_env` names the environment variable holding the key. Rover reads the value at request time, so the key never lands in the config file. The `[image_captions] default` line picks which captioner runs when a call doesn't name one. For the shared backend mechanics, see [Configuration](/docs/configuration) and [Summarisation backends](/docs/backends).
+`provider` accepts `openai`, `anthropic`, `gemini`, `openai_compat`, and the rest of the cloud provider set. `api_key_env` names the environment variable holding the key. Rover reads the value at request time, so the key never lands in the config file. The `image_captions.default` line picks which captioner runs when a call doesn't name one. For the shared backend mechanics, see [Configuration](/docs/configuration) and [Summarisation backends](/docs/backends).
 
 ## Local captioning
 

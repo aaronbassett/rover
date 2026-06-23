@@ -34,7 +34,7 @@ The `content` string is a trusted preamble followed by a nonce-fenced body. The 
 
 The second line is a one-line detection summary. It appears only when something was flagged.
 
-The response level governs what happens to flagged spans. It defaults to `[prompt_injection] level` (`moderate`) and can be overridden per call via the `security` arg where granted.
+The response level governs what happens to flagged spans. It defaults to `prompt_injection.level` (`moderate`) and can be overridden per call via the `security` arg where granted.
 
 | Level | Output behaviour |
 | --- | --- |
@@ -72,7 +72,7 @@ Args:
 | `url` | string | required | URL to fetch. |
 | `force_refresh` | bool | `false` | Bypass cache for this request. |
 | `count_only` | bool | `false` | Skip extraction; return only the token count of the (cached or fresh) extracted body. |
-| `tokenizer` | string | from `[tokenizer] default` | `o200k` / `cl100k` / `claude`. |
+| `tokenizer` | string | from `tokenizer.default` | `o200k` / `cl100k` / `claude`. |
 | `max_tokens` | integer | unset | Auto-summarize when the extracted body exceeds this. Must be `> 0`. Single-shot: if the summary is still over budget, returns `max_tokens_exceeded`. |
 | `tables` | object | `{mode:"embed"}` | Per-table mode. See below. |
 | `images` | object | `{mode:"alt_text_only"}` | Per-image mode. See [Image modes](#image-modes) below. |
@@ -108,11 +108,11 @@ Each image in the page renders into the Markdown according to its mode. Sizing l
 
 - `keep` preserves all image tags; images appear as `![alt](src)` in the Markdown.
 - `alt_text_only` replaces each image with its alt text only (no image tag).
-- `download` fetches each image and writes to `[output] dir`; Markdown contains local file references.
+- `download` fetches each image and writes to `output.dir`; Markdown contains local file references.
 - `drop` removes all image tags.
 - `caption` replaces each image with a generated caption.
   Requires at least one configured captioner (`[captioners.<name>]`). The
-  default captioner comes from `[image_captions] default`; override per-call
+  default captioner comes from `image_captions.default`; override per-call
   via `images.captioner: "<name>"`.
 
 ### Headless rendering
@@ -129,12 +129,12 @@ Headless rendering catches pages whose content only exists after JavaScript runs
 }
 ```
 
-- `mode` (default: derived from `[headless] auto_detect_spa`)
+- `mode` (default: derived from `headless.auto_detect_spa`)
   - `off` disables headless for this call (reqwest path only)
   - `on` renders this URL via headless unconditionally
   - `auto` tries reqwest first, then re-renders via headless if SPA heuristics fire
-- `wait` (default: `[headless] default_wait`)
-- `timeout_secs` (default: `[headless] timeout`)
+- `wait` (default: `headless.default_wait`)
+- `timeout_secs` (default: `headless.timeout`)
 
 Without the `headless` feature:
 
@@ -256,12 +256,12 @@ Args:
 | --- | --- | --- | --- |
 | `url` | string | required | URL to summarize. |
 | `target_tokens` | integer | unset | Target token count for the summary. Hint, not a hard cap. |
-| `mode` | string | from `[summarization] default_mode` (`abstractive`) | `extractive`, `abstractive`, or `headlines`. |
+| `mode` | string | from `summarization.default_mode` (`abstractive`) | `extractive`, `abstractive`, or `headlines`. |
 | `focus` | string | unset | Free-text focus prompt threaded into the summarizer prompt. |
 | `preserve` | `array<string>` | `[]` | Sections to keep verbatim. Subset of `code`, `tables`, `quotes`, `lists`. |
-| `style` | string | from `[summarization] default_style` (`prose`) | `bullet`, `prose`, or `executive`. |
-| `backend` | string | from `[summarization] default_backend` | Named `[backends.<name>]` to use. |
-| `tokenizer` | string | from `[tokenizer] default` | Family used to count the resulting summary. |
+| `style` | string | from `summarization.default_style` (`prose`) | `bullet`, `prose`, or `executive`. |
+| `backend` | string | from `summarization.default_backend` | Named `[backends.<name>]` to use. |
+| `tokenizer` | string | from `tokenizer.default` | Family used to count the resulting summary. |
 | `security` | object | unset | Prompt-injection guard overrides: `disable_wrap?`, `disable_patterns?`, `disable_model?` (bools), `level?` (string). Each honored **only if** granted in `[prompt_injection.agent_overrides]`; otherwise ignored and recorded in `metadata.prompt_injection.overrides_attempted`. |
 
 Response:
@@ -311,7 +311,7 @@ Args:
 | --- | --- | --- | --- |
 | `url` | string | required | URL to fetch. |
 | `force_refresh` | bool | `false` | Bypass cache. |
-| `tokenizer` | string | from `[tokenizer] default` | Tokenizer family (passed through to ensure the registry is loaded; not surfaced in the response). |
+| `tokenizer` | string | from `tokenizer.default` | Tokenizer family (passed through to ensure the registry is loaded; not surfaced in the response). |
 | `security` | object | unset | Prompt-injection guard overrides: `disable_wrap?`, `disable_patterns?`, `disable_model?` (bools), `level?` (string). Each honored **only if** granted in `[prompt_injection.agent_overrides]`; otherwise ignored and recorded in `prompt_injection.overrides_attempted`. |
 
 Response:
@@ -360,7 +360,7 @@ Args:
 | --- | --- | --- | --- |
 | `text` | string | unset | In-process tokenization. Mutually exclusive with `url`. |
 | `url` | string | unset | Tokenize the extracted body of `url`. Mutually exclusive with `text`. |
-| `tokenizer` | string | from `[tokenizer] default` | Tokenizer family. |
+| `tokenizer` | string | from `tokenizer.default` | Tokenizer family. |
 | `mode` | string | `"single"` | `single` (one count) or `estimates` (four counts, URL-only). |
 
 ### `mode = "single"` (default)
@@ -382,7 +382,7 @@ Requires exactly one of `text` or `url`.
 
 ### `mode = "estimates"` (URL-only)
 
-Rejects `text`. Returns four counts in one round-trip: the cached raw HTML (when `[cache] store_raw_html = true` and the row carries a valid zstd blob, `null` otherwise), the extracted Markdown, and two extractive-summary estimates at `~250` and `~750` target tokens. Estimates always run on the extractive backend, never cloud. Without at least one extractive backend, the call returns `summarizer_no_extractive_backend_for_fallback`.
+Rejects `text`. Returns four counts in one round-trip: the cached raw HTML (when `cache.store_raw_html = true` and the row carries a valid zstd blob, `null` otherwise), the extracted Markdown, and two extractive-summary estimates at `~250` and `~750` target tokens. Estimates always run on the extractive backend, never cloud. Without at least one extractive backend, the call returns `summarizer_no_extractive_backend_for_fallback`.
 
 ```jsonc
 {

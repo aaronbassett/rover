@@ -5,7 +5,7 @@ title: Summarisation backends
 
 # Summarisation backends
 
-Declare backends as `[backends.<name>]` entries and pick the active one with `[summarization] default_backend`. The MCP `summarize` tool and the inline `summarize` sub-arg on `fetch` accept a per-call `backend` override, so a client can switch backends without touching the config. See [Summarising pages](/docs/summarizing) for how modes and styles flow through.
+Declare backends as `[backends.<name>]` entries and pick the active one with `summarization.default_backend`. The MCP `summarize` tool and the inline `summarize` sub-arg on `fetch` accept a per-call `backend` override, so a client can switch backends without touching the config. See [Summarising pages](/docs/summarizing) for how modes and styles flow through.
 
 Two kinds need no feature flag and are always available:
 
@@ -20,8 +20,8 @@ An empty `[backends]` map still gives you a working summariser. With nothing dec
 
 Adding any explicit `[backends.*]` block turns that injection off. The validation rules then apply strictly:
 
-1. `[summarization] default_backend` must name an existing `[backends.*]` entry.
-2. If `[summarization] fallback_to_extractive = true` (the default), at least one extractive backend must exist.
+1. `summarization.default_backend` must name an existing `[backends.*]` entry.
+2. If `summarization.fallback_to_extractive = true` (the default), at least one extractive backend must exist.
 
 So declaring a single `cloud` backend opts you out of the fallback unless you re-add an extractive one. That's why most configs keep a `[backends.default]` extractive block around.
 
@@ -72,7 +72,7 @@ Whitespace around the URL is trimmed before normalisation, so a stray pasted spa
 
 ## Fallback selection
 
-A failing cloud call doesn't have to fail the request. With `[summarization] fallback_to_extractive = true`, a cloud failure (auth, rate limit, model error, invalid request) retries against an extractive backend. The agent still gets a summary, just a cheaper one.
+A failing cloud call doesn't have to fail the request. With `summarization.fallback_to_extractive = true`, a cloud failure (auth, rate limit, model error, invalid request) retries against an extractive backend. The agent still gets a summary, just a cheaper one.
 
 The fallback backend is chosen deterministically:
 
