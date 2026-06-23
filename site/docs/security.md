@@ -65,11 +65,11 @@ Two things are deliberately not redacted. Request and response bodies in HAR fil
 
 ## Prompt-injection guard
 
-Fetched web content is untrusted data, not instructions, and Rover enforces that line before any page reaches your agent. Every document a content-returning tool hands back is framed by a trusted preamble and sealed inside a per-response nonce delimiter that tells the model the enclosed text is third-party content to read, never obey. The wrapper never depends on catching anything.
+Fetched web content is untrusted data, not instructions, and Rover enforces that line before any page reaches your agent. Every document a content-returning tool hands back is framed by a trusted preamble and sealed inside a per-response nonce delimiter that tells the model the enclosed text is third-party content to treat as data, not instructions. The wrapper never depends on catching anything.
 
 For the full layering (the literal and regex pattern detectors, the optional model classifier, the response levels, and the allowlist and override surface), see [Trust & prompt injection](/docs/trust). For the shape of the wrapped `content` string and the per-tool telemetry, see [MCP tools](/docs/mcp-tools).
 
-The limitation is in the detection, not the wrapper. Pattern matching and the optional model classifier enumerate known techniques and score text. Both are best-effort, and a novel attack can slip past them. The nonce is generated fresh per response and never shown to the page, so a malicious document can't predict the tag or forge its own closing fence, and any literal copy of the tag in the body is stripped before the real wrapper goes on. Detection is a bonus. The fence holds by construction.
+The limitation is in the detection, not the wrapper. Pattern matching and the optional model classifier enumerate known techniques and score text. Both are best-effort, and a novel attack can slip past them. The nonce is generated fresh per response and never shown to the page, so a malicious document can't predict the tag or forge its own closing fence, and any literal copy of the tag in the body is stripped before the real wrapper goes on. The fence holds by construction; detection only adds to it.
 
 ## Cache poisoning
 

@@ -26,7 +26,7 @@ An origin can request a longer life through its own `Cache-Control`, up to `max_
 
 ## Why the default TTL is short
 
-Without an explicit `max-age`, a cached page that's been poisoned or quietly changed has a small blast radius before the next revalidation. Set the default to an hour and a bad cache write rides along for an hour. Fifteen minutes keeps the window narrow. Origins that want longer caching say so in their headers, and they get it, clamped to `max_ttl`. Cache poisoning is covered on the [Security & threat model](/docs/security) page.
+Without an explicit `max-age`, a cached page that's been poisoned or changed has a small blast radius before the next revalidation. Set the default to an hour and a bad cache write rides along for an hour. Fifteen minutes keeps the window narrow. Origins that want longer caching say so in their headers, and they get it, clamped to `max_ttl`. Cache poisoning is covered on the [Security & threat model](/docs/security) page.
 
 `no-store` is honoured, so the response isn't cached. There are two escape hatches for origins you control. `override_no_store = true` flips it globally; `override_no_store_domains` flips it per host.
 
@@ -42,7 +42,7 @@ An entry that expired recently is served immediately while a fresh copy is fetch
 
 Past that window, the entry is a miss and gets refetched synchronously. The stale fast-path only ever serves content that expired in the last few minutes.
 
-The background path needs the MCP server's scheduler. The one-shot CLI (`rover fetch`) has no in-process scheduler, so it can't queue a background `revalidate`. `rover fetch` **always** revalidates synchronously, regardless of the window. That's the thing to know if you compare `cache_status` between `rover fetch` and a long-running `rover mcp`.
+The background path needs the MCP server's scheduler. The one-shot CLI (`rover fetch`) has no in-process scheduler, so it can't queue a background `revalidate`. `rover fetch` **always** revalidates synchronously, regardless of the window. So `cache_status` differs between `rover fetch` and a long-running `rover mcp` for the same just-expired entry.
 
 Every fetch reports its `cache_status`, one of three values:
 

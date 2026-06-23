@@ -101,7 +101,7 @@ The CLI (`rover fetch`) always revalidates synchronously, regardless of the wind
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `default` | enum | `"o200k"` | Default tokenizer family for token counting. One of `o200k` (GPT-4o, the default), `cl100k` (GPT-4), `claude`, `llama3`, `qwen3`. Pick the family that matches the model you actually pay for. Token counts differ between families, and an estimate against the wrong tokenizer is an estimate against the wrong budget. |
+| `default` | enum | `"o200k"` | Default tokenizer family for token counting. One of `o200k` (GPT-4o, the default), `cl100k` (GPT-4), `claude`, `llama3`, `qwen3`. Pick the family that matches the model you actually pay for. Token counts differ between families, so the wrong tokenizer estimates the wrong budget. |
 
 ## `[mcp]`
 

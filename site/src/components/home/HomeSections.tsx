@@ -21,7 +21,7 @@ const SECURITY: [string, ReactNode][] = [
   ['Prompt-injection guard', <>A per-response nonce wrapper holds by construction, backed by a pattern detector and an optional ONNX classifier for the phrasings rules miss.</>],
   ['SSRF protection', <>Five policy levels plus a dial-time re-check that re-validates every resolved address before the socket opens, closing the DNS-rebinding window.</>],
   ['Secret redaction', <>URL secrets and <code>Authorization</code> credentials are scrubbed before any event reaches a log.</>],
-  ['Short cache TTL', <>The 15-minute default keeps the blast radius small when content is poisoned or quietly changes.</>],
+  ['Short cache TTL', <>The 15-minute default keeps the blast radius small when content is poisoned or changes underneath you.</>],
 ];
 
 const FRONTMATTER = `---
@@ -55,7 +55,7 @@ export default function HomeSections(): ReactNode {
           <p className={styles.getbackText}>
             Rover returns a Markdown document with YAML frontmatter: the content hash, the token
             count, the extraction-quality score. Cache it, re-read it, diff it against the next
-            fetch — it stays stable instead of dissolving into a fresh model answer every prompt.
+            fetch. It stays the same document instead of a fresh model answer every prompt.
           </p>
           <figure className={styles.sampleFigure}>
             <pre className={styles.sample}><code>{FRONTMATTER}</code></pre>

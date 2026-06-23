@@ -48,7 +48,7 @@ The MCP `fetch` tool takes a `headless` argument that decides per call whether t
 
 The default mode comes from the `headless.auto_detect_spa` config key: `auto` when `true` (the default), `off` when `false`. Use `wait` to pick a render-complete condition (covered below) and `timeout_secs` to bound the render. See [MCP tools](/docs/mcp-tools) for the full `fetch` argument shape.
 
-Behaviour without the feature is deliberate. When the `headless` feature isn't compiled in, `mode: "off"` and an absent argument are no-ops, since the HTTP path is all you get anyway. `mode: "on"` returns the `headless_feature_not_compiled` error: you asked for rendering the binary can't do, and a silent fallback would hide that. `mode: "auto"` keeps the HTTP result with no error, because auto only ever promised to render if it could.
+Without the feature compiled in, each mode behaves as follows. `mode: "off"` and an absent argument are no-ops, since the HTTP path is all you get anyway. `mode: "on"` returns the `headless_feature_not_compiled` error: you asked for rendering the binary can't do, and a silent fallback would hide that. `mode: "auto"` keeps the HTTP result with no error, because auto only ever promised to render if it could.
 
 ## Choosing a wait condition
 
