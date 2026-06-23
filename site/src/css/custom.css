@@ -58,3 +58,9 @@ h1,h2,h3{letter-spacing:-.01em}
 .rover-kicker{font-family:var(--rover-font-ui);font-size:.75rem;letter-spacing:.2em;text-transform:uppercase;color:var(--rover-brass);font-weight:500}
 .rover-dek{font-family:var(--rover-font-body);font-style:italic;color:var(--rover-ink);opacity:.85}
 .rover-rule{height:1px;background:var(--rover-rule);border:0}
+/* Inline code: force the intended cream-on-ink chip in both themes. Infima
+   otherwise lets inline code inherit the surrounding text colour, which is
+   dark-on-dark (unreadable) against the dark code background in light mode.
+   `:not(pre) > code` scopes this to inline code and leaves Prism code blocks
+   (which live inside <pre>) to the syntax theme. */
+:not(pre) > code{color:var(--ifm-code-color);background-color:var(--ifm-code-background)}
