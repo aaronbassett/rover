@@ -5,7 +5,7 @@ title: CLI
 
 # Rover CLI
 
-**One binary, two jobs.** `rover` runs as a long-lived MCP server over stdio, or as a one-shot CLI that fetches a URL and prints clean Markdown to stdout. Every other subcommand exists to inspect or maintain what those two produce — the cache, background tasks, config, and local models.
+`rover` runs as an MCP server over stdio, or as a one-shot CLI that fetches a URL and prints clean Markdown to stdout. The other subcommands inspect or maintain what those two produce: the cache, background tasks, config, and local models.
 
 Synopsis:
 
@@ -19,7 +19,7 @@ Global flags:
 | --- | --- |
 | `--config <path>` | Load this TOML file for the invocation. |
 
-**`--config` is explicit, not implicit.** Pass `--config <path>` and Rover loads that file for this run. Leave it off and the `fetch`, `mcp`, `cache`, `task`, `batch`, and `doctor` subcommands run on built-in defaults — no file is read, no default path is searched. The single exception is `rover config show` / `rover config set`, which resolve a default path when `--config` is absent: `ROVER_CONFIG`, then the platform config dir (`~/.config/rover/config.toml` on Linux/macOS), then `./rover.toml`. So to apply a config to a running server, wire it explicitly:
+Pass `--config <path>` and Rover loads that file for the run. Leave it off and the `fetch`, `mcp`, `cache`, `task`, `batch`, and `doctor` subcommands run on built-in defaults — no file is read, no default path is searched. The exception is `rover config show` / `rover config set`, which resolve a default path when `--config` is absent: `ROVER_CONFIG`, then the platform config dir (`~/.config/rover/config.toml` on Linux/macOS), then `./rover.toml`. To apply a config to a running server, wire it explicitly:
 
 ```sh
 rover mcp --config ~/.config/rover/config.toml
@@ -51,6 +51,7 @@ rover fetch <url> [--force-refresh] [--ignore-robots]
 
 Fetches `<url>` through the cache-aware orchestrator (`fetch_with_cache`), runs the extraction pipeline, and prints a frontmatter-wrapped Markdown document to stdout.
 
+
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--force-refresh` | bool | off | Bypass the cache and re-fetch from origin. |
@@ -62,7 +63,7 @@ Fetches `<url>` through the cache-aware orchestrator (`fetch_with_cache`), runs 
 | `--max-tokens <N>` | usize | unset | Token budget. Auto-summarises the extracted body toward `N` when it runs over. |
 | `--summarize <JSON>` | string | unset | Explicit summarise blob, applied before `--max-tokens`. |
 
-**`--max-tokens` is a target, not a ceiling.** When the extracted body exceeds `N`, Rover auto-summarises it toward the budget through the configured `[summarization]` backend — the offline extractive backend by default. The result is best-effort: the extractive backend budgets by summing per-sentence token counts, so the joined summary can land a few tokens over `N`. It emits the summary anyway; it does not error. That is the difference from the MCP `fetch` tool's `max_tokens`, which is a single-shot hard ceiling that can return `max_tokens_exceeded`. See [Managing token budgets](/docs/token-budgets).
+**`--max-tokens` is a target, not a ceiling.** When the extracted body exceeds `N`, Rover auto-summarises it toward the budget through the configured `[summarization]` backend — the offline extractive backend by default. The result is best-effort: the extractive backend budgets by summing per-sentence token counts, so the joined summary can land a few tokens over `N`. It emits the summary anyway; it does not error. That is the difference from the MCP `fetch` tool's `max_tokens`, a single-shot hard ceiling that can return `max_tokens_exceeded`. See [Managing token budgets](/docs/token-budgets).
 
 **`--summarize` runs first.** Pass a JSON blob with the same shape as the MCP `summarize` tool's args minus `url` — for example:
 
@@ -71,7 +72,7 @@ rover fetch https://example.com/long-report \
   --summarize '{"mode":"abstractive","target_tokens":500}'
 ```
 
-The body is replaced with the summary, then `--max-tokens` applies on top if you also set it. Both flags run the configured `[summarization]` backend. See [Summarising pages](/docs/summarizing).
+The body is replaced with the summary, then `--max-tokens` applies on top if set. Both flags run the configured `[summarization]` backend. See [Summarising pages](/docs/summarizing).
 
 ## `rover mcp`
 
@@ -81,7 +82,7 @@ rover mcp [--ignore-robots]
           [--global-concurrency <N>] [--max-retries <N>]
 ```
 
-Starts the MCP server over stdio. Long-running. Same `--rate-limit-*` and `--ignore-robots` overrides as `fetch`, applied for the lifetime of the server rather than a single request. The server reads no config unless you pass `--config` — see the global flags above and [MCP tools](/docs/mcp-tools) for the tool surface it exposes.
+Starts the MCP server over stdio. Same `--rate-limit-*` and `--ignore-robots` overrides as `fetch`, applied for the lifetime of the server rather than a single request. Reads no config unless you pass `--config`. See [MCP tools](/docs/mcp-tools) for the tool surface it exposes.
 
 ## `rover cache`
 
@@ -101,7 +102,7 @@ Operations against the cache database. See [Caching & freshness](/docs/caching) 
 | `purge <pattern>` | Delete cache entries whose URL matches the glob (`*`, `?`). The pattern `*` requires `--all` as a safety interlock. |
 | `stats` | Print cache size, entry count, and expired-entry count. |
 
-**The `*` purge needs `--all` on purpose.** A bare `rover cache purge '*'` wipes the entire cache, so it refuses to run without the explicit flag. Get the glob wrong without that interlock and you pay for every page again.
+A bare `rover cache purge '*'` wipes the entire cache, so it refuses to run without `--all`. Get the glob wrong without that interlock and you pay for every page again.
 
 ## `rover task`
 
@@ -110,7 +111,7 @@ rover task <id> [--monitor] [--cancel]
                 [--format human|ndjson] [--from-event <N>]
 ```
 
-A pure reader, except for `--cancel`. Reads `tasks` and `task_events` from the cache database — no HTTP, no scheduler responsibilities.
+Reads `tasks` and `task_events` from the cache database. Read-only except for `--cancel`.
 
 | Flag | Default | Description |
 | --- | --- | --- |
@@ -218,7 +219,7 @@ rover model verify [<repo_id>]
 
 Download, list, remove, and verify cached local models from HuggingFace Hub. Gated by the `local-inference` feature at compile time — without it, the subcommand is absent.
 
-Models live under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`). All four subcommands work against that cache directory.
+Models live under `$HF_HOME/hub/` (default `~/.cache/huggingface/hub/`).
 
 ### `rover model download`
 
@@ -274,7 +275,7 @@ removed ~/.cache/huggingface/hub/models--Qwen--Qwen3.5-0.8B (1.6 GB freed)
 rover model verify [<repo_id>]
 ```
 
-**`verify` is the integrity check you can run by hand.** It re-hashes cached model files and compares them against the integrity manifest (`.rover-integrity.toml`) recorded at download time. With a `<repo_id>`, it verifies that one model; without, it verifies every cached model. Exits non-zero if any file has been modified or is missing. See [Security & threat model](/docs/security) §"Local model files" for the full integrity model.
+Re-hashes cached model files and compares them against the integrity manifest (`.rover-integrity.toml`) recorded at download time. With a `<repo_id>`, it verifies that one model; without, it verifies every cached model. Exits non-zero if any file has been modified or is missing. See [Security & threat model](/docs/security) §"Local model files" for the full integrity model.
 
 Example output:
 
@@ -284,7 +285,7 @@ FAIL  Qwen/Qwen3-4B  (revision e4f5a6b)
         model.safetensors: modified (expected sha256:…, got sha256:…)
 ```
 
-The same check runs automatically before any local model is loaded for inference, and the `local_model_integrity` check in `rover doctor` reports the same status. Bypass it with `--unsafe-disable-model-integrity-check` (or `ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`) — a security-sensitive escape hatch that logs a warning at startup. Turning off tamper detection for downloaded weights is the kind of thing you do knowingly, not by accident.
+The same check runs automatically before any local model is loaded for inference, and the `local_model_integrity` check in `rover doctor` reports the same status. Bypass it with `--unsafe-disable-model-integrity-check` (or `ROVER_UNSAFE_DISABLE_MODEL_INTEGRITY_CHECK=1`) — a security-sensitive escape hatch that logs a warning at startup.
 
 :::note
 Gated by `local-inference`. When it is not compiled in, `rover model --help` returns an unrecognized-subcommand error.

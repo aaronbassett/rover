@@ -5,7 +5,7 @@ title: MCP tools
 
 # Rover MCP tools
 
-**Rover speaks the Model Context Protocol over stdio (`rover mcp`) and exposes five tools.** They are `fetch`, `batch_fetch`, `summarize`, `get_metadata`, and `count_tokens`. Every argument is validated against a JSON Schema with `deny_unknown_fields` — pass a key Rover doesn't recognize and the call is rejected with `invalid_args` rather than silently ignored.
+**Rover serves five tools over MCP on stdio (`rover mcp`): `fetch`, `batch_fetch`, `summarize`, `get_metadata`, and `count_tokens`.** Every argument is validated against a JSON Schema with `deny_unknown_fields` — pass a key Rover doesn't recognize and the call is rejected with `invalid_args`, not silently ignored.
 
 Errors come back as a single stable envelope. The shape doesn't change; the set of codes may, since Rover is pre-1.0 (see [Versioning](/docs/versioning)).
 
@@ -19,7 +19,7 @@ The codes:
 
 ## Prompt-injection guard: the wire contract
 
-The content-returning tools fence everything they hand back behind a prompt-injection guard. For the model, the rationale, and how the detection layers work, see [Trust & prompt injection](/docs/trust). This section covers only what a caller reads off the wire: the shape of the wrapped content, what each response level does to flagged spans, and where each tool puts the telemetry.
+The content-returning tools fence everything they hand back behind a prompt-injection guard. This section covers what a caller reads off the wire: the shape of the wrapped content, what each response level does to flagged spans, and where each tool puts the telemetry. For the model, the rationale, and the detection layers, see [Trust & prompt injection](/docs/trust).
 
 **The `content` string is a trusted preamble followed by a nonce-fenced body.** The preamble tells the model the text is third-party web content to treat as data, and names the nonce in prose. The body sits inside `<untrusted-content-{nonce}>` … `</untrusted-content-{nonce}>`, where `{nonce}` is a fresh 6-hex-char value generated per response. Because the nonce is never shown to the page, a malicious document can't predict the tag or forge a closing fence; any forged copies in the body are stripped.
 
@@ -63,7 +63,7 @@ For the `[prompt_injection]` config block — levels, model presets, per-URL all
 
 ## `fetch`
 
-**`fetch` retrieves a URL synchronously, runs the extraction pipeline, and returns one `content` string.** That string is the guard's trusted preamble followed by the nonce-wrapped frontmatter and Markdown body (see [Anatomy of a Rover document](/docs/output) for the document shape, and [the wire contract](#prompt-injection-guard-the-wire-contract) for the wrapper). Inline summarization is optional.
+**`fetch` retrieves a URL synchronously, runs the extraction pipeline, and returns one `content` string** — the guard's trusted preamble followed by the nonce-wrapped frontmatter and Markdown body. See [Anatomy of a Rover document](/docs/output) for the document shape, and [the wire contract](#prompt-injection-guard-the-wire-contract) for the wrapper. Inline summarization is optional.
 
 **Args:**
 
@@ -217,9 +217,9 @@ The `content` field is the full agent-facing document: the guard's trusted pream
 
 ## `batch_fetch`
 
-**`batch_fetch` schedules a background fetch of many URLs and returns a `TaskCreatedResponse` immediately.** The task runs asynchronously; observe it via `rover batch <id>` (see the [CLI reference](/docs/cli)) or the `Monitor` MCP tool.
+**`batch_fetch` schedules a background fetch of many URLs and returns a `TaskCreatedResponse` immediately.** Observe the task via `rover batch <id>` (see the [CLI reference](/docs/cli)) or the `Monitor` MCP tool.
 
-The batch worker only warms the cache with raw extracted content. Prompt-injection guarding is transitive: the full guard — wrapper, detectors, telemetry — runs when you later read each URL through `fetch`. The batch task itself returns no guarded content.
+The batch worker only warms the cache with raw extracted content; it returns no guarded content. The full guard — wrapper, detectors, telemetry — runs when you later read each URL through `fetch`.
 
 **Args:**
 
@@ -248,7 +248,7 @@ The batch worker only warms the cache with raw extracted content. Prompt-injecti
 
 ## `summarize`
 
-**`summarize` cache-or-fetches a URL, runs it through the summarizer service, and returns the summary synchronously.** No task is spawned. For backend selection and the summarization modes, see [Backends](/docs/backends).
+**`summarize` cache-or-fetches a URL, runs it through the summarizer service, and returns the summary synchronously — no task spawned.** For backend selection and the summarization modes, see [Backends](/docs/backends).
 
 **Args:**
 
@@ -352,7 +352,7 @@ The response adds a top-level `prompt_injection` telemetry object, always presen
 
 ## `count_tokens`
 
-**`count_tokens` measures token cost without spending it on a full fetch round-trip.** It has two shapes, selected by `mode`. For planning around context limits, see [Managing token budgets](/docs/token-budgets).
+**`count_tokens` measures token cost, selected by `mode` into two shapes.** For planning around context limits, see [Managing token budgets](/docs/token-budgets).
 
 **Args:**
 

@@ -5,11 +5,11 @@ title: Configuration
 
 # Configuration
 
-**A config file is loaded only when you pass `--config <path>`.** Run `fetch`, `mcp`, `cache`, `task`, `batch`, or `doctor` without `--config` and Rover uses built-in defaults — no file is read, and no default path is searched. So a config that lives on disk does nothing for fetching or the server until you point a command at it: `rover mcp --config ~/.config/rover/config.toml`.
+**A config file is loaded only when you pass `--config <path>`.** Run `fetch`, `mcp`, `cache`, `task`, `batch`, or `doctor` without it and Rover uses built-in defaults — no file is read, no default path is searched. A config on disk does nothing until you point a command at it: `rover mcp --config ~/.config/rover/config.toml`.
 
-Only `rover config show` and `rover config set` resolve a default path on their own. They operate on `config.toml` under the platform config dir, in order: `ROVER_CONFIG`, then `~/.config/rover/config.toml` (Linux/macOS), then `./rover.toml` as a last resort. Inspect the effective settings with `rover config show`; change one with `rover config set <dotted.key> <value>`. See the [CLI reference](/docs/cli).
+Only `rover config show` and `rover config set` resolve a default path on their own. They read `config.toml` in order: `ROVER_CONFIG`, then `~/.config/rover/config.toml` (Linux/macOS), then `./rover.toml` as a last resort. `rover config show` prints the effective settings; `rover config set <dotted.key> <value>` changes one. See the [CLI reference](/docs/cli).
 
-Every section and key is optional — the defaults below apply when absent. Unknown keys are rejected at load time (`deny_unknown_fields`), so a typo fails loudly instead of being silently ignored. Durations parse via `humantime` (e.g. `"1h"`, `"5m"`, `"7d"`, `"500ms"`).
+Every section and key is optional; the defaults below apply when absent. Unknown keys are rejected at load time (`deny_unknown_fields`), so a typo fails loudly. Durations parse via `humantime` (e.g. `"1h"`, `"5m"`, `"7d"`, `"500ms"`).
 
 ## `[fetch]`
 
@@ -35,11 +35,11 @@ Every section and key is optional — the defaults below apply when absent. Unkn
 | `lan` | Project + RFC1918 + IPv6 ULAs (`fc00::/7`). |
 | `none` | Trust the user. The always-floor (link-local, multicast, broadcast, `0.0.0.0`, `::`) is still blocked. |
 
-Unknown level strings are rejected the first time the SSRF policy is consulted (typed `SsrfError::UnknownLevel`). The always-floor blocks the dangerous ranges at every level, including `none` — see [Security & threat model](/docs/security) for why server-side request forgery is the threat this guards against.
+Unknown level strings are rejected the first time the SSRF policy is consulted (typed `SsrfError::UnknownLevel`). The always-floor blocks the dangerous ranges at every level, including `none`. See [Security & threat model](/docs/security).
 
 ## `[prompt_injection]`
 
-Layered prompt-injection guard for the content-returning MCP tools (`fetch`, `summarize`, `get_metadata`, and — transitively — `batch_fetch`). These keys tune the detectors that run on output; they do not control the nonce wrapper, which is always on and can't be turned off. See [Trust & prompt injection](/docs/trust) for the model behind the layers, and [MCP tools](/docs/mcp-tools) for the wire contract (the `content` field, the nonce wrapper, and the `prompt_injection` telemetry object).
+Tunes the prompt-injection detectors for the content-returning MCP tools (`fetch`, `summarize`, `get_metadata`, and — transitively — `batch_fetch`). These keys act on output only; they do not control the nonce wrapper, which is always on and can't be turned off. See [Trust & prompt injection](/docs/trust) for the model behind the layers and [MCP tools](/docs/mcp-tools) for the wire contract.
 
 ```toml
 [prompt_injection]
@@ -69,7 +69,7 @@ level = false
 
 Both the `level`/`model` strings are validated at first use (`guard::GuardConfig::from_config`), surfacing a typed error rather than a serde error — unknown values are accepted by the TOML parser and rejected when the guard is built.
 
-The model detector (`model`) requires building Rover with the `injection-model` feature — it downloads an ONNX DeBERTa classifier from HuggingFace on first use; verify with `rover doctor`. When the feature is not compiled, a configured `model` is ignored with a warning. The structural wrapper and the pattern detector are always compiled, so the guard never drops to zero coverage. Internal-inference hardening — cleaning content Rover feeds to its own summarizer and caption models — is always on and can't be turned off. See [Optional features](/docs/features) for the full feature-flag matrix.
+The `model` detector requires building Rover with the `injection-model` feature; it downloads an ONNX DeBERTa classifier from HuggingFace on first use. Verify with `rover doctor`. Without the feature compiled, a configured `model` is ignored with a warning — the structural wrapper and pattern detector are always compiled, so coverage never drops to zero. Internal-inference hardening (cleaning content Rover feeds to its own summarizer and caption models) is always on and can't be turned off. See [Optional features](/docs/features) for the feature-flag matrix.
 
 ## `[cache]`
 
@@ -90,7 +90,7 @@ When a cache entry's `expires_at` has passed:
 - **Within `stale_while_revalidate_window`:** the MCP server returns the stale row immediately and enqueues a background `revalidate` task. The agent sees `cache_status: "stale"` and a `revalidation` block it can monitor.
 - **Beyond `stale_while_revalidate_window`:** the row is treated as a miss; `fetch` refetches synchronously and writes through the cache.
 
-The CLI (`rover fetch`) **always** revalidates synchronously regardless of the window — a one-shot CLI process has no in-process scheduler to drain the background task queue, so it cannot rely on SWR. Set `default_ttl` and `max_ttl` to reflect how fresh you actually need cached content; set `stale_while_revalidate_window` to bound how stale the SWR fast-path is allowed to serve. See [Caching & freshness](/docs/caching) for how these knobs interact with upstream `Cache-Control`.
+The CLI (`rover fetch`) **always** revalidates synchronously regardless of the window — a one-shot CLI process has no in-process scheduler to drain the background task queue, so it cannot rely on SWR. Set `default_ttl` and `max_ttl` to how fresh you need cached content; set `stale_while_revalidate_window` to bound how stale the SWR fast-path may serve. See [Caching & freshness](/docs/caching) for how these interact with upstream `Cache-Control`.
 
 ## `[tokenizer]`
 
@@ -147,7 +147,7 @@ All HTTP-bound code paths share a single `Pacer` built from this block at startu
 
 ## `[summarization.tables]`
 
-Controls the per-table defaults consumed by the `tables: {mode: "summarize"}` hook in the MCP `fetch` tool.
+Per-table defaults consumed by the `tables: {mode: "summarize"}` hook in the MCP `fetch` tool.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -156,7 +156,7 @@ Controls the per-table defaults consumed by the `tables: {mode: "summarize"}` ho
 
 ## `[image_captions]`
 
-Defaults for image caption generation when `images.mode = "caption"` is used in the MCP `fetch` tool. See [Images & captioning](/docs/images) for how captions land in the returned content.
+Defaults for caption generation when `images.mode = "caption"` is set in the MCP `fetch` tool. See [Images & captioning](/docs/images).
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -212,7 +212,7 @@ base_url = "http://localhost:11434/v1"
 
 ## `[headless]`
 
-Configuration for the headless browser renderer. The renderer requires building Rover with the `headless` feature; when it isn't compiled, these keys are inert and a requested headless render falls back to the static fetch. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when a page needs a real browser at all.
+The headless browser renderer requires building Rover with the `headless` feature. Without it, these keys are inert and a requested headless render falls back to the static fetch. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when a page needs a real browser.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -222,7 +222,7 @@ Configuration for the headless browser renderer. The renderer requires building 
 | `max_concurrent` | integer | `4` | Number of concurrent headless render tasks. |
 | `chrome_executable` | string | unset | Path to the Chrome/Chromium executable. When unset, attempts auto-detection (searches PATH, common install locations). |
 
-The MCP `fetch` tool accepts a typed `headless` argument (see [MCP tools](/docs/mcp-tools)) which overrides `auto_detect_spa`, `default_wait`, and `timeout` on a per-call basis.
+The MCP `fetch` tool accepts a typed `headless` argument (see [MCP tools](/docs/mcp-tools)) that overrides `auto_detect_spa`, `default_wait`, and `timeout` per call.
 
 ## `[backends.<name>]`
 

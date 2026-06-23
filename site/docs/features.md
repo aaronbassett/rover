@@ -5,19 +5,17 @@ title: Optional features
 
 # Optional features
 
-**The default build is the lean fetch-and-extract core — no Cargo features, no extra runtime dependencies.** It clocks in around 20 MiB, needs no Chrome, and downloads no model weights. Three opt-in features add capability when you want it: `headless` for JavaScript-rendered pages, `local-inference` for on-device LLM summarisation, and `injection-model` for the ONNX prompt-injection classifier. Compile in only what you'll use; each one pulls in its own dependencies and, in two cases, a model download on first use.
+**The default build is fetch-and-extract with no Cargo features and no model weights.** Three opt-in features add capability: `headless` for JavaScript-rendered pages, `local-inference` for on-device summarisation, and `injection-model` for the ONNX prompt-injection classifier. Each pulls in its own dependencies; two download a model on first use.
 
 ## Enabling features
 
 Opt in with `--features` at install time. The crate is `rover-fetch` (the name `rover` was taken on crates.io); the installed binary is still `rover`.
 
 ```sh
-cargo install rover-fetch                                  # default: the lean basic build
-cargo install rover-fetch --features headless              # one feature
+cargo install rover-fetch                                       # default build
+cargo install rover-fetch --features headless                   # one feature
 cargo install rover-fetch --features headless,local-inference   # combine features
 ```
-
-A plain `cargo install rover-fetch` builds the default, featureless binary. Pass `--features` to opt in; comma-separate to combine.
 
 | Feature | Adds | Needs on first use |
 | --- | --- | --- |
@@ -68,7 +66,7 @@ model = "deberta-base"          # the classifier to load; "disabled" turns it of
 
 ## Image captioning needs no feature flag
 
-Image captioning is always compiled in — there is no Cargo feature to enable. It runs through cloud or OpenAI-compatible providers (OpenAI, Anthropic, Gemini, and anything speaking the OpenAI chat-completions dialect):
+Image captioning is always compiled in. It runs through cloud or OpenAI-compatible providers (OpenAI, Anthropic, Gemini, and anything speaking the OpenAI chat-completions dialect):
 
 ```toml
 [captioners.openai]
@@ -94,7 +92,3 @@ rover model verify                  # check cached files against their integrity
 ```
 
 Models download to `$HF_HOME/hub` (default `~/.cache/huggingface/hub`), shared with any other Hugging Face tooling on the host. Download ahead of time to avoid a cold first `summarize`, or let the first call fetch on demand.
-
-## A note on size
-
-The default build is lean — around 20 MiB. CI enforces a hard ceiling: the default-features binary must stay under 75 MiB, asserted on every run. The features above add to that, and two of them add a separate on-disk model download you manage yourself: `local-inference` pulls its default model (~1.6 GB) on first use, and `injection-model` pulls the classifier (~200 MB). `headless` adds no model — it drives a Chrome/Chromium you already have. Compile in only what you need and the rest stays out of the binary.

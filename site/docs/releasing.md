@@ -5,9 +5,9 @@ title: Releasing
 
 # Releasing
 
-**This page is for maintainers cutting a Rover release, not for people installing it.** It documents how a version goes from a merge on `main` to a published crate, a GitHub Release, and a Homebrew formula. If you only want to run Rover, start with [Installation](/docs/install). For how version numbers and stability promises work, see [Versioning & stability](/docs/versioning).
+**This page is for maintainers cutting a Rover release.** It documents how a version goes from a merge on `main` to a published crate, a GitHub Release, and a Homebrew formula. To run Rover, start with [Installation](/docs/install). For how version numbers and stability promises work, see [Versioning & stability](/docs/versioning).
 
-Two tools do the work, and they split it cleanly:
+Two tools split the work cleanly:
 
 - **[release-plz](https://release-plz.dev)** owns versions, the changelog, the crates.io publish, and the git tag.
 - **[dist](https://opensource.axo.dev/cargo-dist/)** (cargo-dist) owns the cross-platform binaries, the GitHub Release, the `curl | sh` installer, and the Homebrew formula.
@@ -20,7 +20,7 @@ A release ships through three channels, all automated:
 
 ## How it fits together
 
-The handoff runs in one direction: release-plz publishes and tags, the tag triggers dist, dist builds and uploads.
+The handoff runs one direction: release-plz publishes and tags, the tag triggers dist, dist builds and uploads.
 
 ```text
 push to main ──► release-plz opens a "Release PR" (version bump + changelog)
@@ -38,7 +38,7 @@ release-plz creates the **tag**; dist creates the **GitHub Release**. They never
 
 ## The distributed binary vs. `cargo install`
 
-**The prebuilt binary and the one `cargo install` gives you are not the same build.** The tarballs and the Homebrew formula ship `rover` built with `--features headless --no-default-features`. The crate's default feature set is empty (`default = []`), so `cargo install rover-fetch` builds the *basic* binary. To match the distributed binary from source, ask for the feature explicitly:
+**The prebuilt binary and the one `cargo install` gives you are not the same build.** The tarballs and the Homebrew formula ship `rover` built with `--features headless --no-default-features`. The crate's default feature set is empty (`default = []`), so `cargo install rover-fetch` builds the *basic* binary. To match the distributed binary from source, ask for the feature:
 
 ```sh
 cargo install rover-fetch --features headless
@@ -57,7 +57,7 @@ dist builds four targets, each on a native runner where it can:
 | `x86_64-apple-darwin` | `macos` |
 | `aarch64-apple-darwin` | `macos` (native) |
 
-The one exception is `x86_64-apple-darwin`, which is cross-compiled on the arm64 macOS runner. Windows is out of scope. Targets live in `[workspace.metadata.dist]` in `Cargo.toml`.
+`x86_64-apple-darwin` is the exception — cross-compiled on the arm64 macOS runner. Windows is out of scope. Targets live in `[workspace.metadata.dist]` in `Cargo.toml`.
 
 ## One-time setup
 
@@ -73,20 +73,13 @@ Three repository secrets make the pipeline run (Settings → Secrets and variabl
 
 ## Cutting a release
 
-Normal releases are hands-off — three steps, and two of them are just review:
+Normal releases are hands-off — three steps, two of them review:
 
 1. Land changes on `main` using Conventional Commits (`feat:`, `fix:`, and the rest).
 2. release-plz opens or updates a **Release PR** that bumps the version and updates `CHANGELOG.md`. Review it.
 3. **Merge the Release PR.** release-plz publishes to crates.io and pushes `vX.Y.Z`; the tag triggers dist, which builds the binaries, creates the GitHub Release, and updates the Homebrew tap.
 
 A pre-release version (`X.Y.Z-rc.1`) publishes to crates.io and GitHub but does *not* update the Homebrew formula. dist skips prereleases on purpose, so the tap always points at the latest stable build.
-
-## The first release (v0.1.0)
-
-`rover-fetch` is unpublished, and `Cargo.toml` is already at `0.1.0` with a curated `## [0.1.0]` changelog section. Once that lands on `main`:
-
-- release-plz detects `0.1.0` is not on crates.io and publishes it. If it opens a Release PR instead, merge that PR to perform the release.
-- Confirm the `v0.1.0` tag appears, the GitHub Release is created with the four tarballs, checksums, and installer, and the `rover` formula lands in the tap.
 
 ## Post-release validation
 
@@ -108,4 +101,4 @@ dist generate                       # regenerate .github/workflows/release.yml
 git add Cargo.toml .github/workflows/release.yml && git commit
 ```
 
-Never hand-edit `.github/workflows/release.yml`. It is generated, and the next `dist generate` will overwrite whatever you put there.
+Never hand-edit `.github/workflows/release.yml`. It is generated, and the next `dist generate` overwrites whatever you put there.

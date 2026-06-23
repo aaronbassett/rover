@@ -5,29 +5,29 @@ title: Summarisation backends
 
 # Summarisation backends
 
-**Rover's summariser is pluggable, and the plug is a config block.** Declare backends as `[backends.<name>]` entries; pick the active one with `[summarization] default_backend`. The MCP `summarize` tool — and the inline `summarize` sub-arg on `fetch` — accepts a per-call `backend` override, so a client can ask for a different backend without touching the config. See [Summarising pages](/docs/summarizing) for how those modes and styles flow through.
+Declare backends as `[backends.<name>]` entries; pick the active one with `[summarization] default_backend`. The MCP `summarize` tool and the inline `summarize` sub-arg on `fetch` accept a per-call `backend` override, so a client can switch backends without touching the config. See [Summarising pages](/docs/summarizing) for how modes and styles flow through.
 
 Two kinds are always available, no feature flag required:
 
-- **`extractive`** — offline, CPU-only, pure Rust. It selects sentences from the source using the TextRank-flavoured implementation in `summarizer::extractive`. No network, no API key, no setup.
-- **`cloud`** — calls out to a hosted LLM through the [`genai`](https://crates.io/crates/genai) crate. You bring the provider and the key.
+- **`extractive`** — offline, CPU-only, pure Rust. Selects sentences from the source using the TextRank-flavoured implementation in `summarizer::extractive`. No network, no API key, no setup.
+- **`cloud`** — calls a hosted LLM through the [`genai`](https://crates.io/crates/genai) crate. You bring the provider and the key.
 
-A third kind, **`local`**, runs an LLM on your own machine — but it requires the `local-inference` Cargo feature, so the stock binary doesn't have it. For `kind = "local"`, `model` is a HuggingFace repo id, not a literal provider model id, and `provider` is ignored. Setup, model sizes, and the build flags live in [Optional features](/docs/features).
+A third kind, **`local`**, runs an LLM on your own machine and requires the `local-inference` Cargo feature; the stock binary doesn't have it. For `kind = "local"`, `model` is a HuggingFace repo id, not a provider model id, and `provider` is ignored. Setup, model sizes, and build flags live in [Optional features](/docs/features).
 
 ## The implicit default
 
-**An empty `[backends]` map gives you a working summariser anyway.** With nothing declared, Rover installs an implicit `default` extractive backend, so a fresh install summarises offline with zero configuration. That's the whole point — out of the box, nothing to wire up.
+**An empty `[backends]` map still gives you a working summariser.** With nothing declared, Rover installs an implicit `default` extractive backend, so a fresh install summarises offline with zero configuration.
 
-Adding *any* explicit `[backends.*]` block disables that injection. From there the validation rules apply strictly:
+Adding any explicit `[backends.*]` block disables that injection. From there the validation rules apply strictly:
 
 1. `[summarization] default_backend` must name an existing `[backends.*]` entry.
 2. If `[summarization] fallback_to_extractive = true` — the default — at least one extractive backend must exist.
 
-Declare one `cloud` backend and you've opted out of the safety net unless you re-add an extractive one. Most configs keep a `[backends.default]` extractive block around for exactly that reason.
+Declare one `cloud` backend and you've opted out of the fallback unless you re-add an extractive one. Most configs keep a `[backends.default]` extractive block for that reason.
 
 ## Cloud providers
 
-The `provider` string picks which hosted API the `cloud` kind talks to. Each native provider resolves its key from a default environment variable; `openai_compat` is the escape hatch for anything that speaks the OpenAI Chat Completions shape.
+The `provider` string picks which hosted API the `cloud` kind talks to. Each native provider resolves its key from a default environment variable; `openai_compat` covers anything that speaks the OpenAI Chat Completions shape.
 
 | `provider` | Notes |
 | --- | --- |
@@ -53,7 +53,7 @@ For native providers, leave `api_key_env` unset and `genai` resolves the default
 | `base_url` | string | yes for `openai_compat` only | Custom endpoint URL. Ignored for native providers and for `local`. |
 | `api_key_env` | string | no | Env var holding the API key. When unset, see the provider defaults above. |
 
-The split on `model` is the easy thing to get wrong. A `cloud` backend wants whatever string the provider's API expects; a `local` backend wants the repo path Rover passes to HuggingFace to download weights. Cross them and the backend either 404s at the provider or hunts for a repo that doesn't exist.
+The `model` split is the easy thing to get wrong. A `cloud` backend wants the string the provider's API expects; a `local` backend wants the repo path Rover passes to HuggingFace to download weights. Cross them and the backend either 404s at the provider or hunts for a repo that doesn't exist.
 
 ### `openai_compat` base URL normalisation
 
@@ -68,11 +68,11 @@ Rover normalises the `base_url` for `openai_compat` so it always ends in `/v1/`.
 | `https://api.example.com/custom/` | `https://api.example.com/custom/v1/` |
 | `https://api.example.com/custom/v1/` | unchanged |
 
-Whitespace around the URL is trimmed before normalisation, so a stray space pasted from a terminal won't break the endpoint.
+Whitespace around the URL is trimmed before normalisation, so a stray pasted space won't break the endpoint.
 
 ## Fallback selection
 
-**A failing cloud call doesn't have to fail the request.** With `[summarization] fallback_to_extractive = true`, a cloud failure — auth, rate limit, model error, invalid request — retries against an extractive backend instead of erroring out. The agent gets a summary, just a cheaper one.
+**A failing cloud call doesn't have to fail the request.** With `[summarization] fallback_to_extractive = true`, a cloud failure — auth, rate limit, model error, invalid request — retries against an extractive backend. The agent gets a summary, just a cheaper one.
 
 The fallback backend is chosen deterministically:
 
@@ -196,4 +196,4 @@ rover doctor                # checks extractive synthesis + every cloud backend 
 rover doctor --format ndjson
 ```
 
-The `extractive_synthesis` and `backends_authenticate` checks run as part of the default battery. Build with `local-inference` and the battery picks up the local-model checks too, so a misconfigured `local` backend surfaces here rather than on the first agent call.
+The `extractive_synthesis` and `backends_authenticate` checks run as part of the default battery. Build with `local-inference` and the battery adds the local-model checks, so a misconfigured `local` backend surfaces here rather than on the first agent call.
