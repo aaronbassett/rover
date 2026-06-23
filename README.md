@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="site/static/img/rover-hero.png" alt="Rover — turn the web into clean, token-efficient Markdown your agent can trust" width="100%">
+<img src="site/static/img/rover-hero.webp" alt="Rover — turn the web into clean, token-efficient Markdown your agent can trust" width="100%">
 
 # Rover
 
@@ -21,7 +21,7 @@ Point your agent at a URL and Rover fetches it, strips the ads/nav/chrome, extra
 
 <div align="center">
 
-<img src="site/static/img/rover-demo.gif" alt="rover fetching a Wikipedia page and summarising it to a token budget" width="85%">
+<img src="site/static/img/rover-demo.webp" alt="rover fetching a Wikipedia page and summarising it to a token budget" width="85%">
 
 <sub><code>rover</code> fetching the Charlie Dog (a.k.a. <strong>Rover</strong> 🐕) page and summarising ~19.6k tokens down to ~330 — summarisation here runs through a configured cloud backend.</sub>
 

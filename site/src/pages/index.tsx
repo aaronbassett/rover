@@ -1,7 +1,6 @@
 import type {ReactNode} from 'react';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
-import ThemedImage from '@theme/ThemedImage';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import styles from './index.module.css';
 import HomeSections from '@site/src/components/home/HomeSections';
@@ -32,10 +31,14 @@ export default function Home(): ReactNode {
             </p>
           </div>
           <figure className={styles.heroFigure}>
-            <ThemedImage
-              alt="The Rover, on point — an estate-seal engraving"
-              sources={{ light: useBaseUrl('/img/hero-seal-light.png'), dark: useBaseUrl('/img/hero-seal-dark.png') }}
-            />
+            <picture className={styles.sealLight}>
+              <source type="image/avif" srcSet={useBaseUrl('/img/hero-seal-light.avif')} />
+              <img src={useBaseUrl('/img/hero-seal-light.webp')} alt="The Rover, on point — an estate-seal engraving" />
+            </picture>
+            <picture className={styles.sealDark}>
+              <source type="image/avif" srcSet={useBaseUrl('/img/hero-seal-dark.avif')} />
+              <img src={useBaseUrl('/img/hero-seal-dark.webp')} alt="The Rover, on point — an estate-seal engraving" />
+            </picture>
             <figcaption className="rover-dek">Pl. I — The Rover, on point.</figcaption>
           </figure>
         </div>

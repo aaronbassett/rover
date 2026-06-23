@@ -10,4 +10,8 @@
 .badges span::before{content:'◆ ';color:var(--rover-brass)}
 .heroFigure{margin:0;text-align:center}
 .heroFigure img{max-width:320px;width:100%;-webkit-mask-image:radial-gradient(circle closest-side,#000 92%,transparent 100%);mask-image:radial-gradient(circle closest-side,#000 92%,transparent 100%)}
+.sealLight{display:block}
+.sealDark{display:none}
+[data-theme='dark'] .sealLight{display:none}
+[data-theme='dark'] .sealDark{display:block}
 .heroFigure figcaption{font-size:.8rem;margin-top:.4rem}

@@ -84,8 +84,8 @@ const config: Config = {
       title: 'Rover',
       logo: {
         alt: 'Rover',
-        src: 'img/logo.png',
-        srcDark: 'img/logo-dark.png',
+        src: 'img/logo.webp',
+        srcDark: 'img/logo-dark.webp',
       },
       items: [
         { to: '/docs/intro', label: 'Get started', position: 'left' },
