@@ -89,7 +89,7 @@ The rate limiter and concurrency semaphores live in process memory, not SQLite. 
 
 ## Robots.txt fail-closed cache window
 
-When a robots.txt fetch returns 5xx or times out, Rover fails closed. It caches a `disallow_all` sentinel for `robots.failure_ttl` (default `5m`), and during that window all fetches to that host are refused with `robots_fetch_failed` / `robots_disallowed`. The short TTL means recovered servers are picked up quickly. For hosts whose robots endpoint is chronically broken, raise `failure_ttl` or list the host in `robots.ignore_domains`.
+The robots.txt gate is **off by default** (`robots.respect = false`) — Rover fetches the page an agent explicitly asked for, not a crawl, and robots.txt governs crawling. When you opt in with `robots.respect = true` and a robots.txt fetch returns 5xx or times out, Rover fails closed: it caches a `disallow_all` sentinel for `robots.failure_ttl` (default `5m`), and during that window all fetches to that host are refused with `robots_fetch_failed` / `robots_disallowed`. The short TTL means recovered servers are picked up quickly. For hosts whose robots endpoint is chronically broken, raise `failure_ttl` or list the host in `robots.ignore_domains`.
 
 ## Headless asset interception and SSRF
 

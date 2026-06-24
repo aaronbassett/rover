@@ -89,13 +89,14 @@ async fn extraction_failure_routes_to_extract_variant() {
     )
     .await;
 
-    // The body is essentially empty; readabilityrs will either produce a
-    // tiny extraction (which is acceptable) or fail with NoArticle. If it
-    // failed, the error must be `Extract` — not `Decode` and not `Status`.
-    // This is the M4 follow-up #1 regression guard.
+    // The body is essentially empty. readabilityrs finds no article, so the
+    // extractor's body→markdown fallback produces a tiny (possibly empty) doc
+    // and the fetch succeeds. The regression guard: if extraction ever does
+    // error, it must surface as `Extract` — never `Decode` or `Status`.
+    // (M4 follow-up #1.)
     match result {
-        Err(FetcherError::Extract(_)) => {} // expected failure path
-        Ok(_) => {}                         // readabilityrs handled the empty case
-        Err(other) => panic!("expected Extract or Ok; got {other:?} (must not be Decode/Status)"),
+        Ok(_) => {}                         // fallback handled the empty case
+        Err(FetcherError::Extract(_)) => {} // tolerated: still the right variant
+        Err(other) => panic!("expected Ok or Extract; got {other:?} (must not be Decode/Status)"),
     }
 }

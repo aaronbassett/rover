@@ -45,6 +45,7 @@ Exit code is `0` on success and `1` on any failure: config parse error, fetch er
 
 ```text
 rover fetch <url> [--force-refresh] [--ignore-robots]
+             [--user-agent <UA>] [--timeout-secs <N>]
              [--rate-limit-rpm <N>] [--per-host-concurrency <N>]
              [--global-concurrency <N>] [--max-retries <N>]
              [--max-tokens <N>] [--summarize <JSON>]
@@ -56,6 +57,8 @@ Fetches `<url>` through the cache-aware orchestrator (`fetch_with_cache`), runs 
 | --- | --- | --- | --- |
 | `--force-refresh` | bool | off | Bypass the cache and re-fetch from origin. |
 | `--ignore-robots` | bool | off | Skip the robots.txt gate for this fetch. CLI-only escape hatch. |
+| `--user-agent <UA>` | string | from `[fetch]` | Override `user_agent` for this request (UA header, redirects, image sub-fetches, robots matching). |
+| `--timeout-secs <N>` | u64 | from `[fetch]` | Override `timeout_secs` (per-request timeout). Must be `> 0`. |
 | `--rate-limit-rpm <N>` | u32 | from `[rate_limit]` | Override `requests_per_minute_per_domain`. |
 | `--per-host-concurrency <N>` | u32 | from `[rate_limit]` | Override `per_domain_concurrency`. Clamped to `>= 1`. |
 | `--global-concurrency <N>` | u32 | from `[rate_limit]` | Override `global_concurrency`. Clamped to `>= 1`. |

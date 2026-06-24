@@ -94,7 +94,12 @@ async fn robots_disallow_admin_refuses_fetch() {
     )
     .await;
 
-    let robots_cfg = RobotsConfig::default();
+    // Robots enforcement is off by default now; these tests exercise the gate,
+    // so opt back in explicitly.
+    let robots_cfg = RobotsConfig {
+        respect: true,
+        ..RobotsConfig::default()
+    };
     let cf = Config::default();
     let err = fetch_with_cache(
         &db,
@@ -148,7 +153,12 @@ async fn robots_allow_all_lets_fetch_proceed() {
     // Equivalent to the cached state produced by a 404 on robots.txt.
     seed_robots(&db, url.host_str().unwrap(), None, RobotsState::AllowAll).await;
 
-    let robots_cfg = RobotsConfig::default();
+    // Robots enforcement is off by default now; these tests exercise the gate,
+    // so opt back in explicitly.
+    let robots_cfg = RobotsConfig {
+        respect: true,
+        ..RobotsConfig::default()
+    };
     let cf = Config::default();
     fetch_with_cache(
         &db,
@@ -191,7 +201,12 @@ async fn robots_disallow_all_refuses_fetch() {
     let url = Url::parse("http://127.0.0.1:1/anything").unwrap();
     seed_robots(&db, url.host_str().unwrap(), None, RobotsState::DisallowAll).await;
 
-    let robots_cfg = RobotsConfig::default();
+    // Robots enforcement is off by default now; these tests exercise the gate,
+    // so opt back in explicitly.
+    let robots_cfg = RobotsConfig {
+        respect: true,
+        ..RobotsConfig::default()
+    };
     let cf = Config::default();
     let err = fetch_with_cache(
         &db,
@@ -266,7 +281,12 @@ async fn ignore_robots_flag_skips_gate() {
     )
     .await;
 
-    let robots_cfg = RobotsConfig::default();
+    // Robots enforcement is off by default now; these tests exercise the gate,
+    // so opt back in explicitly.
+    let robots_cfg = RobotsConfig {
+        respect: true,
+        ..RobotsConfig::default()
+    };
     let cf = Config::default();
     let result = fetch_with_cache(
         &db,

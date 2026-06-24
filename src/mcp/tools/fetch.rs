@@ -32,6 +32,16 @@ pub struct FetchArgs {
     #[serde(default)]
     pub force_refresh: bool,
 
+    /// Override the `[fetch] user_agent` for this call only. Applies to the
+    /// page request, its redirects, image sub-fetches, and robots matching.
+    #[serde(default)]
+    pub user_agent: Option<String>,
+
+    /// Override the `[fetch] timeout_secs` (per-request timeout, seconds) for
+    /// this call only. Must be greater than 0.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+
     #[serde(default)]
     pub count_only: bool,
 
@@ -469,6 +479,33 @@ impl RoverHandler {
                 "max_tokens must be greater than 0".into(),
             ));
         }
+        if matches!(args.timeout_secs, Some(0)) {
+            return Err(McpError::InvalidArgs(
+                "timeout_secs must be greater than 0".into(),
+            ));
+        }
+
+        // Per-call user_agent / timeout overrides. The shared client bakes in
+        // the configured UA + timeout, so an override needs a fresh client
+        // (still SSRF-policed — `build_http_client` installs the validating
+        // resolver). Build one only when an override is actually present;
+        // otherwise reuse the shared client.
+        let effective_ua = args
+            .user_agent
+            .clone()
+            .unwrap_or_else(|| self.config.fetch.user_agent.clone());
+        let per_call_client;
+        let client: &reqwest::Client = if args.user_agent.is_some() || args.timeout_secs.is_some() {
+            let timeout = args
+                .timeout_secs
+                .map(std::time::Duration::from_secs)
+                .unwrap_or_else(|| self.config.fetch.timeout());
+            per_call_client = crate::fetcher::client::build_http_client(&effective_ua, timeout);
+            &per_call_client
+        } else {
+            &self.client
+        };
+
         let family = resolve_tokenizer(args.tokenizer.as_deref(), &self.config)?;
 
         let headless_mode = resolve_headless(args.headless.as_ref(), &self.config.headless);
@@ -501,7 +538,7 @@ impl RoverHandler {
 
         let result = fetch_with_cache(
             &self.db,
-            &self.client,
+            client,
             &self.pacer,
             &self.config.rate_limit,
             &self.config.robots,
@@ -513,7 +550,7 @@ impl RoverHandler {
                 ssrf_project_root: self.ssrf_project_root.clone(),
                 har_recorder: self.har_recorder.clone(),
                 ignore_robots: false,
-                user_agent: self.config.fetch.user_agent.clone(),
+                user_agent: effective_ua.clone(),
                 #[cfg(feature = "headless")]
                 headless,
                 headless_mode,
@@ -627,7 +664,7 @@ impl RoverHandler {
             &body_md,
             &images_mode_resolved,
             &output_paths,
-            &self.client,
+            client,
             captioners_opt,
             &caption_filters,
             Some(&self.db),
@@ -916,6 +953,23 @@ mod tests {
         let r: Result<FetchArgs, _> =
             serde_json::from_str(r#"{"url":"https://example.com","bogus":1}"#);
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn fetch_args_parse_user_agent_and_timeout_overrides() {
+        let v: FetchArgs = serde_json::from_str(
+            r#"{"url":"https://example.com","user_agent":"my-agent/2.0","timeout_secs":42}"#,
+        )
+        .unwrap();
+        assert_eq!(v.user_agent.as_deref(), Some("my-agent/2.0"));
+        assert_eq!(v.timeout_secs, Some(42));
+    }
+
+    #[test]
+    fn fetch_args_default_transport_overrides_are_none() {
+        let v: FetchArgs = serde_json::from_str(r#"{"url":"https://example.com"}"#).unwrap();
+        assert!(v.user_agent.is_none());
+        assert!(v.timeout_secs.is_none());
     }
 
     #[test]

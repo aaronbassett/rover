@@ -24,6 +24,13 @@ pub struct Args {
     pub url: String,
     pub force_refresh: bool,
     pub ignore_robots: bool,
+
+    /// Override `[fetch] user_agent` for this request.
+    pub user_agent: Option<String>,
+
+    /// Override `[fetch] timeout_secs` (per-request timeout) for this request.
+    pub timeout_secs: Option<u64>,
+
     pub rate_limit_rpm: Option<u32>,
     pub per_host_concurrency: Option<u32>,
     pub global_concurrency: Option<u32>,
@@ -51,6 +58,18 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         args.max_retries,
         args.ignore_robots,
     );
+    // Per-call fetch-transport overrides. Applied to the loaded config before
+    // the HTTP client is built (line below) and before FetchOptions.user_agent
+    // is derived, so both the sent UA header and robots matching use them.
+    if let Some(ua) = args.user_agent {
+        cfg.fetch.user_agent = ua;
+    }
+    if let Some(t) = args.timeout_secs {
+        if t == 0 {
+            anyhow::bail!("--timeout-secs must be greater than 0");
+        }
+        cfg.fetch.timeout_secs = t;
+    }
     let url = Url::parse(&args.url).context("parsing URL argument")?;
     let level = SsrfLevel::parse(&cfg.ssrf.level)
         .with_context(|| format!("invalid [ssrf] level `{}` in config", cfg.ssrf.level))?;

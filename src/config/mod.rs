@@ -398,7 +398,11 @@ impl Default for RobotsConfig {
 }
 
 fn default_respect() -> bool {
-    true
+    // Rover is an agent's browser, not a spider or scraper: it fetches the
+    // page a user/agent explicitly asked for, one at a time. robots.txt governs
+    // automated crawling, so the gate defaults off. Set `robots.respect = true`
+    // (or pass nothing and rely on rate limits) to opt back into enforcement.
+    false
 }
 fn default_robots_ttl() -> Duration {
     Duration::from_secs(24 * 3600)
@@ -1085,15 +1089,19 @@ mod tests {
         let mut cfg = Config::default();
         let baseline_rpm = cfg.rate_limit.requests_per_minute_per_domain;
         let baseline_retries = cfg.rate_limit.max_retries;
+        let baseline_respect = cfg.robots.respect;
         cfg.apply_overrides(None, None, None, None, false);
         assert_eq!(cfg.rate_limit.requests_per_minute_per_domain, baseline_rpm);
         assert_eq!(cfg.rate_limit.max_retries, baseline_retries);
-        assert!(cfg.robots.respect);
+        assert_eq!(cfg.robots.respect, baseline_respect);
     }
 
     #[test]
     fn apply_overrides_disables_robots_when_requested() {
         let mut cfg = Config::default();
+        // Start enabled so the assertion proves the override flips it, not just
+        // that it matches the (now off-by-default) baseline.
+        cfg.robots.respect = true;
         cfg.apply_overrides(None, None, None, None, true);
         assert!(!cfg.robots.respect);
     }
@@ -1407,7 +1415,9 @@ heartbeat_interval = "0s"
     #[test]
     fn default_robots_matches_prd() {
         let cfg = Config::default();
-        assert!(cfg.robots.respect);
+        // Rover is an agent browser, not a crawler: robots enforcement is off
+        // by default (opt in with `robots.respect = true`).
+        assert!(!cfg.robots.respect);
         assert!(cfg.robots.ignore_domains.is_empty());
         assert_eq!(cfg.robots.default_ttl, Duration::from_secs(24 * 3600));
         assert_eq!(cfg.robots.failure_ttl, Duration::from_secs(300));

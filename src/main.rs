@@ -106,6 +106,14 @@ struct FetchArgs {
     #[arg(long)]
     ignore_robots: bool,
 
+    /// Override [fetch] user_agent for this request.
+    #[arg(long)]
+    user_agent: Option<String>,
+
+    /// Override [fetch] timeout_secs (per-request timeout) for this request.
+    #[arg(long)]
+    timeout_secs: Option<u64>,
+
     /// Override [rate_limit] requests_per_minute_per_domain.
     #[arg(long)]
     rate_limit_rpm: Option<u32>,
@@ -416,6 +424,8 @@ impl FetchArgs {
             url: self.url,
             force_refresh: self.force_refresh,
             ignore_robots: self.ignore_robots,
+            user_agent: self.user_agent,
+            timeout_secs: self.timeout_secs,
             rate_limit_rpm: self.rate_limit_rpm,
             per_host_concurrency: self.per_host_concurrency,
             global_concurrency: self.global_concurrency,

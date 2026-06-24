@@ -71,6 +71,8 @@ Args:
 | --- | --- | --- | --- |
 | `url` | string | required | URL to fetch. |
 | `force_refresh` | bool | `false` | Bypass cache for this request. |
+| `user_agent` | string | from `fetch.user_agent` | Override the UA for this call (request header, redirects, image sub-fetches, robots matching). |
+| `timeout_secs` | integer | from `fetch.timeout_secs` | Override the per-request timeout (seconds) for this call. Must be `> 0`. |
 | `count_only` | bool | `false` | Skip extraction; return only the token count of the (cached or fresh) extracted body. |
 | `tokenizer` | string | from `tokenizer.default` | `o200k` / `cl100k` / `claude`. |
 | `max_tokens` | integer | unset | Auto-summarize when the extracted body exceeds this. Must be `> 0`. Single-shot: if the summary is still over budget, returns `max_tokens_exceeded`. |

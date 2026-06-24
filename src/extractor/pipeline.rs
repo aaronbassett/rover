@@ -9,6 +9,8 @@ use readabilityrs::{
     MarkdownOptions, Readability, ReadabilityOptions,
     markdown::options::{HeadingStyle, LinkStyle},
 };
+use regex::Regex;
+use std::sync::LazyLock;
 use thiserror::Error;
 use url::Url;
 
@@ -16,9 +18,6 @@ use url::Url;
 pub enum ExtractorError {
     #[error("readabilityrs: {0}")]
     Readability(String),
-
-    #[error("readabilityrs returned no article")]
-    NoArticle,
 
     #[error("metadata extraction failed: {0}")]
     Metadata(String),
@@ -127,27 +126,110 @@ pub fn extract_full(html: &str, base_url: &Url) -> Result<ExtractedDoc, Extracto
         .build();
     let readability = Readability::new(html, Some(effective_base.as_str()), Some(opts))
         .map_err(|e| ExtractorError::Readability(e.to_string()))?;
-    let article = readability.parse().ok_or(ExtractorError::NoArticle)?;
 
-    let body_md = article.markdown_content.unwrap_or_default();
+    // readabilityrs returns `None` when it can't isolate an article — which
+    // happens for short or boilerplate-only pages (a bare heading, a one-line
+    // note, an error page). Rover is an agent's browser, not an article reader,
+    // so it must still return the page content rather than failing the fetch.
+    // Fall back to a direct body→markdown conversion, sourcing the descriptive
+    // fields from the metadata pre-pass.
+    let (mut body_md, title, language, byline, excerpt, site_name, published_time, image) =
+        match readability.parse() {
+            Some(article) => (
+                article.markdown_content.unwrap_or_default(),
+                article.title.or_else(|| metadata.title.clone()),
+                article.lang.or_else(|| metadata.language.clone()),
+                article.byline,
+                article.excerpt,
+                article.site_name,
+                article
+                    .published_time
+                    .or_else(|| metadata.published.clone()),
+                article.image.or_else(|| metadata.image.clone()),
+            ),
+            None => {
+                tracing::debug!(
+                    target: "rover::extractor",
+                    url = %effective_base,
+                    "readabilityrs found no article; using direct body→markdown fallback"
+                );
+                (
+                    fallback_body_markdown(html),
+                    metadata.title.clone().or_else(|| read_title_tag(html)),
+                    metadata.language.clone(),
+                    metadata.author.clone(),
+                    metadata.description.clone(),
+                    None,
+                    metadata.published.clone(),
+                    metadata.image.clone(),
+                )
+            }
+        };
 
     // Post-pass: absolutize links/images against the effective base.
-    let body_md = crate::extractor::links::absolutize(&body_md, &effective_base);
+    body_md = crate::extractor::links::absolutize(&body_md, &effective_base);
 
     Ok(ExtractedDoc {
-        title: article.title.or_else(|| metadata.title.clone()),
+        title,
         body_md,
-        language: article.lang.or_else(|| metadata.language.clone()),
-        byline: article.byline,
-        excerpt: article.excerpt,
-        site_name: article.site_name,
-        published_time: article
-            .published_time
-            .or_else(|| metadata.published.clone()),
-        image: article.image.or_else(|| metadata.image.clone()),
+        language,
+        byline,
+        excerpt,
+        site_name,
+        published_time,
+        image,
         metadata,
         raw_html_text_len,
     })
+}
+
+/// Non-content blocks whose inner text must never bleed into the fallback
+/// markdown. The markdown converter's default arm recurses into unknown tags
+/// and emits their text, so `<script>`/`<style>`/etc. are stripped first.
+static NONCONTENT_BLOCKS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    ["script", "style", "noscript", "template", "svg"]
+        .iter()
+        // The `regex` crate has no backreferences, so each tag gets its own
+        // open-tag…close-tag pattern (case-insensitive, dot-matches-newline).
+        .map(|t| Regex::new(&format!(r"(?is)<{t}\b[^>]*>.*?</{t}>")).unwrap())
+        .collect()
+});
+
+static HTML_COMMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<!--.*?-->").unwrap());
+
+/// Best-effort `<body>`→markdown conversion used when readabilityrs finds no
+/// article. Extracts the body, strips non-content blocks (scripts, styles,
+/// inline SVG, comments) so they can't leak as text, then converts what
+/// remains. Returns an empty string for a contentless document.
+fn fallback_body_markdown(html: &str) -> String {
+    let doc = scraper::Html::parse_document(html);
+    let body_sel = scraper::Selector::parse("body").unwrap();
+    let body_html = doc
+        .select(&body_sel)
+        .next()
+        .map(|b| b.inner_html())
+        .unwrap_or_else(|| html.to_string());
+
+    let mut cleaned = HTML_COMMENT.replace_all(&body_html, "").into_owned();
+    for re in NONCONTENT_BLOCKS.iter() {
+        cleaned = re.replace_all(&cleaned, "").into_owned();
+    }
+
+    readabilityrs::markdown::html_to_markdown(&cleaned, &rover_markdown_options())
+        .trim()
+        .to_string()
+}
+
+/// Read the document's `<title>` element text — the last-resort title for the
+/// no-article fallback (the metadata pre-pass only reads OG/Twitter/JSON-LD
+/// titles, not the plain `<title>` tag).
+fn read_title_tag(html: &str) -> Option<String> {
+    let doc = scraper::Html::parse_document(html);
+    let sel = scraper::Selector::parse("title").ok()?;
+    doc.select(&sel)
+        .next()
+        .map(|t| t.text().collect::<String>().trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Backwards-compatible wrapper for callers that don't have a base `Url`.
@@ -218,5 +300,51 @@ mod tests {
         let url = Url::parse("https://example.com/page").unwrap();
         let doc = extract(SAMPLE_HTML, Some(&url)).expect("extract ok");
         assert_eq!(doc.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn trivial_heading_only_doc_does_not_error() {
+        // A bare heading is below readabilityrs's char threshold and readability
+        // alone returns no article — Rover must still surface the content rather
+        // than failing the whole fetch.
+        let url = Url::parse("http://127.0.0.1/").unwrap();
+        let doc = extract(
+            "<html><head><title>Hi</title></head><body><h1>Hello loopback</h1></body></html>",
+            Some(&url),
+        )
+        .expect("trivial doc should extract, not error");
+        assert!(
+            doc.body_md.contains("Hello loopback"),
+            "body should contain the heading text, got: {:?}",
+            doc.body_md
+        );
+    }
+
+    #[test]
+    fn short_paragraph_doc_does_not_error() {
+        let url = Url::parse("https://example.com/").unwrap();
+        let doc = extract(
+            "<html><head><title>Note</title></head><body><p>A short note.</p></body></html>",
+            Some(&url),
+        )
+        .expect("short doc should extract, not error");
+        assert!(
+            doc.body_md.contains("A short note."),
+            "body should contain the paragraph text, got: {:?}",
+            doc.body_md
+        );
+    }
+
+    #[test]
+    fn empty_body_doc_does_not_error() {
+        // Even a contentless document should yield an (empty) doc, never a hard
+        // error that fails the fetch.
+        let url = Url::parse("https://example.com/").unwrap();
+        let doc = extract(
+            "<html><head><title>Empty</title></head><body></body></html>",
+            Some(&url),
+        )
+        .expect("empty doc should extract, not error");
+        assert_eq!(doc.title.as_deref(), Some("Empty"));
     }
 }
