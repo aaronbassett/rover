@@ -50,6 +50,32 @@ pub fn write_file(path: &Path, contents: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Upsert the `rover` server into an `mcp.json` document.
+pub fn merge_mcp_server(json_text: &str) -> anyhow::Result<String> {
+    let mut root: serde_json::Value = if json_text.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(json_text).context("parsing mcp.json")?
+    };
+    let obj = root
+        .as_object_mut()
+        .context("mcp.json root is not a JSON object")?;
+    let servers = obj
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    let servers = servers
+        .as_object_mut()
+        .context("mcp.json `mcpServers` is not a JSON object")?;
+    servers.insert(
+        "rover".to_string(),
+        serde_json::json!({ "command": "rover", "args": ["mcp"] }),
+    );
+
+    let mut out = serde_json::to_string_pretty(&root)?;
+    out.push('\n');
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +109,29 @@ mod tests {
         // Re-applying the same body is a fixed point.
         let thrice = upsert_managed_block(&twice, "SECOND");
         assert_eq!(thrice, twice);
+    }
+
+    #[test]
+    fn mcp_fresh_document_adds_rover() {
+        let out = merge_mcp_server("").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["mcpServers"]["rover"]["command"], "rover");
+        assert_eq!(v["mcpServers"]["rover"]["args"][0], "mcp");
+    }
+
+    #[test]
+    fn mcp_preserves_other_servers_and_is_idempotent() {
+        let existing = r#"{"mcpServers":{"other":{"command":"x"}}}"#;
+        let once = merge_mcp_server(existing).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&once).unwrap();
+        assert_eq!(v["mcpServers"]["other"]["command"], "x");
+        assert_eq!(v["mcpServers"]["rover"]["command"], "rover");
+        let twice = merge_mcp_server(&once).unwrap();
+        assert_eq!(twice, once);
+    }
+
+    #[test]
+    fn mcp_malformed_is_error() {
+        assert!(merge_mcp_server("{ not json").is_err());
     }
 }
