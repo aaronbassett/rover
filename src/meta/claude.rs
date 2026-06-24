@@ -93,7 +93,7 @@ pub fn apply(scope: Scope, root: &Path) -> anyhow::Result<Vec<Change>> {
 }
 
 /// `claude mcp add rover -s <scope> -- rover mcp`, skipping if already present.
-pub fn register_mcp(scope: Scope) -> anyhow::Result<()> {
+fn register_mcp(scope: Scope) -> anyhow::Result<()> {
     let present = Command::new(claude_bin())
         .args(["mcp", "get", "rover"])
         .stdout(Stdio::null())
