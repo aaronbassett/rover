@@ -3,4 +3,19 @@
 //! See `docs/superpowers/specs/2026-06-24-rover-meta-use-harness-design.md`.
 
 pub mod edits;
+pub mod general;
 pub mod hook;
+
+use std::path::PathBuf;
+
+/// A single file action performed by `run_use`, for the summary printout.
+pub struct Change {
+    pub path: PathBuf,
+    pub action: &'static str,
+}
+
+impl Change {
+    pub fn new(path: PathBuf, action: &'static str) -> Self {
+        Self { path, action }
+    }
+}
