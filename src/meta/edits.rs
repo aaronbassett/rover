@@ -76,9 +76,104 @@ pub fn merge_mcp_server(json_text: &str) -> anyhow::Result<String> {
     Ok(out)
 }
 
+/// Add Rover's `SessionStart` and `PreToolUse(WebFetch)` hooks to a
+/// `settings.json` document, idempotently (keyed on `hook_command`).
+pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String> {
+    let mut root: serde_json::Value = if json_text.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str(json_text).context("parsing settings.json")?
+    };
+    let obj = root
+        .as_object_mut()
+        .context("settings.json root is not a JSON object")?;
+    let hooks = obj.entry("hooks").or_insert_with(|| serde_json::json!({}));
+    let hooks = hooks
+        .as_object_mut()
+        .context("settings.json `hooks` is not a JSON object")?;
+
+    add_event_hook(hooks, "SessionStart", None, hook_command)?;
+    add_event_hook(hooks, "PreToolUse", Some("WebFetch"), hook_command)?;
+
+    let mut out = serde_json::to_string_pretty(&root)?;
+    out.push('\n');
+    Ok(out)
+}
+
+fn add_event_hook(
+    hooks: &mut serde_json::Map<String, serde_json::Value>,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+) -> anyhow::Result<()> {
+    let arr = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
+    let arr = arr
+        .as_array_mut()
+        .with_context(|| format!("settings.json `hooks.{event}` is not a JSON array"))?;
+
+    let already = arr.iter().any(|group| {
+        group
+            .get("hooks")
+            .and_then(|h| h.as_array())
+            .is_some_and(|hs| {
+                hs.iter()
+                    .any(|hk| hk.get("command").and_then(|c| c.as_str()) == Some(command))
+            })
+    });
+    if already {
+        return Ok(());
+    }
+
+    let mut group = serde_json::Map::new();
+    if let Some(m) = matcher {
+        group.insert("matcher".to_string(), serde_json::json!(m));
+    }
+    group.insert(
+        "hooks".to_string(),
+        serde_json::json!([{ "type": "command", "command": command }]),
+    );
+    arr.push(serde_json::Value::Object(group));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HOOK_CMD: &str = "rover meta hook claude";
+
+    #[test]
+    fn hooks_fresh_document_adds_both_events() {
+        let out = merge_hooks("", HOOK_CMD).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let ss = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        assert_eq!(ss["type"], "command");
+        assert_eq!(ss["command"], HOOK_CMD);
+        let pt = &v["hooks"]["PreToolUse"][0];
+        assert_eq!(pt["matcher"], "WebFetch");
+        assert_eq!(pt["hooks"][0]["command"], HOOK_CMD);
+    }
+
+    #[test]
+    fn hooks_preserve_unrelated_and_are_idempotent() {
+        let existing = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}]}}"#;
+        let once = merge_hooks(existing, HOOK_CMD).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&once).unwrap();
+        // Unrelated Bash hook preserved.
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre.iter().any(|g| g["matcher"] == "Bash"));
+        assert!(pre.iter().any(|g| g["matcher"] == "WebFetch"));
+        // Re-running adds nothing.
+        let twice = merge_hooks(&once, HOOK_CMD).unwrap();
+        assert_eq!(twice, once);
+        let v2: serde_json::Value = serde_json::from_str(&twice).unwrap();
+        assert_eq!(v2["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn hooks_malformed_is_error() {
+        assert!(merge_hooks("{ broken", HOOK_CMD).is_err());
+    }
 
     #[test]
     fn inserts_block_into_empty() {
