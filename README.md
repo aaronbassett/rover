@@ -70,6 +70,15 @@ The canonical surface is the MCP server. Add it to **Claude Code** in one comman
 claude mcp add rover -- rover mcp
 ```
 
+Or let Rover do the whole wiring — MCP server, steering hooks, and a rules-file block — in one command:
+
+```sh
+rover meta use claude     # Claude Code: registers the MCP server, installs SessionStart + WebFetch hooks, updates CLAUDE.md
+rover meta use general    # any other harness: writes ./mcp.json + an AGENTS.md steering block
+```
+
+`--scope local|user|project` (default `local`) mirrors the Claude CLI. The command is idempotent and validates before it writes (it aborts without touching anything if the `claude` binary is missing or a target file is malformed JSON).
+
 For any other MCP client that takes a JSON config, the standard shape is:
 
 ```json
