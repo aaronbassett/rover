@@ -7,7 +7,7 @@ pub mod edit;
 pub mod provenance;
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -903,6 +903,98 @@ pub fn load(path: Option<&Path>) -> Result<Config, ConfigError> {
     Ok(cfg)
 }
 
+/// Ordered config-file candidates searched when `--config` is absent.
+///
+/// When `ROVER_CONFIG` is set it designates the sole candidate (an explicit
+/// redirect should not silently fall through to other locations). Otherwise the
+/// platform config dir (`<config_dir>/rover/rover.toml`) is tried first, then a
+/// project-local `./rover.toml`.
+fn config_candidates_from(
+    rover_config_env: Option<&str>,
+    config_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    if let Some(p) = rover_config_env {
+        return vec![PathBuf::from(p)];
+    }
+    let mut candidates = Vec::with_capacity(2);
+    if let Some(dir) = config_dir {
+        candidates.push(dir.join("rover").join("rover.toml"));
+    }
+    candidates.push(PathBuf::from("rover.toml"));
+    candidates
+}
+
+fn config_candidates() -> Vec<PathBuf> {
+    config_candidates_from(
+        std::env::var("ROVER_CONFIG").ok().as_deref(),
+        dirs::config_dir().as_deref(),
+    )
+}
+
+/// The canonical config path: where `rover config set` creates a new file, and
+/// where `rover config show` reports when no file exists yet. This is the first
+/// (highest-precedence) candidate, regardless of whether it exists on disk.
+pub fn default_config_path() -> PathBuf {
+    config_candidates()
+        .into_iter()
+        .next()
+        .expect("config_candidates always yields at least one path")
+}
+
+/// The first existing config file among the ordered candidates, or `None` when
+/// none exists (built-in defaults apply).
+///
+/// Shared by the runtime subcommands and by `config show` / `config set` so all
+/// of them agree on which file is "the active config" — closing the footgun
+/// where `config set` wrote a file the runtime never read.
+pub fn resolve_existing_config_path() -> Option<PathBuf> {
+    config_candidates().into_iter().find(|p| p.is_file())
+}
+
+/// Load the effective config, resolving the default path when `--config` is
+/// absent.
+///
+/// - `Some(path)`: an explicitly requested file. It MUST exist and parse — a
+///   typo in `--config` fails loudly rather than silently falling back to
+///   defaults.
+/// - `None`: search the default candidates (`ROVER_CONFIG`, then the platform
+///   config dir, then `./rover.toml`) and load the first that exists; if none
+///   exists, fall back to built-in defaults (the config file is optional).
+///
+/// Runtime subcommands call this instead of [`load`] so a saved config file is
+/// honored without requiring `--config` on every invocation.
+pub fn load_resolved(explicit: Option<&Path>) -> Result<Config, ConfigError> {
+    if let Some(path) = explicit {
+        tracing::debug!(path = %path.display(), "loading config from --config");
+        return load(Some(path));
+    }
+    match resolve_existing_config_path() {
+        Some(path) => {
+            tracing::debug!(path = %path.display(), "loading config from resolved default path");
+            load(Some(&path))
+        }
+        None => {
+            tracing::debug!("no config file found at any default path; using built-in defaults");
+            Ok(Config::default())
+        }
+    }
+}
+
+/// Pure core shared with the public [`load_resolved`], with the resolved
+/// "active config" path injected so both branches are unit-testable without
+/// touching process env or the real config dir.
+#[cfg(test)]
+fn load_resolved_from(
+    explicit: Option<&Path>,
+    resolved_existing: Option<&Path>,
+) -> Result<Config, ConfigError> {
+    match (explicit, resolved_existing) {
+        (Some(path), _) => load(Some(path)),
+        (None, Some(path)) => load(Some(path)),
+        (None, None) => Ok(Config::default()),
+    }
+}
+
 fn validate(cfg: &mut Config) -> Result<(), String> {
     if cfg.fetch.timeout_secs == 0 {
         return Err("fetch.timeout_secs must be > 0".to_string());
@@ -1726,5 +1818,90 @@ level = true
         let toml = "[prompt_injection]\nbogus = 1\n";
         let r: Result<Config, _> = toml::from_str(toml);
         assert!(r.is_err(), "expected deny_unknown_fields rejection");
+    }
+
+    #[test]
+    fn config_candidates_prefers_rover_config_env_as_sole_candidate() {
+        let c = config_candidates_from(Some("/custom/x.toml"), Some(Path::new("/cfg")));
+        assert_eq!(c, vec![std::path::PathBuf::from("/custom/x.toml")]);
+    }
+
+    #[test]
+    fn config_candidates_searches_platform_then_cwd() {
+        let c = config_candidates_from(None, Some(Path::new("/cfg")));
+        assert_eq!(
+            c,
+            vec![
+                std::path::PathBuf::from("/cfg/rover/rover.toml"),
+                std::path::PathBuf::from("rover.toml"),
+            ]
+        );
+    }
+
+    #[test]
+    fn config_candidates_falls_back_to_cwd_rover_toml() {
+        let c = config_candidates_from(None, None);
+        assert_eq!(c, vec![std::path::PathBuf::from("rover.toml")]);
+    }
+
+    #[test]
+    fn resolve_existing_prefers_platform_over_cwd_candidate() {
+        // Lay down <tmp>/rover/rover.toml and confirm it is the chosen file.
+        let tmp = tempfile::tempdir().unwrap();
+        let rover_dir = tmp.path().join("rover");
+        std::fs::create_dir_all(&rover_dir).unwrap();
+        let platform_file = rover_dir.join("rover.toml");
+        std::fs::write(&platform_file, "[fetch]\ntimeout_secs = 3\n").unwrap();
+
+        let resolved = config_candidates_from(None, Some(tmp.path()))
+            .into_iter()
+            .find(|p| p.is_file());
+        assert_eq!(resolved, Some(platform_file));
+    }
+
+    #[test]
+    fn resolve_existing_is_none_when_no_candidate_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        // tmp has no rover/rover.toml, and the crate root has no ./rover.toml.
+        let resolved = config_candidates_from(None, Some(tmp.path()))
+            .into_iter()
+            .find(|p| p.is_file());
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn load_resolved_uses_explicit_path_when_present() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "[fetch]\ntimeout_secs = 7\n").unwrap();
+        // A resolved default must be ignored when --config is supplied.
+        let cfg = load_resolved_from(Some(file.path()), None).unwrap();
+        assert_eq!(cfg.fetch.timeout_secs, 7);
+    }
+
+    #[test]
+    fn load_resolved_errors_when_explicit_path_missing() {
+        // An explicit --config typo must fail loudly, NOT fall back to the
+        // resolved default or to built-in defaults.
+        let mut default_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(default_file, "[fetch]\ntimeout_secs = 9\n").unwrap();
+        let result = load_resolved_from(
+            Some(Path::new("/no/such/__rover_explicit__.toml")),
+            Some(default_file.path()),
+        );
+        assert!(matches!(result, Err(ConfigError::Read { .. })));
+    }
+
+    #[test]
+    fn load_resolved_loads_resolved_default_when_no_explicit() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "[fetch]\ntimeout_secs = 11\n").unwrap();
+        let cfg = load_resolved_from(None, Some(file.path())).unwrap();
+        assert_eq!(cfg.fetch.timeout_secs, 11);
+    }
+
+    #[test]
+    fn load_resolved_falls_back_to_defaults_when_nothing_resolves() {
+        let cfg = load_resolved_from(None, None).unwrap();
+        assert_eq!(cfg.fetch.timeout_secs, default_timeout_secs());
     }
 }

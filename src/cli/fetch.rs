@@ -43,7 +43,7 @@ pub struct Args {
 }
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
-    let mut cfg = config::load(config_path).context("loading config")?;
+    let mut cfg = config::load_resolved(config_path).context("loading config")?;
     cfg.apply_overrides(
         args.rate_limit_rpm,
         args.per_host_concurrency,
