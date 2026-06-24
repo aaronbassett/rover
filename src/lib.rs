@@ -11,6 +11,7 @@ pub mod extractor;
 pub mod fetcher;
 pub mod guard;
 pub mod mcp;
+pub mod meta;
 #[cfg(any(feature = "local-inference", feature = "injection-model"))]
 pub mod model_integrity;
 pub mod paths;
