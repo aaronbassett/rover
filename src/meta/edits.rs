@@ -14,12 +14,13 @@ pub const END_MARKER: &str = "<!-- rover:end -->";
 /// otherwise the block is appended. Content outside the markers is untouched.
 /// `body` is the block's inner Markdown (no markers).
 pub fn upsert_managed_block(contents: &str, body: &str) -> String {
+    let body = body.trim_end_matches('\n');
     let block = format!("{BEGIN_MARKER}\n{body}\n{END_MARKER}");
 
-    if let (Some(start), Some(end)) = (contents.find(BEGIN_MARKER), contents.find(END_MARKER))
-        && start < end
+    if let Some(start) = contents.find(BEGIN_MARKER)
+        && let Some(rel) = contents[start..].find(END_MARKER)
     {
-        let end_full = end + END_MARKER.len();
+        let end_full = start + rel + END_MARKER.len();
         let mut out = String::with_capacity(contents.len() + block.len());
         out.push_str(&contents[..start]);
         out.push_str(&block);
@@ -66,6 +67,7 @@ mod tests {
         let out = upsert_managed_block("# My notes\n", "BODY");
         assert!(out.starts_with("# My notes\n"));
         assert!(out.contains(BEGIN_MARKER));
+        assert!(out.contains(END_MARKER));
     }
 
     #[test]
