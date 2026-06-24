@@ -45,6 +45,10 @@ enum Command {
     /// Start the MCP server (long-running).
     Mcp(McpArgs),
 
+    /// Wire Rover into an agent harness (MCP config, hooks, rules file).
+    #[command(subcommand)]
+    Meta(rover::cli::meta::MetaCommand),
+
     /// One-shot fetch, prints markdown to stdout.
     Fetch(FetchArgs),
 
@@ -353,6 +357,15 @@ async fn dispatch(cli: Cli) -> ExitCode {
                 cli.config.as_deref(),
             )
             .await
+        }
+        Command::Meta(cmd) => {
+            return match rover::cli::meta::run(cmd) {
+                Ok(code) => ExitCode::from(code as u8),
+                Err(e) => {
+                    eprintln!("rover: {e}");
+                    ExitCode::from(1)
+                }
+            };
         }
         Command::Doctor(args) => {
             let cfg = match rover::config::load_resolved(cli.config.as_deref()) {
