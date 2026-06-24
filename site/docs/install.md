@@ -13,7 +13,7 @@ Three channels: Homebrew, a prebuilt binary, or Cargo. All of them install a bin
 brew install aaronbassett/tap/rover
 ```
 
-Ships the `headless` build and depends on Chromium.
+Ships the `headless` build but pulls in no browser — headless rendering is opt-in and Rover auto-detects a Chrome/Chromium install at runtime (`rover doctor` verifies it). For headless mode, install a browser yourself, e.g. `brew install --cask chromium`.
 
 ## Prebuilt binary (Linux & macOS)
 

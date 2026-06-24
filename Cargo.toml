@@ -139,5 +139,9 @@ install-updater = false
 features = ["headless"]
 default-features = false
 
-[package.metadata.dist.dependencies.homebrew]
-chromium = { version = "*", stage = ["run"] }
+# No Homebrew browser dependency. `chromium` is a (deprecated) Homebrew *cask*,
+# not a formula, so `depends_on "chromium"` fails with "No available formula".
+# Forcing a browser onto every CLI install is also wrong: headless rendering is
+# opt-in, and Rover auto-detects a Chrome/Chromium install at runtime (verified
+# by `rover doctor`). Headless users install a browser themselves, e.g.
+# `brew install --cask chromium`.

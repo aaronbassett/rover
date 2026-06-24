@@ -133,7 +133,7 @@ The default build (~20 MiB) needs no model downloads, no Chrome, and no extra ru
 brew install aaronbassett/tap/rover
 ```
 
-The `rover` formula ships the JavaScript-rendering (`headless`) build and `depends_on "chromium"`. Other optional features (e.g. `local-inference`) are available from source via `cargo install` — see crates.io below.
+The `rover` formula ships the JavaScript-rendering (`headless`) build. It does **not** pull in a browser — headless rendering is opt-in and Rover auto-detects a Chrome/Chromium install at runtime (`rover doctor` verifies it). If you want headless mode, install a browser yourself, e.g. `brew install --cask chromium`. Other optional features (e.g. `local-inference`) are available from source via `cargo install` — see crates.io below.
 
 **Prebuilt binary (Linux & macOS) — on release:**
 
