@@ -305,7 +305,7 @@ api_key_env = "OPENAI_API_KEY"
 
 ### Per-domain rate limiting & `robots.txt`
 
-A per-host token bucket, a global concurrency cap, and a respected `Crawl-Delay` floor — all configurable. The robots cache fails closed (a cached `disallow_all` sentinel for the configured `failure_ttl`), so a flaky robots endpoint doesn't quietly let traffic through.
+A per-host token bucket and a global concurrency cap, always on and configurable. The `robots.txt` gate is **opt-in** (off by default — Rover is an agent's browser, not a crawler, and robots.txt governs crawling); set `robots.respect = true` to enable it. When enabled, a `Crawl-Delay` floor is respected and the robots cache fails closed (a cached `disallow_all` sentinel for the configured `failure_ttl`), so a flaky robots endpoint doesn't quietly let traffic through.
 
 ### HAR debug recording
 

@@ -134,9 +134,11 @@ All HTTP-bound code paths share a single `Pacer` built from this block at startu
 
 ## `[robots]`
 
+Rover is an agent's browser, not a spider — it fetches the page that was explicitly requested, one at a time — so the robots.txt gate is **off by default**. robots.txt governs automated crawling; set `respect = true` to opt into enforcement.
+
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `respect` | bool | `true` | When `false`, the robots.txt gate is bypassed for every fetch. |
+| `respect` | bool | `false` | When `true`, every fetch is gated on the host's robots.txt. Off by default (Rover is an agent browser, not a crawler). |
 | `ignore_domains` | `array<string>` | `[]` | Hosts for which robots.txt is not fetched and rules are not enforced. Lowercased on load. |
 | `default_ttl` | duration | `"24h"` | TTL used when the robots.txt response has no `Cache-Control: max-age`. |
 | `failure_ttl` | duration | `"5m"` | TTL used when the robots.txt fetch fails (5xx, transport error). Fail-closed. Must be `<= default_ttl`. |
