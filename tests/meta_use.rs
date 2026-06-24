@@ -55,7 +55,12 @@ fn claude_aborts_cleanly_when_binary_missing() {
         .expect("rover meta use claude");
     assert!(!out.status.success(), "expected non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("claude"), "stderr:\n{stderr}");
+    // Assert the specific preflight abort message, not merely the word "claude"
+    // (which also appears in the bogus binary path we set above).
+    assert!(
+        stderr.contains("was not found on PATH"),
+        "stderr:\n{stderr}"
+    );
     // Validate-then-apply: nothing was written.
     assert!(!tmp.path().join(".claude").exists());
     assert!(!tmp.path().join("CLAUDE.md").exists());
