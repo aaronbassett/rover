@@ -4919,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "rover-fetch"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aho-corasick",
  "anyhow",
