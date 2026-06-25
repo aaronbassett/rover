@@ -64,16 +64,16 @@ Rover fixes all four. Extraction is the battle-tested [`readabilityrs`](https://
 
 ## Quick start: wire it into your agent
 
-`rover meta use` does the whole wiring in one command — MCP server, steering hooks (Claude Code), and a rules-file block:
+`rover meta use` does the whole wiring in one command (MCP server, steering hooks for Claude Code, and a rules-file block):
 
 ```sh
 rover meta use claude     # Claude Code: claude mcp add + SessionStart/WebFetch hooks + a CLAUDE.md block
 rover meta use general    # other harnesses: ./mcp.json + an AGENTS.md steering block
 ```
 
-`-s/--scope local|user|project` (default `local`) mirrors the Claude CLI. It's idempotent and validates before it writes — aborting untouched if the `claude` binary is missing or a target file is malformed JSON. Full walkthrough, scope→file mapping, and by-hand setup: [`rover-fetch.com/docs/quickstart`](https://rover-fetch.com/docs/quickstart).
+`-s/--scope local|user|project` (default `local`) mirrors the Claude CLI. It's idempotent and validates before it writes, so it leaves everything untouched if the `claude` binary is missing or a target file is malformed JSON. Full walkthrough, per-scope file mapping, and by-hand setup: [`rover-fetch.com/docs/quickstart`](https://rover-fetch.com/docs/quickstart).
 
-Prefer to add just the MCP server yourself? `claude mcp add rover -- rover mcp` for **Claude Code**, or point any MCP client at `rover mcp` over stdio with the standard JSON shape:
+To add just the MCP server by hand, run `claude mcp add rover -- rover mcp` for **Claude Code**, or point any MCP client at `rover mcp` over stdio with the standard JSON shape:
 
 ```json
 {
