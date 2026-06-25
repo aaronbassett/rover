@@ -87,6 +87,8 @@ jobs:
             --test mcp_fetch_caption_override \
             --test mcp_get_metadata \
             --test mcp_summarize \
+            --test meta_hook \
+            --test meta_use \
             --test redact_logs \
             --test ssrf_project_file \
             --test summarizer_cloud \
