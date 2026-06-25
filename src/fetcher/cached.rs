@@ -75,10 +75,13 @@ pub struct FetchOptions {
     /// User-Agent used for robots.txt UA-rule evaluation. Must match
     /// `[fetch] user_agent`.
     pub user_agent: String,
-    /// M9: headless renderer instance (`Some` when the binary was built with
-    /// `--features headless` AND the server wired one at startup).
+    /// M9: lazily-initialized headless renderer handle (`Some` when the binary
+    /// was built with `--features headless` AND the caller wired one). The
+    /// browser is launched on first use inside `fetch_with_cache` — only when a
+    /// render actually happens (SPA detected, bot-challenge bypass, or
+    /// `On` mode), never for a plain reqwest fetch.
     #[cfg(feature = "headless")]
-    pub headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>>,
+    pub headless: Option<crate::fetcher::headless::HeadlessHandle>,
     /// M9: per-call mode selection.
     pub headless_mode: HeadlessMode,
     /// When `true`, the caller opts out of the stale-while-revalidate
@@ -237,7 +240,7 @@ where
     // renderer output so step 6 (TTL) and step 7 (store) work unchanged.
     let fetched = match opts.headless_mode {
         HeadlessMode::Off | HeadlessMode::Auto => {
-            match crate::fetcher::retry::with_retries(
+            let retry_result = crate::fetcher::retry::with_retries(
                 db,
                 pacer,
                 client,
@@ -249,8 +252,58 @@ where
                 crawl_delay,
                 rate_cfg,
             )
-            .await
-            {
+            .await;
+
+            // Bot-challenge bypass (Auto mode only): a managed challenge
+            // (Vercel/Cloudflare) returns no usable content to a plain HTTP
+            // client, but the headless browser executes the JS challenge like a
+            // real browser and reaches the page. Upgrade the challenge error
+            // into a headless render here; on bypass failure, reconstruct the
+            // original challenge error so the stale/propagate logic below is
+            // unchanged.
+            #[cfg(feature = "headless")]
+            let retry_result = match retry_result {
+                Err(FetcherError::BotChallenge {
+                    url: ch_url,
+                    provider,
+                }) if opts.headless_mode == HeadlessMode::Auto && opts.headless.is_some() => {
+                    let handle = opts.headless.as_ref().expect("guarded by is_some()");
+                    match handle.get().await {
+                        Ok(r) => match r
+                            .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
+                            .await
+                        {
+                            Ok(rendered) => {
+                                tracing::info!(target: "rover::fetcher::cached",
+                                    url = url.as_str(), provider = %provider,
+                                    "bot-protection challenge on HTTP fetch; bypassed via headless render");
+                                Ok(rendered_to_fetched(rendered))
+                            }
+                            Err(render_err) => {
+                                tracing::warn!(target: "rover::fetcher::cached",
+                                    error = %render_err, url = url.as_str(), provider = %provider,
+                                    "headless bypass of bot-protection challenge failed; returning challenge error");
+                                Err(FetcherError::BotChallenge {
+                                    url: ch_url,
+                                    provider,
+                                })
+                            }
+                        },
+                        Err(launch_err) => {
+                            tracing::warn!(target: "rover::fetcher::cached",
+                                error = %launch_err, url = url.as_str(), provider = %provider,
+                                "could not launch headless renderer to bypass bot-protection challenge; returning challenge error");
+                            Err(FetcherError::BotChallenge {
+                                url: ch_url,
+                                provider,
+                            })
+                        }
+                    }
+                }
+                other => other,
+            };
+
+            match retry_result {
                 Ok(f) => f,
                 Err(e) => {
                     // Network failure with a stale entry available. Serve the
@@ -292,7 +345,9 @@ where
                 let r = opts
                     .headless
                     .as_ref()
-                    .ok_or(FetcherError::HeadlessRendererUnavailable)?;
+                    .ok_or(FetcherError::HeadlessRendererUnavailable)?
+                    .get()
+                    .await?;
                 let rendered = r
                     .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
                     .await?;
@@ -350,10 +405,11 @@ where
     let (fetched, extracted) = if opts.headless_mode == HeadlessMode::Auto {
         #[cfg(feature = "headless")]
         {
-            if let Some(r) = opts.headless.as_ref() {
+            if let Some(h) = opts.headless.as_ref() {
                 let hits =
                     crate::fetcher::headless::detect::detect_spa(&fetched.body, &extracted.body_md);
                 if hits.total >= 2 {
+                    let r = h.get().await?;
                     let rendered = r
                         .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
                         .await?;

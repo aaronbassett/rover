@@ -516,22 +516,17 @@ impl RoverHandler {
         // still hand it the renderer so it has the option). The renderer
         // lives in a process-shared `OnceCell` on the handler, so subsequent
         // fetches reuse the same Chromium instance.
+        // Wrap the server's process-shared renderer cell in a handle. No
+        // browser is launched here: the cached fetcher initializes it lazily on
+        // first real use (SPA detected, bot-challenge bypass, or `On` mode), and
+        // the shared cell means one Chromium instance serves every request.
         #[cfg(feature = "headless")]
-        let headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>> =
+        let headless: Option<crate::fetcher::headless::HeadlessHandle> =
             if !matches!(headless_mode, crate::fetcher::cached::HeadlessMode::Off) {
-                let headless_cfg = self.config.headless.clone();
-                let renderer = self
-                    .headless_renderer
-                    .get_or_try_init(|| async move {
-                        crate::fetcher::headless::HeadlessRenderer::new(&headless_cfg)
-                            .await
-                            .map(std::sync::Arc::new)
-                    })
-                    .await
-                    .map_err(|e: crate::fetcher::headless::HeadlessError| {
-                        McpError::Fetcher(crate::fetcher::FetcherError::Headless(e))
-                    })?;
-                Some(renderer.clone())
+                Some(crate::fetcher::headless::HeadlessHandle::with_cell(
+                    self.headless_renderer.clone(),
+                    self.config.headless.clone(),
+                ))
             } else {
                 None
             };

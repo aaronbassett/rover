@@ -32,6 +32,14 @@ pub fn build_browser_config(
     if !cfg.chrome_executable.is_empty() {
         builder = builder.chrome_executable(&cfg.chrome_executable);
     }
+    // Use Chrome's *new* headless mode (`--headless=new`). chromiumoxide
+    // defaults to the legacy `--headless`, which is both deprecated (removed in
+    // recent Chrome) and far more readily flagged by bot-mitigation services
+    // (e.g. Vercel/Cloudflare managed challenges). New headless is a real
+    // browser surface, so it executes JS challenges and renders SPAs the way a
+    // user's browser would — which is exactly what the challenge-bypass path
+    // relies on.
+    builder = builder.new_headless_mode();
     builder = builder.enable_request_intercept();
     builder = builder.user_data_dir(profile_dir);
     builder
