@@ -37,6 +37,7 @@ Subcommands:
 - `batch <id>` inspects or monitors a `batch_fetch` task (alias for `task` with a kind check).
 - `doctor` runs environment diagnostics.
 - `config <show|set>` inspects or updates the config file.
+- `meta <use|hook>` wires Rover into an agent harness, or runs the hook handler that wiring installs.
 - `model <download|list|remove|verify>` manages the local model cache (feature-gated).
 
 Exit code is `0` on success and `1` on any failure: config parse error, fetch error, doctor check failure, and so on. `doctor` is the one subcommand whose exit code is a verdict; see its section below.
@@ -210,6 +211,48 @@ rover config set cache.store_raw_html true
 rover config set image_captions.default cloud
 rover config set headless.max_concurrent 8
 ```
+
+## `rover meta`
+
+```text
+rover meta use  <claude|general> [-s|--scope <local|user|project>]
+rover meta hook <claude|general>
+```
+
+Wires Rover into an agent harness, or runs the hook handler that wiring installs. Unlike the other subcommands, `meta` does not read the Rover config file.
+
+### `rover meta use`
+
+```text
+rover meta use <harness> [-s|--scope <local|user|project>]
+```
+
+Registers Rover with a harness in one step: MCP server, steering hooks (where supported), and a rules-file block. It is idempotent, and validate-then-apply — it parses every file it would touch first and aborts without writing anything if a prerequisite is missing or a target file is malformed JSON. A per-file summary prints to stderr on success.
+
+| Argument | Values | Default | Description |
+| --- | --- | --- | --- |
+| `<harness>` | `claude`, `general` | — | Target harness. |
+| `-s, --scope <scope>` | `local`, `user`, `project` | `local` | Where config is written. `general` ignores it — it is project-root only. |
+
+`claude` delegates MCP registration to the `claude` CLI (`claude mcp add rover -s <scope> -- rover mcp`, skipped if already registered), installs a `SessionStart` hook and a `WebFetch`-matched `PreToolUse` hook that both run `rover meta hook claude`, and writes a rules block into `CLAUDE.md`. It needs the `claude` binary on `PATH`. Scope decides the files:
+
+| Scope | Hooks file | Rules block |
+| --- | --- | --- |
+| `local` | `.claude/settings.local.json` | — (the `SessionStart` hook carries it) |
+| `project` | `.claude/settings.json` | `./CLAUDE.md` |
+| `user` | `~/.claude/settings.json` | `~/.claude/CLAUDE.md` |
+
+`general` writes a project-root `mcp.json` (adding a `rover` server, preserving any others) and a rules block in `AGENTS.md`. It installs no hooks. Both files are updated in place on re-run.
+
+See [Quickstart](/docs/quickstart) for the full walkthrough, scope→file mapping, and the exact content each piece writes.
+
+### `rover meta hook`
+
+```text
+rover meta hook <harness>
+```
+
+The runtime hook handler that the `claude` wiring points at. It reads a hook payload on stdin, branches on `hook_event_name`, and prints response JSON for `SessionStart` and `PreToolUse` (a non-blocking reminder — no `permissionDecision`); any other event prints nothing. `rover meta hook general` errors, since `general` installs no hooks. You don't normally run this by hand — Claude Code invokes it per the `settings.json` entries that `rover meta use claude` writes.
 
 ## `rover model`
 
