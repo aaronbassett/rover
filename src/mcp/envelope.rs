@@ -195,6 +195,7 @@ impl RoverError {
     pub const INVALID_URL: &'static str = "invalid_url";
     pub const SSRF_DENIED: &'static str = "ssrf_denied";
     pub const FETCH_FAILED: &'static str = "fetch_failed";
+    pub const BOT_CHALLENGE: &'static str = "bot_challenge";
     pub const EXTRACT_FAILED: &'static str = "extract_failed";
     pub const STORAGE_ERROR: &'static str = "storage_error";
     pub const TOKENIZER_UNAVAILABLE: &'static str = "tokenizer_unavailable";

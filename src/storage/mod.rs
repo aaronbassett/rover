@@ -86,6 +86,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "005_summary_cache.sql",
         include_str!("migrations/005_summary_cache.sql"),
     ),
+    (
+        "006_render_reason.sql",
+        include_str!("migrations/006_render_reason.sql"),
+    ),
 ];
 
 /// Per-migration outcome shuttled out of the actor closure so the failed

@@ -3,6 +3,7 @@
 pub mod cache_control;
 pub mod cached;
 pub mod canonical;
+pub mod challenge;
 pub mod charset;
 pub mod client;
 pub mod dns;
@@ -47,6 +48,11 @@ pub enum FetcherError {
 
     #[error("HTTP {status} from {url}")]
     Status { status: u16, url: String },
+
+    #[error(
+        "{provider} bot-protection challenge blocked {url}; the site serves a JavaScript challenge that a plain HTTP fetch cannot solve. Enable headless rendering (build with `--features headless` and install a Chrome/Chromium browser) so Rover can render it in a real browser."
+    )]
+    BotChallenge { url: String, provider: String },
 
     #[error("storage error: {0}")]
     Storage(#[from] crate::storage::StorageError),

@@ -61,7 +61,7 @@ The difference is timing. A page that paints a skeleton, issues an XHR, then fil
 
 ## From the CLI
 
-`rover fetch` has no `--headless` flag. The one-shot CLI opts into rendering through config alone: set `auto_detect_spa = true` in the `[headless]` block, and Auto mode applies to every CLI fetch. Chromium launches lazily, only when the SPA heuristics fire, so a CLI run over static pages never pays the browser cost. The [Configuration](/docs/configuration) page documents the full `[headless]` block.
+`rover fetch` has no `--headless` flag. The one-shot CLI opts into rendering through config alone: set `auto_detect_spa = true` in the `[headless]` block, and Auto mode applies to every CLI fetch. Chromium launches lazily, only when the SPA heuristics fire (or a bot-protection challenge is detected), so a CLI run over static pages never pays the browser cost. A configurable `launch_delay_secs` (default `2`) pauses between that detection and the browser launch; set it to `0` to escalate immediately. The [Configuration](/docs/configuration) page documents the full `[headless]` block.
 
 ## What gets blocked, and why
 

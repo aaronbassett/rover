@@ -75,10 +75,13 @@ pub struct FetchOptions {
     /// User-Agent used for robots.txt UA-rule evaluation. Must match
     /// `[fetch] user_agent`.
     pub user_agent: String,
-    /// M9: headless renderer instance (`Some` when the binary was built with
-    /// `--features headless` AND the server wired one at startup).
+    /// M9: lazily-initialized headless renderer handle (`Some` when the binary
+    /// was built with `--features headless` AND the caller wired one). The
+    /// browser is launched on first use inside `fetch_with_cache` — only when a
+    /// render actually happens (SPA detected, bot-challenge bypass, or
+    /// `On` mode), never for a plain reqwest fetch.
     #[cfg(feature = "headless")]
-    pub headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>>,
+    pub headless: Option<crate::fetcher::headless::HeadlessHandle>,
     /// M9: per-call mode selection.
     pub headless_mode: HeadlessMode,
     /// When `true`, the caller opts out of the stale-while-revalidate
@@ -235,9 +238,15 @@ where
     //
     // The `On` branch synthesizes a `FetchedPage`-shaped value from the
     // renderer output so step 6 (TTL) and step 7 (store) work unchanged.
+    // Track *why* the headless renderer was used, if at all, so the stored row
+    // (and the fetch frontmatter) records how this content was obtained. Set at
+    // each render site below; `None` means a plain HTTP fetch.
+    #[cfg(feature = "headless")]
+    let mut render_reason: Option<&'static str> = None;
+
     let fetched = match opts.headless_mode {
         HeadlessMode::Off | HeadlessMode::Auto => {
-            match crate::fetcher::retry::with_retries(
+            let retry_result = crate::fetcher::retry::with_retries(
                 db,
                 pacer,
                 client,
@@ -249,8 +258,60 @@ where
                 crawl_delay,
                 rate_cfg,
             )
-            .await
-            {
+            .await;
+
+            // Bot-challenge bypass (Auto mode only): a managed challenge
+            // (Vercel/Cloudflare) returns no usable content to a plain HTTP
+            // client, but the headless browser executes the JS challenge like a
+            // real browser and reaches the page. Upgrade the challenge error
+            // into a headless render here; on bypass failure, reconstruct the
+            // original challenge error so the stale/propagate logic below is
+            // unchanged.
+            #[cfg(feature = "headless")]
+            let retry_result = match retry_result {
+                Err(FetcherError::BotChallenge {
+                    url: ch_url,
+                    provider,
+                }) if opts.headless_mode == HeadlessMode::Auto && opts.headless.is_some() => {
+                    let handle = opts.headless.as_ref().expect("guarded by is_some()");
+                    auto_render_delay(handle, url, "bot_challenge_bypass").await;
+                    match handle.get().await {
+                        Ok(r) => match r
+                            .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
+                            .await
+                        {
+                            Ok(rendered) => {
+                                tracing::info!(target: "rover::fetcher::cached",
+                                    url = url.as_str(), provider = %provider,
+                                    "bot-protection challenge on HTTP fetch; bypassed via headless render");
+                                render_reason = Some("bot_challenge");
+                                Ok(rendered_to_fetched(rendered))
+                            }
+                            Err(render_err) => {
+                                tracing::warn!(target: "rover::fetcher::cached",
+                                    error = %render_err, url = url.as_str(), provider = %provider,
+                                    "headless bypass of bot-protection challenge failed; returning challenge error");
+                                Err(FetcherError::BotChallenge {
+                                    url: ch_url,
+                                    provider,
+                                })
+                            }
+                        },
+                        Err(launch_err) => {
+                            tracing::warn!(target: "rover::fetcher::cached",
+                                error = %launch_err, url = url.as_str(), provider = %provider,
+                                "could not launch headless renderer to bypass bot-protection challenge; returning challenge error");
+                            Err(FetcherError::BotChallenge {
+                                url: ch_url,
+                                provider,
+                            })
+                        }
+                    }
+                }
+                other => other,
+            };
+
+            match retry_result {
                 Ok(f) => f,
                 Err(e) => {
                     // Network failure with a stale entry available. Serve the
@@ -292,10 +353,13 @@ where
                 let r = opts
                     .headless
                     .as_ref()
-                    .ok_or(FetcherError::HeadlessRendererUnavailable)?;
+                    .ok_or(FetcherError::HeadlessRendererUnavailable)?
+                    .get()
+                    .await?;
                 let rendered = r
                     .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
                     .await?;
+                render_reason = Some("on");
                 rendered_to_fetched(rendered)
             }
         }
@@ -350,10 +414,13 @@ where
     let (fetched, extracted) = if opts.headless_mode == HeadlessMode::Auto {
         #[cfg(feature = "headless")]
         {
-            if let Some(r) = opts.headless.as_ref() {
+            if let Some(h) = opts.headless.as_ref() {
                 let hits =
                     crate::fetcher::headless::detect::detect_spa(&fetched.body, &extracted.body_md);
                 if hits.total >= 2 {
+                    auto_render_delay(h, url, "spa_rerender").await;
+                    let r = h.get().await?;
+                    render_reason = Some("spa");
                     let rendered = r
                         .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
                         .await?;
@@ -399,6 +466,12 @@ where
     } else {
         None
     };
+    // Resolve the tracked headless reason into the persisted column. In a
+    // non-headless build nothing can render, so it is always `None`.
+    #[cfg(feature = "headless")]
+    let render_reason = render_reason.map(str::to_owned);
+    #[cfg(not(feature = "headless"))]
+    let render_reason: Option<String> = None;
     let page = Page {
         url_hash: new_hash,
         url: url.as_str().to_owned(),
@@ -412,6 +485,7 @@ where
         extracted_md: extracted.body_md.clone(),
         metadata_json,
         raw_html,
+        render_reason,
     };
 
     // Step 7: store (only if cacheable).
@@ -434,6 +508,31 @@ where
 /// computation will therefore fall through to the default-TTL policy. The
 /// canonical URL is resolved from the rendered DOM (`<link rel="canonical">`)
 /// or falls back to the final URL.
+/// Apply the configured Auto-mode pre-render delay before escalating to the
+/// headless browser. Runs *after* the render trigger has been detected (SPA
+/// heuristic fired, or a bot-challenge was returned) and *before* the browser
+/// is launched/driven, giving the origin a breather between the lightweight
+/// HTTP fetch and the heavier browser hit. A no-op when configured to zero.
+#[cfg(feature = "headless")]
+async fn auto_render_delay(
+    handle: &crate::fetcher::headless::HeadlessHandle,
+    url: &url::Url,
+    reason: &'static str,
+) {
+    let delay = handle.launch_delay();
+    if delay.is_zero() {
+        return;
+    }
+    tracing::debug!(
+        target: "rover::fetcher::cached",
+        url = url.as_str(),
+        delay_secs = delay.as_secs(),
+        reason,
+        "Auto-mode pre-render delay before headless launch",
+    );
+    tokio::time::sleep(delay).await;
+}
+
 #[cfg(feature = "headless")]
 fn rendered_to_fetched(
     rendered: crate::fetcher::headless::RenderedPage,
@@ -584,6 +683,7 @@ mod tests {
             extracted_md: "# cached".into(),
             metadata_json: None,
             raw_html: None,
+            render_reason: None,
         };
         pages::upsert(&db, page.clone()).await.unwrap();
 
@@ -744,6 +844,7 @@ mod tests {
             extracted_md: "# old".into(),
             metadata_json: None,
             raw_html: None,
+            render_reason: None,
         };
         pages::upsert(db, page).await.unwrap();
     }

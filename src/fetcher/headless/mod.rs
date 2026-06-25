@@ -250,11 +250,121 @@ impl HeadlessRenderer {
         })
     }
 
-    /// Stop the background handler task and request the browser to exit.
+    /// Request the browser to exit, then stop the background handler task.
     /// Consumes the renderer.
+    ///
+    /// Ordering matters: `browser.close()` issues the CDP `Browser.close`
+    /// command and waits for the acknowledgement, which only arrives if the
+    /// handler task is still pumping the WebSocket. Aborting the handler first
+    /// (as we used to) strands the close handshake, so chromiumoxide's
+    /// `Browser::drop` later logs `Browser was not closed manually` and the
+    /// connection dies with `ResetWithoutClosingHandshake`. Close first, then
+    /// abort the now-idle handler.
     pub async fn shutdown(mut self) {
-        self.handler_task.abort();
         let _ = self.browser.close().await;
+        let _ = self.browser.wait().await;
+        self.handler_task.abort();
+    }
+}
+
+/// A lazily-initialized handle to a [`HeadlessRenderer`].
+///
+/// Constructing a handle is cheap — it does **not** launch a browser. Chromium
+/// is launched on the first [`HeadlessHandle::get`] call and then reused. This
+/// lets callers wire a renderer into a fetch unconditionally while paying the
+/// browser-launch cost only when a render actually happens (an SPA is detected,
+/// a bot-challenge needs bypassing, or `headless.mode = on`). A plain reqwest
+/// fetch that never needs the browser launches nothing — and therefore emits
+/// none of chromiumoxide's process-teardown noise.
+///
+/// The inner `OnceCell` is shareable: the one-shot CLI uses a fresh handle per
+/// invocation, while the long-running MCP server wraps a single process-shared
+/// cell ([`HeadlessHandle::with_cell`]) so one Chromium instance serves every
+/// request.
+#[derive(Clone)]
+pub struct HeadlessHandle {
+    cell: Arc<tokio::sync::OnceCell<Arc<HeadlessRenderer>>>,
+    cfg: HeadlessConfig,
+}
+
+impl std::fmt::Debug for HeadlessHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeadlessHandle")
+            .field("initialized", &self.cell.get().is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl HeadlessHandle {
+    /// Create a handle backed by a fresh, empty renderer cell. No browser is
+    /// launched until [`HeadlessHandle::get`] is first called.
+    pub fn new(cfg: HeadlessConfig) -> Self {
+        Self {
+            cell: Arc::new(tokio::sync::OnceCell::new()),
+            cfg,
+        }
+    }
+
+    /// Create a handle wrapping an existing shared renderer cell. Used by the
+    /// long-running MCP server so a single Chromium instance is reused across
+    /// requests for the server's lifetime.
+    pub fn with_cell(
+        cell: Arc<tokio::sync::OnceCell<Arc<HeadlessRenderer>>>,
+        cfg: HeadlessConfig,
+    ) -> Self {
+        Self { cell, cfg }
+    }
+
+    /// Get the renderer, launching the browser on first use. Subsequent calls
+    /// return the same instance. Concurrent first-callers race on the
+    /// `OnceCell`; the loser reuses the winner's renderer.
+    pub async fn get(&self) -> Result<Arc<HeadlessRenderer>, HeadlessError> {
+        let cfg = self.cfg.clone();
+        self.cell
+            .get_or_try_init(|| async move { HeadlessRenderer::new(&cfg).await.map(Arc::new) })
+            .await
+            .cloned()
+    }
+
+    /// Whether the browser has been launched (the cell is populated).
+    pub fn is_initialized(&self) -> bool {
+        self.cell.get().is_some()
+    }
+
+    /// The configured Auto-mode delay to apply before escalating to a headless
+    /// render (after the SPA/bot-challenge detection, before launching the
+    /// browser). `Duration::ZERO` when disabled.
+    pub fn launch_delay(&self) -> std::time::Duration {
+        self.cfg.launch_delay()
+    }
+
+    /// Cleanly shut the browser down if it was ever launched. Consumes the
+    /// handle. A no-op when the browser was never launched (the common case for
+    /// non-SPA, unchallenged fetches), so callers can invoke it unconditionally
+    /// on every exit path.
+    pub async fn shutdown(self) {
+        let Self { cell, .. } = self;
+        match Arc::try_unwrap(cell) {
+            Ok(cell) => {
+                if let Some(renderer_arc) = cell.into_inner() {
+                    match Arc::try_unwrap(renderer_arc) {
+                        Ok(renderer) => renderer.shutdown().await,
+                        Err(_still_shared) => {
+                            tracing::warn!(
+                                target: "rover::fetcher::headless",
+                                "headless renderer still has outstanding references at shutdown; skipping explicit close",
+                            );
+                        }
+                    }
+                }
+            }
+            Err(_still_shared) => {
+                tracing::warn!(
+                    target: "rover::fetcher::headless",
+                    "headless handle still shared at shutdown; skipping explicit close",
+                );
+            }
+        }
     }
 }
 

@@ -42,6 +42,7 @@ async fn stale_path_inserts_revalidate_task() {
             extracted_md: "old".into(),
             metadata_json: None,
             raw_html: None,
+            render_reason: None,
         },
     )
     .await

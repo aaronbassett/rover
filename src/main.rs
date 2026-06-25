@@ -272,9 +272,15 @@ fn main() -> ExitCode {
     // actual output, so they default to `warn` — quiet on success but
     // real diagnostics (stale serves, HAR flush failures, etc.) still
     // surface. `RUST_LOG` overrides either default.
+    // `chromiumoxide=off`: the headless-browser driver logs its own internal
+    // diagnostics (CDP protocol-version skew with newer Chrome — "WS Invalid
+    // message" — plus browser-teardown chatter) at warn/error. These are an
+    // implementation detail, not actionable by a Rover user, and Rover surfaces
+    // genuine headless failures through its own typed errors. Silence them by
+    // default; `RUST_LOG=chromiumoxide=trace` brings them back for debugging.
     let default_filter = match &cli.command {
-        Command::Mcp(_) => "info,rover=debug",
-        _ => "warn",
+        Command::Mcp(_) => "info,rover=debug,chromiumoxide=off",
+        _ => "warn,chromiumoxide=off",
     };
     rover::telemetry::init(default_filter);
 
@@ -362,7 +368,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
             return match rover::cli::meta::run(cmd) {
                 Ok(code) => ExitCode::from(code as u8),
                 Err(e) => {
-                    eprintln!("rover: {e}");
+                    eprintln!("rover: {e:#}");
                     ExitCode::from(1)
                 }
             };
@@ -371,7 +377,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
             let cfg = match rover::config::load_resolved(cli.config.as_deref()) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("rover: loading config: {e}");
+                    eprintln!("rover: loading config: {e:#}");
                     return ExitCode::from(1);
                 }
             };
@@ -385,7 +391,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
             {
                 Ok(code) => ExitCode::from(code as u8),
                 Err(e) => {
-                    eprintln!("rover: {e}");
+                    eprintln!("rover: {e:#}");
                     ExitCode::from(1)
                 }
             };
@@ -398,7 +404,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
                 return match res {
                     Ok(code) => ExitCode::from(code as u8),
                     Err(e) => {
-                        eprintln!("rover: {e}");
+                        eprintln!("rover: {e:#}");
                         ExitCode::from(1)
                     }
                 };
@@ -412,7 +418,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
                 return match res {
                     Ok(code) => ExitCode::from(code as u8),
                     Err(e) => {
-                        eprintln!("rover: {e}");
+                        eprintln!("rover: {e:#}");
                         ExitCode::from(1)
                     }
                 };
@@ -425,7 +431,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("rover: {e}");
+            eprintln!("rover: {e:#}");
             ExitCode::from(1)
         }
     }

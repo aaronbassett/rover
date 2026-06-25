@@ -130,14 +130,17 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
     } else {
         crate::fetcher::HeadlessMode::Off
     };
+    // Lazily-wired headless handle: constructing it launches no browser. The
+    // cached fetcher launches Chromium on first use only when a render actually
+    // happens (SPA detected, or a bot-challenge needs bypassing). A plain
+    // reqwest fetch that never needs the browser launches nothing — and so
+    // emits none of chromiumoxide's process-teardown noise.
     #[cfg(feature = "headless")]
-    let headless: Option<std::sync::Arc<crate::fetcher::headless::HeadlessRenderer>> =
+    let headless: Option<crate::fetcher::headless::HeadlessHandle> =
         if !matches!(headless_mode, crate::fetcher::HeadlessMode::Off) {
-            let r = crate::fetcher::headless::HeadlessRenderer::new(&cfg.headless)
-                .await
-                .map(std::sync::Arc::new)
-                .context("launching headless renderer")?;
-            Some(r)
+            Some(crate::fetcher::headless::HeadlessHandle::new(
+                cfg.headless.clone(),
+            ))
         } else {
             None
         };
@@ -179,8 +182,20 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
             })
         },
     )
-    .await
-    .context("fetching URL")?;
+    .await;
+
+    // Tear the headless browser down (if it was ever launched) immediately —
+    // it is only used inside `fetch_with_cache`. Doing it here, before the `?`
+    // and before any later fallible step, guarantees a clean shutdown on every
+    // path (success or error) so chromiumoxide's handler task never outlives
+    // this one-shot invocation and never logs a teardown warning. A no-op when
+    // the browser was never launched.
+    #[cfg(feature = "headless")]
+    if let Some(h) = headless {
+        h.shutdown().await;
+    }
+
+    let result = result.context("fetching URL")?;
 
     if matches!(result.cache_status, CacheStatus::Stale { .. }) {
         tracing::warn!(
@@ -273,6 +288,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         schema_types: &metadata.schema_types,
         extraction_quality: quality,
         summarized,
+        headless_render: result.page.render_reason.as_deref(),
         tables_transformed: &[],
         images_seen: 0,
         images_downloaded: 0,
@@ -288,23 +304,6 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         && let Err(e) = r.flush().await
     {
         tracing::warn!(target: "rover::fetcher", error = ?e, "har flush failed");
-    }
-
-    // M9 fix C1: tear down the renderer cleanly so chromiumoxide's handler
-    // task doesn't outlive this one-shot CLI invocation. `try_unwrap` is
-    // expected to succeed — `fetch_with_cache` returned, so the only other
-    // strong reference (the one we passed into `FetchOptions`) is gone.
-    #[cfg(feature = "headless")]
-    if let Some(renderer) = headless {
-        match std::sync::Arc::try_unwrap(renderer) {
-            Ok(r) => r.shutdown().await,
-            Err(_still_shared) => {
-                tracing::warn!(
-                    target: "rover::cli::fetch",
-                    "headless renderer still has outstanding Arc references at shutdown; skipping explicit shutdown",
-                );
-            }
-        }
     }
 
     Ok(())

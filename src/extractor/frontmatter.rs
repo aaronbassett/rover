@@ -78,6 +78,10 @@ pub struct PageMeta<'a> {
     /// Whether the body was summarized before rendering (CLI `--max-tokens`
     /// / `--summarize`). Rendered as `summarized: true` when set.
     pub summarized: bool,
+    /// How the content was obtained when it required a headless render:
+    /// `"on"`, `"spa"`, or `"bot_challenge"`. `None` for a plain HTTP fetch.
+    /// Rendered as `headless_render: <reason>` when set.
+    pub headless_render: Option<&'a str>,
     pub tables_transformed: &'a [crate::extractor::tables::TableTransform],
     pub images_seen: usize,
     pub images_downloaded: usize,
@@ -109,6 +113,9 @@ pub fn render(meta: &PageMeta<'_>) -> String {
     write_field(&mut buf, "tokenizer", meta.tokenizer_name);
     if meta.summarized {
         buf.push_str("summarized: true\n");
+    }
+    if let Some(reason) = meta.headless_render {
+        write_field(&mut buf, "headless_render", reason);
     }
 
     // M4 metadata fields — emit only when present.
@@ -328,6 +335,7 @@ mod tests {
             schema_types: &[],
             extraction_quality: 0.50,
             summarized: false,
+            headless_render: None,
             tables_transformed: &[],
             images_seen: 0,
             images_downloaded: 0,
@@ -373,6 +381,23 @@ mod tests {
             ..meta(&url, "x")
         });
         assert!(out.contains(r#"canonical_url: "https://example.com/page""#));
+    }
+
+    #[test]
+    fn emits_headless_render_reason_when_set() {
+        let url = u("https://example.com/spa");
+        let out = render(&PageMeta {
+            headless_render: Some("bot_challenge"),
+            ..meta(&url, "x")
+        });
+        assert!(out.contains(r#"headless_render: "bot_challenge""#));
+    }
+
+    #[test]
+    fn omits_headless_render_when_absent() {
+        let url = u("https://example.com/");
+        let out = render(&meta(&url, "x"));
+        assert!(!out.contains("headless_render"));
     }
 
     #[test]
@@ -532,6 +557,7 @@ mod tests {
             images_failed: 0,
             images_processed: vec![],
             summarized: false,
+            headless_render: None,
             prompt_injection: Some(&telem),
         };
         let out = render(&meta);
@@ -573,6 +599,7 @@ mod tests {
             images_failed: 0,
             images_processed: vec![],
             summarized: false,
+            headless_render: None,
             prompt_injection: None,
         };
         assert!(!render(&meta).contains("prompt_injection"));

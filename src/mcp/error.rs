@@ -120,6 +120,9 @@ impl McpError {
                     F::Http(_) | F::Dns { .. } | F::Decode | F::Status { .. } => {
                         RoverError::new(RoverError::FETCH_FAILED, e.to_string())
                     }
+                    F::BotChallenge { .. } => {
+                        RoverError::new(RoverError::BOT_CHALLENGE, e.to_string())
+                    }
                     F::HeadlessFeatureNotCompiled => {
                         RoverError::new(RoverError::HEADLESS_FEATURE_NOT_COMPILED, e.to_string())
                     }

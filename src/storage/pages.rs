@@ -36,6 +36,12 @@ pub struct Page {
     /// column NULL. M2 declared the column but never populated it; M7 wires
     /// the write path behind `[cache] store_raw_html`.
     pub raw_html: Option<Vec<u8>>,
+    /// How this content was obtained when it required a headless render:
+    /// `"on"` (explicit `headless.mode=on`), `"spa"` (Auto-mode SPA heuristic),
+    /// or `"bot_challenge"` (Auto-mode challenge bypass). `None` for a plain
+    /// HTTP fetch. Persisted so cache hits report it too; surfaced in the fetch
+    /// frontmatter as `headless_render`.
+    pub render_reason: Option<String>,
 }
 
 /// Aggregate stats for `rover cache stats`.
@@ -76,7 +82,7 @@ pub fn url_hash(url: &str) -> String {
 /// Column list shared by `get_by_url_hash` / `get_by_url` so the row
 /// decoder stays in lock-step with the SELECT projection.
 const SELECT_COLUMNS: &str = "url_hash, url, canonical_url, title, fetched_at, expires_at, \
-    etag, last_modified, content_hash, extracted_md, metadata_json";
+    etag, last_modified, content_hash, extracted_md, metadata_json, render_reason";
 
 fn row_to_page(row: &rusqlite::Row<'_>) -> rusqlite::Result<Page> {
     Ok(Page {
@@ -91,6 +97,7 @@ fn row_to_page(row: &rusqlite::Row<'_>) -> rusqlite::Result<Page> {
         content_hash: row.get(8)?,
         extracted_md: row.get(9)?,
         metadata_json: row.get(10)?,
+        render_reason: row.get(11)?,
         // `SELECT_COLUMNS` deliberately omits `raw_html_zstd`; readers fetch
         // it on demand via `raw_html_bytes` to avoid paying the decode cost.
         raw_html: None,
@@ -155,8 +162,8 @@ pub async fn upsert(db: &Db, page: Page) -> Result<(), StorageError> {
             c.execute(
                 "INSERT INTO pages (url_hash, url, canonical_url, title, fetched_at, \
                                     expires_at, etag, last_modified, content_hash, \
-                                    extracted_md, metadata_json, raw_html_zstd) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                                    extracted_md, metadata_json, raw_html_zstd, render_reason) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
                  ON CONFLICT(url_hash) DO UPDATE SET \
                     url = excluded.url, \
                     canonical_url = excluded.canonical_url, \
@@ -168,7 +175,8 @@ pub async fn upsert(db: &Db, page: Page) -> Result<(), StorageError> {
                     content_hash = excluded.content_hash, \
                     extracted_md = excluded.extracted_md, \
                     metadata_json = excluded.metadata_json, \
-                    raw_html_zstd = excluded.raw_html_zstd",
+                    raw_html_zstd = excluded.raw_html_zstd, \
+                    render_reason = excluded.render_reason",
                 params![
                     page.url_hash,
                     page.url,
@@ -182,6 +190,7 @@ pub async fn upsert(db: &Db, page: Page) -> Result<(), StorageError> {
                     page.extracted_md,
                     page.metadata_json,
                     raw_zstd,
+                    page.render_reason,
                 ],
             )?;
             Ok(())
@@ -336,6 +345,7 @@ mod tests {
             extracted_md: "# Hello\n\nbody".to_owned(),
             metadata_json: None,
             raw_html: None,
+            render_reason: None,
         }
     }
 
@@ -357,6 +367,17 @@ mod tests {
         let page = sample("hash1", "https://example.com/page");
         upsert(&db, page.clone()).await.unwrap();
         let got = get_by_url_hash(&db, "hash1").await.unwrap().unwrap();
+        assert_eq!(got, page);
+    }
+
+    #[tokio::test]
+    async fn render_reason_round_trips() {
+        let db = fresh_db().await;
+        let mut page = sample("hash1", "https://example.com/spa");
+        page.render_reason = Some("bot_challenge".to_owned());
+        upsert(&db, page.clone()).await.unwrap();
+        let got = get_by_url_hash(&db, "hash1").await.unwrap().unwrap();
+        assert_eq!(got.render_reason.as_deref(), Some("bot_challenge"));
         assert_eq!(got, page);
     }
 
