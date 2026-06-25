@@ -552,12 +552,26 @@ pub struct HeadlessConfig {
     /// Whether `HeadlessMode::Auto` should run the SPA detection heuristic.
     #[serde(default = "default_auto_detect_spa")]
     pub auto_detect_spa: bool,
+
+    /// In `Auto` mode, the delay (in seconds) before escalating to a headless
+    /// render once the plain HTTP fetch is in — i.e. between detecting that a
+    /// render is needed (an unrendered SPA, or a bot-protection challenge) and
+    /// launching/driving the browser. Gives the origin a breather between the
+    /// lightweight fetch and the heavier browser hit. `0` disables the pause.
+    /// Does not apply to `On` mode, which has no detection step.
+    #[serde(default = "default_headless_launch_delay_secs")]
+    pub launch_delay_secs: u64,
 }
 
 impl HeadlessConfig {
     /// Render timeout as a `Duration`.
     pub fn timeout(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.timeout_secs)
+    }
+
+    /// Auto-mode pre-render escalation delay as a `Duration`.
+    pub fn launch_delay(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.launch_delay_secs)
     }
 }
 
@@ -575,6 +589,7 @@ impl Default for HeadlessConfig {
             default_wait: default_headless_wait(),
             timeout_secs: default_headless_timeout_secs(),
             auto_detect_spa: default_auto_detect_spa(),
+            launch_delay_secs: default_headless_launch_delay_secs(),
         }
     }
 }
@@ -589,6 +604,10 @@ fn default_headless_wait() -> String {
 
 fn default_headless_timeout_secs() -> u64 {
     15
+}
+
+fn default_headless_launch_delay_secs() -> u64 {
+    2
 }
 
 fn default_auto_detect_spa() -> bool {
@@ -1769,6 +1788,20 @@ model = "HuggingFaceTB/SmolVLM-256M-Instruct"
         let h = HeadlessConfig::default();
         assert_eq!(h.max_concurrent, 4);
         assert!(h.chrome_executable.is_empty());
+        assert_eq!(h.launch_delay_secs, 2);
+        assert_eq!(h.launch_delay(), std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn headless_launch_delay_parses_and_disables() {
+        let cfg: Config = toml::from_str("[headless]\nlaunch_delay_secs = 0\n").unwrap();
+        assert_eq!(cfg.headless.launch_delay_secs, 0);
+        assert!(cfg.headless.launch_delay().is_zero());
+        let cfg: Config = toml::from_str("[headless]\nlaunch_delay_secs = 5\n").unwrap();
+        assert_eq!(
+            cfg.headless.launch_delay(),
+            std::time::Duration::from_secs(5)
+        );
     }
 
     #[test]

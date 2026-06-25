@@ -268,6 +268,7 @@ where
                     provider,
                 }) if opts.headless_mode == HeadlessMode::Auto && opts.headless.is_some() => {
                     let handle = opts.headless.as_ref().expect("guarded by is_some()");
+                    auto_render_delay(handle, url, "bot_challenge_bypass").await;
                     match handle.get().await {
                         Ok(r) => match r
                             .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
@@ -409,6 +410,7 @@ where
                 let hits =
                     crate::fetcher::headless::detect::detect_spa(&fetched.body, &extracted.body_md);
                 if hits.total >= 2 {
+                    auto_render_delay(h, url, "spa_rerender").await;
                     let r = h.get().await?;
                     let rendered = r
                         .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
@@ -490,6 +492,31 @@ where
 /// computation will therefore fall through to the default-TTL policy. The
 /// canonical URL is resolved from the rendered DOM (`<link rel="canonical">`)
 /// or falls back to the final URL.
+/// Apply the configured Auto-mode pre-render delay before escalating to the
+/// headless browser. Runs *after* the render trigger has been detected (SPA
+/// heuristic fired, or a bot-challenge was returned) and *before* the browser
+/// is launched/driven, giving the origin a breather between the lightweight
+/// HTTP fetch and the heavier browser hit. A no-op when configured to zero.
+#[cfg(feature = "headless")]
+async fn auto_render_delay(
+    handle: &crate::fetcher::headless::HeadlessHandle,
+    url: &url::Url,
+    reason: &'static str,
+) {
+    let delay = handle.launch_delay();
+    if delay.is_zero() {
+        return;
+    }
+    tracing::debug!(
+        target: "rover::fetcher::cached",
+        url = url.as_str(),
+        delay_secs = delay.as_secs(),
+        reason,
+        "Auto-mode pre-render delay before headless launch",
+    );
+    tokio::time::sleep(delay).await;
+}
+
 #[cfg(feature = "headless")]
 fn rendered_to_fetched(
     rendered: crate::fetcher::headless::RenderedPage,

@@ -331,6 +331,13 @@ impl HeadlessHandle {
         self.cell.get().is_some()
     }
 
+    /// The configured Auto-mode delay to apply before escalating to a headless
+    /// render (after the SPA/bot-challenge detection, before launching the
+    /// browser). `Duration::ZERO` when disabled.
+    pub fn launch_delay(&self) -> std::time::Duration {
+        self.cfg.launch_delay()
+    }
+
     /// Cleanly shut the browser down if it was ever launched. Consumes the
     /// handle. A no-op when the browser was never launched (the common case for
     /// non-SPA, unchallenged fetches), so callers can invoke it unconditionally

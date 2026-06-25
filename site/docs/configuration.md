@@ -224,6 +224,7 @@ The headless browser renderer needs Rover compiled with the `headless` feature. 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `auto_detect_spa` | bool | `true` | When true and MCP `fetch` does not specify `headless.mode`, auto-detect single-page apps via heuristics and render via headless. |
+| `launch_delay_secs` | integer | `2` | In Auto mode, seconds to wait after detecting a render is needed (an unrendered SPA, or a bot-protection challenge on the HTTP fetch) and before launching the browser — a breather between the lightweight fetch and the heavier browser hit. `0` disables it. Not applied in `On` mode, which has no detection step. |
 | `default_wait` | string | `"domcontentloaded"` | When to consider a render done. `domcontentloaded` returns as soon as the initial HTML is parsed. `networkidle0` additionally waits until the network fully settles (zero requests in flight for a continuous 500 ms, bounded by `timeout_secs`). Slower, but the right choice for SPAs that fetch their content over XHR after load; a single pending XHR still blocks completion. |
 | `timeout` | duration | `"30s"` | Per-render timeout. |
 | `max_concurrent` | integer | `4` | Number of concurrent headless render tasks. |
