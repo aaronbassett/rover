@@ -67,7 +67,7 @@ Rover fixes all four. Extraction is the battle-tested [`readabilityrs`](https://
 `rover meta use` does the whole wiring in one command (MCP server, steering hooks for Claude Code, and a rules-file block):
 
 ```sh
-rover meta use claude     # Claude Code: claude mcp add + SessionStart/WebFetch hooks + a CLAUDE.md block
+rover meta use claude     # Claude Code: claude mcp add + SessionStart (startup/clear/compact) + WebFetch hooks + CLAUDE.md block
 rover meta use general    # other harnesses: ./mcp.json + an AGENTS.md steering block
 ```
 

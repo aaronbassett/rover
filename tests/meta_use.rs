@@ -104,6 +104,10 @@ fn claude_happy_path_with_stub_binary() {
     let v: serde_json::Value = serde_json::from_str(&settings).unwrap();
     assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "WebFetch");
     assert_eq!(
+        v["hooks"]["SessionStart"][0]["matcher"],
+        "startup|clear|compact"
+    );
+    assert_eq!(
         v["hooks"]["SessionStart"][0]["hooks"][0]["command"],
         "rover meta hook claude"
     );

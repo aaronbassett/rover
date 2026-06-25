@@ -92,7 +92,14 @@ pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String
         .as_object_mut()
         .context("settings.json `hooks` is not a JSON object")?;
 
-    add_event_hook(hooks, "SessionStart", None, hook_command)?;
+    // `startup|clear|compact` re-runs the SessionStart steering on every session
+    // entry (fresh start, `/clear`, and post-compaction), not just cold start.
+    add_event_hook(
+        hooks,
+        "SessionStart",
+        Some("startup|clear|compact"),
+        hook_command,
+    )?;
     add_event_hook(hooks, "PreToolUse", Some("WebFetch"), hook_command)?;
 
     let mut out = serde_json::to_string_pretty(&root)?;
@@ -146,7 +153,10 @@ mod tests {
     fn hooks_fresh_document_adds_both_events() {
         let out = merge_hooks("", HOOK_CMD).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let ss = &v["hooks"]["SessionStart"][0]["hooks"][0];
+        let ss_group = &v["hooks"]["SessionStart"][0];
+        // SessionStart re-runs on every session entry, matching superpowers.
+        assert_eq!(ss_group["matcher"], "startup|clear|compact");
+        let ss = &ss_group["hooks"][0];
         assert_eq!(ss["type"], "command");
         assert_eq!(ss["command"], HOOK_CMD);
         let pt = &v["hooks"]["PreToolUse"][0];
