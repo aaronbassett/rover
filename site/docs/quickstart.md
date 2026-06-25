@@ -41,13 +41,16 @@ Runs `claude mcp add rover -s local -- rover mcp`, and skips it if `rover` is al
 
 ### Installs two hooks
 
-Adds a `SessionStart` hook and a `PreToolUse` hook (matched to the built-in `WebFetch` tool) to the scope's settings file, which at `local` scope is `.claude/settings.local.json`:
+Adds a `SessionStart` hook (matched to `startup|clear|compact`, so the steering re-runs on every session entry — fresh start, `/clear`, and after a compaction) and a `PreToolUse` hook (matched to the built-in `WebFetch` tool) to the scope's settings file, which at `local` scope is `.claude/settings.local.json`:
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [{ "type": "command", "command": "rover meta hook claude" }] }
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [{ "type": "command", "command": "rover meta hook claude" }]
+      }
     ],
     "PreToolUse": [
       {
@@ -59,15 +62,21 @@ Adds a `SessionStart` hook and a `PreToolUse` hook (matched to the built-in `Web
 }
 ```
 
-Both entries run `rover meta hook claude`, which prints the steering text for whichever event fired. The `PreToolUse` hook only reminds; its output carries no `permissionDecision`, so the `WebFetch` call still runs. It prints (shown formatted here; the hook emits a single line):
+Both entries run `rover meta hook claude`, which prints the steering for whichever event fired. The `SessionStart` payload is the full Rover briefing — wrapped in `<EXTREMELY_IMPORTANT_TOOL_UPDATE>` tags and carrying copy-pasteable tool-call examples (see [Hooks (Claude Code)](#hooks-claude-code) below). The `PreToolUse` hook only reminds: its output carries no `permissionDecision`, so the `WebFetch` call still runs. It prints a short nudge with a couple of `fetch` examples, then yields (shown formatted here; the hook emits a single JSON-escaped line):
 
 ```json
 {
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "additionalContext": "Rover is available: `mcp__rover__fetch` returns cleaner, token-budgeted, prompt-injection-guarded Markdown than WebFetch and caches it (`mcp__rover__batch_fetch` for many URLs). Consider using Rover instead. Proceeding with WebFetch."
+    "additionalContext": "Rover is available and returns cleaner, cached, prompt-injection-guarded Markdown than WebFetch. Prefer it for this read:\n  mcp__rover__fetch_tool  { \"url\": \"<the URL you're fetching>\" }\n  mcp__rover__fetch_tool  { \"url\": \"<the URL you're fetching>\", \"max_tokens\": 6000 }   // cap a large page\n(The Rover tools are deferred — run `ToolSearch select:mcp__rover__fetch_tool` first.) Proceeding with WebFetch."
   }
 }
+```
+
+To see the exact text either hook emits, pipe an event into the handler:
+
+```sh
+echo '{"hook_event_name":"SessionStart"}' | rover meta hook claude
 ```
 
 ### Writes a rules block
@@ -153,20 +162,15 @@ Tool names may be prefixed by your harness (e.g. `rover.fetch` or `mcp__rover__f
 
 ### Hooks (Claude Code)
 
-Hooks reinforce the rules file at runtime: one fires at session start, the other before each `WebFetch`. They live in a Claude Code settings file: `.claude/settings.json` (project), `.claude/settings.local.json` (private project copy), or `~/.claude/settings.json` (all projects). To add them by hand, use the two entries shown under [Installs two hooks](#installs-two-hooks) above, both pointing at `rover meta hook claude`.
+Hooks reinforce the rules file at runtime: one fires at every session entry — startup, `/clear`, and after a compaction (the `startup|clear|compact` matcher) — the other before each `WebFetch`. They live in a Claude Code settings file: `.claude/settings.json` (project), `.claude/settings.local.json` (private project copy), or `~/.claude/settings.json` (all projects). To add them by hand, use the two entries shown under [Installs two hooks](#installs-two-hooks) above, both pointing at `rover meta hook claude`.
 
-To wire the steering as static content instead (no `rover` call at hook time, or for a harness with a different hook system), emit the response JSON yourself. The `PreToolUse` payload is the reminder shown above; the `SessionStart` payload:
+To wire the steering as static content instead (no `rover` call at hook time, or for a harness with a different hook system), emit the response JSON yourself. The `SessionStart` payload is an `<EXTREMELY_IMPORTANT_TOOL_UPDATE>`-wrapped Rover briefing: the `ToolSearch` line that loads the deferred `mcp__rover__*_tool` schemas, a `fetch` example for each common case (size-first, cap, summarize, render, skip-cache), one example apiece for `batch_fetch`/`summarize`/`get_metadata`/`count_tokens`, and the prompt-injection, overflow-to-file, and cache gotchas. It is long, so rather than copy it from here, print the exact string:
 
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": "Rover is wired in as an MCP server and is the preferred way to read web pages. When you need the contents of a URL, use Rover instead of the built-in WebFetch: `mcp__rover__fetch` (one URL → clean, token-budgeted, prompt-injection-guarded Markdown, cached), `mcp__rover__batch_fetch` (many URLs), plus `mcp__rover__summarize`, `mcp__rover__get_metadata`, and `mcp__rover__count_tokens`. WebFetch returns a lossy per-prompt answer; Rover returns a reusable, guarded document. Keep using WebSearch to discover URLs, then fetch them with Rover rather than WebFetch. Use WebFetch only when Rover is unavailable."
-  }
-}
+```sh
+echo '{"hook_event_name":"SessionStart"}' | rover meta hook claude
 ```
 
-Leave out `permissionDecision` so the reminder neither auto-allows nor blocks the call. Full flag reference: [`rover meta`](/docs/cli#rover-meta).
+The `PreToolUse` payload is the shorter reminder shown above. Drop `permissionDecision` from any payload you hand-write so the reminder neither auto-allows nor blocks the call. Full flag reference: [`rover meta`](/docs/cli#rover-meta).
 
 ## From the shell
 

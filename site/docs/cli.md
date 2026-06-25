@@ -234,7 +234,7 @@ Registers Rover with a harness in one step: MCP server, steering hooks (where su
 | `<harness>` | `claude`, `general` | — | Target harness. |
 | `-s, --scope <scope>` | `local`, `user`, `project` | `local` | Where config is written. `general` ignores it and always uses the project root. |
 
-`claude` delegates MCP registration to the `claude` CLI (`claude mcp add rover -s <scope> -- rover mcp`, skipped if already registered), installs a `SessionStart` hook and a `WebFetch`-matched `PreToolUse` hook that both run `rover meta hook claude`, and writes a rules block into `CLAUDE.md`. It needs the `claude` binary on `PATH`. Scope decides the files:
+`claude` delegates MCP registration to the `claude` CLI (`claude mcp add rover -s <scope> -- rover mcp`, skipped if already registered), installs a `SessionStart` hook (matched to `startup|clear|compact`, so it re-runs on every session entry) and a `WebFetch`-matched `PreToolUse` hook that both run `rover meta hook claude`, and writes a rules block into `CLAUDE.md`. It needs the `claude` binary on `PATH`. Scope decides the files:
 
 | Scope | Hooks file | Rules block |
 | --- | --- | --- |
@@ -252,7 +252,7 @@ See [Quickstart](/docs/quickstart) for the full walkthrough, the per-scope file 
 rover meta hook <harness>
 ```
 
-The runtime hook handler that the `claude` wiring points at. It reads a hook payload on stdin, branches on `hook_event_name`, and prints response JSON for `SessionStart` and `PreToolUse` (a non-blocking reminder, with no `permissionDecision`); any other event prints nothing. `rover meta hook general` errors, since `general` installs no hooks. You don't normally run this by hand; Claude Code invokes it per the `settings.json` entries that `rover meta use claude` writes.
+The runtime hook handler that the `claude` wiring points at. It reads a hook payload on stdin, branches on `hook_event_name`, and prints response JSON for `SessionStart` (an `<EXTREMELY_IMPORTANT_TOOL_UPDATE>`-wrapped briefing with concrete tool-call examples) and `PreToolUse` (a non-blocking reminder, with no `permissionDecision`); any other event prints nothing. `rover meta hook general` errors, since `general` installs no hooks. You don't normally run this by hand; Claude Code invokes it per the `settings.json` entries that `rover meta use claude` writes.
 
 ## `rover model`
 
