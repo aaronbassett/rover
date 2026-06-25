@@ -181,11 +181,15 @@ fn classify_err(e: FetcherError) -> Class {
                 Class::Fatal(e)
             }
         }
+        // A managed bot-challenge will never resolve by retrying the same plain
+        // HTTP request — it needs a real browser. Fatal here; the Auto-mode
+        // fetcher catches it and routes to the headless renderer.
         FetcherError::Ssrf(_)
         | FetcherError::Url(_)
         | FetcherError::Decode
         | FetcherError::Storage(_)
         | FetcherError::Status { .. }
+        | FetcherError::BotChallenge { .. }
         | FetcherError::Dns { .. } => Class::Fatal(e),
         // The retry layer never sees Extract/Robots/Retry variants in practice
         // (they originate above this layer), but classify defensively.
@@ -411,6 +415,80 @@ mod tests {
             }
             other => panic!("expected Deferred, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn classify_bot_challenge_is_fatal() {
+        // A detected bot-challenge surfaces from the fetch layer as a typed
+        // error; the retry layer must treat it as Fatal (no wasted retries).
+        let e = FetcherError::BotChallenge {
+            url: "https://example.com".to_string(),
+            provider: "Vercel".to_string(),
+        };
+        assert!(matches!(classify(Err(e), &cfg()), Class::Fatal(_)));
+    }
+
+    #[cfg(any(test, feature = "test-loopback"))]
+    #[tokio::test]
+    async fn vercel_challenge_is_not_retried() {
+        // A Vercel managed challenge (429 + `x-vercel-mitigated: challenge`)
+        // must be reported immediately as a `BotChallenge`, NOT retried into a
+        // `RetryExhausted`. The mock would serve the same 429 on every hit, so a
+        // single request proves we stopped after one attempt.
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+        struct Counting(Arc<AtomicUsize>);
+        impl Respond for Counting {
+            fn respond(&self, _: &Request) -> ResponseTemplate {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(429).insert_header("x-vercel-mitigated", "challenge")
+            }
+        }
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(Counting(hits.clone()))
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let db = crate::storage::Db::open(tmp.path().join("rover.db"))
+            .await
+            .unwrap();
+        let url = Url::parse(&server.uri()).unwrap();
+        let cfg = RateLimitConfig {
+            max_retries: 3,
+            ..Default::default()
+        };
+        let pacer = Pacer::new(&cfg);
+        crate::fetcher::client::install_ring_provider();
+        let client = reqwest::Client::new();
+        let cond = ConditionalGet::default();
+        let res = with_retries(
+            &db,
+            &pacer,
+            &client,
+            &url,
+            SsrfLevel::Loopback,
+            None,
+            None,
+            &cond,
+            None,
+            &cfg,
+        )
+        .await;
+        match res {
+            Err(FetcherError::BotChallenge { provider, .. }) => assert_eq!(provider, "Vercel"),
+            other => panic!("expected BotChallenge, got {other:?}"),
+        }
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "challenge must not be retried (expected exactly 1 request)"
+        );
     }
 
     #[test]

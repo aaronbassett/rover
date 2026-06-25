@@ -182,6 +182,14 @@ pub async fn fetch_url_conditional(
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
 
+    // Detect a managed bot-protection challenge (Vercel/Cloudflare) from the
+    // response headers. These are returned with assorted statuses (Vercel 429,
+    // Cloudflare 403/503) but always carry a definitive marker header. A plain
+    // HTTP fetch can't solve the JS challenge, so we surface a typed error the
+    // retry layer won't waste attempts on and the Auto-mode fetcher can route
+    // to the headless renderer.
+    let challenge = super::challenge::detect(status, &response_headers_pairs);
+
     let bytes = response.bytes().await?;
 
     if let Some(recorder) = har_recorder {
@@ -197,6 +205,13 @@ pub async fn fetch_url_conditional(
         if let Err(e) = recorder.record(ex).await {
             tracing::warn!(target: "rover::fetcher", error = ?e, "failed to record har entry");
         }
+    }
+
+    if let Some(kind) = challenge {
+        return Err(FetcherError::BotChallenge {
+            url: final_url.to_string(),
+            provider: kind.provider().to_string(),
+        });
     }
 
     let (body, charset) = decode_to_utf8(content_type.as_deref(), &bytes);
