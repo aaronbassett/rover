@@ -66,6 +66,7 @@ The core identity and budgeting fields are always present, where the value exist
 | `estimated_tokens` | Token count of the body. |
 | `tokenizer` | The tokenizer family the count was measured in (e.g. `o200k`). |
 | `summarized` | Present as `summarized: true` when the body is a summary, not the extracted page. |
+| `headless_render` | How the content was obtained when it required a headless render: `on` (explicit `headless.mode=on`), `spa` (Auto-mode SPA heuristic), or `bot_challenge` (Auto-mode bot-protection challenge bypass). Absent for a plain HTTP fetch. Persisted, so a cache hit reports it too. |
 
 Extracted metadata follows, and each line is emitted only when the page declares it: `description`, `author`, `published`, `modified`, `image`, `og_type`, `language`, and `schema_types` (an array of schema.org types). A page that declares none of these gets none of these lines.
 

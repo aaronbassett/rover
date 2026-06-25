@@ -238,6 +238,12 @@ where
     //
     // The `On` branch synthesizes a `FetchedPage`-shaped value from the
     // renderer output so step 6 (TTL) and step 7 (store) work unchanged.
+    // Track *why* the headless renderer was used, if at all, so the stored row
+    // (and the fetch frontmatter) records how this content was obtained. Set at
+    // each render site below; `None` means a plain HTTP fetch.
+    #[cfg(feature = "headless")]
+    let mut render_reason: Option<&'static str> = None;
+
     let fetched = match opts.headless_mode {
         HeadlessMode::Off | HeadlessMode::Auto => {
             let retry_result = crate::fetcher::retry::with_retries(
@@ -278,6 +284,7 @@ where
                                 tracing::info!(target: "rover::fetcher::cached",
                                     url = url.as_str(), provider = %provider,
                                     "bot-protection challenge on HTTP fetch; bypassed via headless render");
+                                render_reason = Some("bot_challenge");
                                 Ok(rendered_to_fetched(rendered))
                             }
                             Err(render_err) => {
@@ -352,6 +359,7 @@ where
                 let rendered = r
                     .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
                     .await?;
+                render_reason = Some("on");
                 rendered_to_fetched(rendered)
             }
         }
@@ -412,6 +420,7 @@ where
                 if hits.total >= 2 {
                     auto_render_delay(h, url, "spa_rerender").await;
                     let r = h.get().await?;
+                    render_reason = Some("spa");
                     let rendered = r
                         .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
                         .await?;
@@ -457,6 +466,12 @@ where
     } else {
         None
     };
+    // Resolve the tracked headless reason into the persisted column. In a
+    // non-headless build nothing can render, so it is always `None`.
+    #[cfg(feature = "headless")]
+    let render_reason = render_reason.map(str::to_owned);
+    #[cfg(not(feature = "headless"))]
+    let render_reason: Option<String> = None;
     let page = Page {
         url_hash: new_hash,
         url: url.as_str().to_owned(),
@@ -470,6 +485,7 @@ where
         extracted_md: extracted.body_md.clone(),
         metadata_json,
         raw_html,
+        render_reason,
     };
 
     // Step 7: store (only if cacheable).
@@ -667,6 +683,7 @@ mod tests {
             extracted_md: "# cached".into(),
             metadata_json: None,
             raw_html: None,
+            render_reason: None,
         };
         pages::upsert(&db, page.clone()).await.unwrap();
 
@@ -827,6 +844,7 @@ mod tests {
             extracted_md: "# old".into(),
             metadata_json: None,
             raw_html: None,
+            render_reason: None,
         };
         pages::upsert(db, page).await.unwrap();
     }

@@ -288,6 +288,7 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         schema_types: &metadata.schema_types,
         extraction_quality: quality,
         summarized,
+        headless_render: result.page.render_reason.as_deref(),
         tables_transformed: &[],
         images_seen: 0,
         images_downloaded: 0,

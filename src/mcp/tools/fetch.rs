@@ -849,6 +849,7 @@ impl RoverHandler {
             // envelope field; the in-content frontmatter marker stays off.
             extraction_quality: quality,
             summarized: false,
+            headless_render: result.page.render_reason.as_deref(),
             tables_transformed: &tables_transformed,
             images_seen: images_result.images_seen,
             images_downloaded: images_result.images_downloaded,
