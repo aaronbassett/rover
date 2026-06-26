@@ -208,6 +208,7 @@ mod tests {
                 model: Some("probe-model".into()),
                 base_url: Some(format!("{}/v1/", server.uri())),
                 api_key_env: None,
+                ..Default::default()
             },
         );
         let ctx = CheckCtx {

@@ -242,6 +242,7 @@ mod tests {
                 model: Some("gpt-4o-mini".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
                 base_url: None,
+                ..Default::default()
             },
         );
         cfg.image_captions.default = Some("openai".into());
@@ -261,6 +262,7 @@ mod tests {
                 model: Some("gpt-4o-mini".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
                 base_url: None,
+                ..Default::default()
             },
         );
         cfg.image_captions.default = Some("nonsense".into());
@@ -279,6 +281,7 @@ mod tests {
                 model: Some("any-model".into()),
                 api_key_env: None,
                 base_url: None,
+                ..Default::default()
             },
         );
         let err = build(&cfg).unwrap_err();
@@ -310,6 +313,7 @@ mod tests {
                 model: Some("gpt-4o-mini".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
                 base_url: None,
+                ..Default::default()
             },
         );
         // image_captions.default left as None.

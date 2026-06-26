@@ -645,7 +645,6 @@ pub struct ImageCaptionsConfig {
     pub min_height: u32,
     #[serde(deserialize_with = "humanbytes_to_u64")]
     pub max_bytes: u64,
-    pub max_concurrent: usize,
 }
 
 impl Default for ImageCaptionsConfig {
@@ -657,13 +656,12 @@ impl Default for ImageCaptionsConfig {
             min_width: 200,
             min_height: 200,
             max_bytes: 10 * 1024 * 1024,
-            max_concurrent: 2,
         }
     }
 }
 
 /// `[captioners.<name>]` block. Mirrors `BackendConfig` (M7).
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CaptionerConfig {
     pub kind: String,
@@ -671,6 +669,28 @@ pub struct CaptionerConfig {
     pub model: Option<String>,
     pub base_url: Option<String>,
     pub api_key_env: Option<String>,
+    #[serde(default = "default_captioner_max_concurrent")]
+    pub max_concurrent: usize,
+    #[serde(default)]
+    pub max_attempts: Option<usize>,
+}
+
+impl Default for CaptionerConfig {
+    fn default() -> Self {
+        Self {
+            kind: String::new(),
+            provider: None,
+            model: None,
+            base_url: None,
+            api_key_env: None,
+            max_concurrent: default_captioner_max_concurrent(),
+            max_attempts: None,
+        }
+    }
+}
+
+fn default_captioner_max_concurrent() -> usize {
+    2
 }
 
 /// Parse a human-readable byte size string such as "10MiB", "1.5GiB", "1000"
@@ -1729,7 +1749,6 @@ bogus = 1
         assert_eq!(c.min_width, 200);
         assert_eq!(c.min_height, 200);
         assert_eq!(c.max_bytes, 10 * 1024 * 1024);
-        assert_eq!(c.max_concurrent, 2);
     }
 
     #[test]
@@ -1946,5 +1965,19 @@ level = true
     fn load_resolved_falls_back_to_defaults_when_nothing_resolves() {
         let cfg = load_resolved_from(None, None).unwrap();
         assert_eq!(cfg.fetch.timeout_secs, default_timeout_secs());
+    }
+
+    #[test]
+    fn captioner_concurrency_defaults() {
+        let c = CaptionerConfig::default();
+        assert_eq!(c.max_concurrent, 2);
+        assert_eq!(c.max_attempts, None);
+    }
+
+    #[test]
+    fn image_captions_no_longer_has_max_concurrent() {
+        // Compile-time guarantee the field is gone: this block must not reference it.
+        let c = ImageCaptionsConfig::default();
+        assert_eq!(c.max_per_page, 10);
     }
 }

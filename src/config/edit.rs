@@ -215,7 +215,12 @@ fn settable() -> &'static [SettableSpec] {
             expected: "humansize string or integer (e.g. \"10MiB\")",
         },
         SettableSpec {
-            key: "image_captions.max_concurrent",
+            key: "captioners.<name>.max_concurrent",
+            parser: parse_usize,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "captioners.<name>.max_attempts",
             parser: parse_usize,
             expected: "integer",
         },
