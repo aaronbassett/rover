@@ -340,6 +340,44 @@ fn skip_reason_to_str(r: &SkipReason) -> &'static str {
     }
 }
 
+/// Send an HTTP request with bounded 429 retry-with-backoff.
+///
+/// Loops up to 3 attempts total (1 initial + 2 retries). On HTTP 429 the
+/// `Retry-After` header is parsed as seconds; the wait is clamped to 5 s.
+/// Missing or non-numeric `Retry-After` defaults to 1 s. Any non-429
+/// response (success or other error status) and any transport error are
+/// returned immediately. After exhausting all attempts the last response is
+/// returned so the caller can apply `error_for_status`.
+///
+/// The SSRF scope is applied on every send. The rate-limit permit must be
+/// acquired once by the **caller** before invoking this function so that
+/// retries do not re-queue.
+async fn send_with_backoff<F>(
+    make_req: F,
+    ssrf_level: SsrfLevel,
+) -> Result<reqwest::Response, reqwest::Error>
+where
+    F: Fn() -> reqwest::RequestBuilder,
+{
+    const MAX_WAIT_SECS: u64 = 5;
+    let mut last = SSRF_LEVEL.scope(ssrf_level, make_req().send()).await?;
+    for _ in 0..2u32 {
+        if last.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
+            break;
+        }
+        let wait_secs = last
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1)
+            .min(MAX_WAIT_SECS);
+        tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+        last = SSRF_LEVEL.scope(ssrf_level, make_req().send()).await?;
+    }
+    Ok(last)
+}
+
 /// Pre-flight SSRF check for an image URL, mirroring the primary fetch path
 /// (`fetcher::fetch_url_conditional`): resolve the host and validate every
 /// address before connecting. This is what blocks literal-IP targets such as
@@ -370,8 +408,7 @@ async fn download_image_bytes(
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
     let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
-    let resp = SSRF_LEVEL
-        .scope(ssrf_level, http.get(url.clone()).send())
+    let resp = send_with_backoff(|| http.get(url.clone()), ssrf_level)
         .await
         .map_err(|source| ExtractorError::ImageDownload {
             url: src.to_string(),
@@ -413,8 +450,7 @@ async fn download_one(
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
     let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
-    let resp = SSRF_LEVEL
-        .scope(ssrf_level, http.get(url.clone()).send())
+    let resp = send_with_backoff(|| http.get(url.clone()), ssrf_level)
         .await
         .map_err(|source| ExtractorError::ImageDownload {
             url: src.to_string(),
@@ -489,18 +525,18 @@ pub(crate) async fn partial_fetch_dimensions(
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
     let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
-    let resp = SSRF_LEVEL
-        .scope(
-            ssrf_level,
+    let resp = send_with_backoff(
+        || {
             http.get(url.clone())
                 .header(reqwest::header::RANGE, "bytes=0-2047")
-                .send(),
-        )
-        .await
-        .map_err(|source| ExtractorError::ImageDownload {
-            url: src.to_string(),
-            source,
-        })?;
+        },
+        ssrf_level,
+    )
+    .await
+    .map_err(|source| ExtractorError::ImageDownload {
+        url: src.to_string(),
+        source,
+    })?;
     if !resp.status().is_success() && resp.status().as_u16() != 206 {
         return Ok(None);
     }
@@ -529,9 +565,7 @@ pub(crate) async fn fetch_content_length(
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
     let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
-    let resp = SSRF_LEVEL
-        .scope(ssrf_level, http.head(url.clone()).send())
-        .await;
+    let resp = send_with_backoff(|| http.head(url.clone()), ssrf_level).await;
     match resp {
         Ok(r) if r.status().is_success() => {
             // reqwest's content_length() returns 0 for HEAD responses (no body).
@@ -545,18 +579,18 @@ pub(crate) async fn fetch_content_length(
             Ok(from_header)
         }
         _ => {
-            let r = SSRF_LEVEL
-                .scope(
-                    ssrf_level,
-                    http.get(url)
+            let r = send_with_backoff(
+                || {
+                    http.get(url.clone())
                         .header(reqwest::header::RANGE, "bytes=0-0")
-                        .send(),
-                )
-                .await
-                .map_err(|source| ExtractorError::ImageDownload {
-                    url: src.to_string(),
-                    source,
-                })?;
+                },
+                ssrf_level,
+            )
+            .await
+            .map_err(|source| ExtractorError::ImageDownload {
+                url: src.to_string(),
+                source,
+            })?;
             Ok(r.content_length())
         }
     }
@@ -1179,6 +1213,29 @@ mod tests {
             ),
             "expected ImageSsrf(Address), got: {err:?}",
         );
+    }
+
+    #[cfg(feature = "test-loopback")]
+    #[tokio::test]
+    async fn retries_after_429_then_succeeds() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1u8; 10]))
+            .mount(&server)
+            .await;
+        let url = format!("{}/x.png", server.uri());
+        let lim = crate::extractor::image_limiter::DomainLimiter::new(2);
+        let bytes = download_image_bytes(&client(), &lim, &url, SsrfLevel::Loopback, 1_000_000)
+            .await
+            .expect("should recover after one 429");
+        assert_eq!(bytes.len(), 10);
     }
 
     #[cfg(feature = "test-loopback")]
