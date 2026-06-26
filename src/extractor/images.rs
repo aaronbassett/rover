@@ -77,7 +77,7 @@ pub async fn apply(
         .filter_map(|c| {
             let m = c.get(0)?;
             let alt = c.name("alt")?.as_str().to_string();
-            let src = c.name("src")?.as_str().to_string();
+            let src = decode_entities(c.name("src")?.as_str());
             let rest = c.name("rest")?.as_str().to_string();
             Some((m.start(), m.end(), alt, src, rest))
         })
@@ -304,6 +304,15 @@ async fn caption_one_image(
             format!("![{caption}]({src}{rest})")
         }
     }
+}
+
+fn decode_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&#38;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
 }
 
 fn skip_reason_to_str(r: &SkipReason) -> &'static str {
@@ -1124,5 +1133,14 @@ mod tests {
             ),
             "expected ImageSsrf(Address), got: {err:?}",
         );
+    }
+
+    #[test]
+    fn decode_entities_unescapes_ampersands_in_urls() {
+        assert_eq!(
+            decode_entities("https://x/_next/image?url=a&amp;w=640&amp;q=75"),
+            "https://x/_next/image?url=a&w=640&q=75"
+        );
+        assert_eq!(decode_entities("no entities"), "no entities");
     }
 }
