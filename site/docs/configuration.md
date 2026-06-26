@@ -168,12 +168,11 @@ Defaults for caption generation when `images.mode = "caption"` is set in the MCP
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `default` | string | unset | Name of a configured `[captioners.<name>]` block to use when no `captioner` override is supplied in the MCP tool call. When unset and exactly one captioner is configured, that one is used, so a single-captioner setup needs no `default`. |
-| `max_tokens` | integer | `50` | Maximum token count per caption. Captions are descriptions, not summaries; a tight cap keeps them from eating the budget the page itself needs. |
-| `max_per_page` | integer | `10` | Maximum number of images to caption per page. Captions are generated for the first N images; the rest are dropped. |
+| `max_tokens` | integer | `128` | Maximum token count per caption. |
+| `max_per_page` | integer | `10` | Maximum successful captions per page (cache hits count). The selection loop stops when this is reached. |
 | `min_width` | integer | `200` | Skip images narrower than this (pixels). Filters out spacers, icons, and tracking pixels before they cost a caption. |
 | `min_height` | integer | `200` | Skip images shorter than this (pixels). |
-| `max_bytes` | integer | `10485760` | Skip images larger than this (bytes; default 10 MiB). Accepts raw bytes or a humansize string (`"10MiB"`). |
-| `max_concurrent` | integer | `2` | Number of concurrent caption-generation tasks. |
+| `max_bytes` | integer | `10485760` | Skip images larger than this (bytes; default 10 MiB). Accepts raw bytes or a humansize string (`"10MiB"`). Downloads stream and abort at this limit. |
 
 Example:
 
@@ -185,8 +184,28 @@ max_per_page = 5
 min_width = 64
 min_height = 64
 max_bytes = "1MiB"
-max_concurrent = 4
 ```
+
+### `[image_captions.cache]`
+
+Caption results are cached by image content hash. The image must be downloaded on a hit to derive the key; the cache saves the VLM call, not the download.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | When `false`, skips cache lookup and insert. |
+| `ttl` | duration | `[cache].max_ttl` | Caption row TTL. Unset inherits `[cache].max_ttl`. |
+| `restrict_to` | enum | `none` | Key scope: `none`, `host`, or `page`. |
+| `store_raw_image` | bool | `false` | When `true`, stores the zstd-compressed image bytes alongside the caption. |
+
+`restrict_to` values:
+
+| Value | Key scope |
+| --- | --- |
+| `none` | Image bytes only — the same bytes reuse the caption anywhere. |
+| `host` | Image bytes + image hostname. |
+| `page` | Image bytes + image `src` URL. Scopes to the image URL, not the containing page. |
+
+Changing `restrict_to` silently re-derives keys, invalidating prior rows.
 
 ## `[captioners.<name>]`
 
@@ -199,6 +218,8 @@ A free-form section: repeat it for each named captioner. It mirrors the `[backen
 | `model` | string | yes | Model id: a cloud model (e.g. `gpt-4o-mini`) or the model your `openai_compat` server hosts. |
 | `base_url` | string | yes for `openai_compat`; unused otherwise | Custom endpoint. For `openai_compat`, auto-normalized to end in `/v1/`. |
 | `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var. Keyless local servers can omit it. |
+| `max_concurrent` | integer | no | Max concurrent caption calls to this captioner per page. Default `2`. |
+| `max_attempts` | integer | no | Hard cap on provider caption calls per page. Unset ⇒ `3 × image_captions.max_per_page`. Cache hits do not consume this budget. |
 
 Example:
 
@@ -208,6 +229,8 @@ kind = "cloud"
 provider = "openai"
 model = "gpt-4-vision"
 api_key_env = "OPENAI_API_KEY"
+max_concurrent = 3        # concurrent VLM calls to this provider
+# max_attempts = 30       # unset: defaults to 3 × image_captions.max_per_page
 
 # Local inference via an OpenAI-compatible server (ollama, LM Studio, vLLM, ...):
 [captioners.ollama]

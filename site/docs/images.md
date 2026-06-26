@@ -75,16 +75,53 @@ Captioning every image on a page is slow and expensive, so `[image_captions]` ga
 | Key | Default | What it gates |
 | --- | --- | --- |
 | `default` | _(none)_ | The captioner name used when a call doesn't override it. |
-| `max_tokens` | `50` | Maximum length of each generated caption. |
-| `max_per_page` | `10` | Caption the first N qualifying images; drop the rest. |
+| `max_tokens` | `128` | Maximum length of each generated caption. |
+| `max_per_page` | `10` | Successful captions per page (cache hits count). The loop stops when this is reached. |
 | `min_width` | `200` | Skip anything narrower, in pixels. |
 | `min_height` | `200` | Skip anything shorter, in pixels. |
-| `max_bytes` | `10 MiB` | Skip anything larger. |
-| `max_concurrent` | `2` | How many captions run in parallel. |
+| `max_bytes` | `10 MiB` | Skip anything larger. Downloads stream and abort at this limit. |
 
 The dimension gate is cheap by design. Rover reads width and height from the image file header instead of decoding the whole image, so a 5 MB hero image that fails the size check costs almost nothing to reject. The `min_width` and `min_height` defaults of 200 px screen out the icon-and-spacer layer with no manual allowlist.
 
-`max_per_page` caps spend on image-heavy pages. The first ten qualifying images get captioned, and everything after is dropped rather than queued. Tune these in `[image_captions]`, or override per call via the `images` argument. The full file layout is in [Configuration](/docs/configuration).
+`max_per_page` caps spend on image-heavy pages. `max_concurrent` (per-captioner concurrency) and `max_attempts` (total provider call cap) live under `[captioners.<name>]`, not `[image_captions]`. Tune the threshold keys in `[image_captions]`; see [Configuration](/docs/configuration) for the full reference.
+
+## Caption budgets and request handling
+
+The selection loop probes images lazily in document order, stops once `max_per_page` successful captions are reached, and backfills from remaining candidates when a caption fails — bounded by `max_attempts` provider calls and `max_concurrent` concurrency.
+
+Two budgets govern the loop:
+
+| Budget | What it counts | Configured under |
+| --- | --- | --- |
+| `max_per_page` | Successful captions, including cache hits. | `[image_captions]` |
+| `max_attempts` | Provider caption calls only; cache hits and pre-caption skips (dimension/size/budget) are free. | `[captioners.<name>]` |
+
+`max_attempts` unset ⇒ `3 × max_per_page`. `max_concurrent` (also per-captioner) bounds simultaneous provider calls.
+
+Image HTTP is rate-limited per host via `[rate_limit].per_domain_concurrency`. HTTP 429 triggers a bounded retry honoring `Retry-After`, clamped to `[rate_limit].retry_after_ceiling`. Downloads stream and abort at `max_bytes`, so memory use is bounded regardless of image size.
+
+## Caption cache
+
+Caption results are cached by image content hash and reused on repeated fetches. The cache saves the VLM call; the image must be downloaded on a hit to derive the key.
+
+Configure under `[image_captions.cache]`:
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `enabled` | `true` | `false` skips both cache lookup and insert. |
+| `ttl` | `[cache].max_ttl` | Caption row TTL. Unset inherits `[cache].max_ttl`. |
+| `restrict_to` | `none` | Key scope (see below). |
+| `store_raw_image` | `false` | `true` stores the zstd-compressed image bytes alongside the caption. |
+
+`restrict_to` controls which prior captions count as a hit:
+
+| Value | Scope |
+| --- | --- |
+| `none` | Image bytes only — the same bytes reuse the caption anywhere. |
+| `host` | Same image bytes and image hostname. |
+| `page` | Same image bytes and image `src` URL. The key is over the image's own URL, not the containing page. |
+
+Changing `restrict_to` re-derives keys and silently invalidates prior rows.
 
 ## Reading the results
 
