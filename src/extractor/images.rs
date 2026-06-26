@@ -1021,6 +1021,47 @@ mod tests {
         (reg, calls)
     }
 
+    /// A captioner that records the `max_tokens` value it last received.
+    /// Used to assert that `filters.max_tokens` is correctly threaded through
+    /// to `captioner.caption(...)`.
+    #[cfg(feature = "test-loopback")]
+    struct RecordingCaptioner {
+        last_max_tokens: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[cfg(feature = "test-loopback")]
+    #[async_trait::async_trait]
+    impl VlmCaptioner for RecordingCaptioner {
+        fn name(&self) -> &str {
+            "recording"
+        }
+        fn model_id(&self) -> &str {
+            "recording-model"
+        }
+        async fn caption(
+            &self,
+            _image_bytes: &[u8],
+            _alt: Option<&str>,
+            max_tokens: usize,
+        ) -> Result<String, VlmError> {
+            self.last_max_tokens
+                .store(max_tokens, std::sync::atomic::Ordering::SeqCst);
+            Ok("cap".to_string())
+        }
+    }
+
+    #[cfg(feature = "test-loopback")]
+    fn recording_registry() -> (CaptionerRegistry, Arc<std::sync::atomic::AtomicUsize>) {
+        let last_max_tokens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let captioner = Arc::new(RecordingCaptioner {
+            last_max_tokens: Arc::clone(&last_max_tokens),
+        });
+        let mut map: HashMap<String, Arc<dyn VlmCaptioner>> = HashMap::new();
+        map.insert("recording".to_string(), captioner);
+        let reg = CaptionerRegistry::__test_construct(map, Some("recording".to_string()));
+        (reg, last_max_tokens)
+    }
+
     /// The 67-byte 1x1 transparent PNG reused across the caption tests.
     #[cfg(feature = "test-loopback")]
     const TINY_PNG: [u8; 67] = [
@@ -1212,6 +1253,51 @@ mod tests {
             .filter(|x| x.decision == "captioned")
             .count();
         assert_eq!(captioned, 0, "an always-failing captioner produces none");
+    }
+
+    /// `filters.max_tokens` must be threaded all the way through to
+    /// `captioner.caption(...)`. A `RecordingCaptioner` stores the received
+    /// value so we can assert it matches the filter exactly.
+    #[cfg(feature = "test-loopback")]
+    #[tokio::test]
+    async fn caption_max_tokens_is_plumbed() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(&TINY_PNG[..]))
+            .mount(&server)
+            .await;
+
+        let p = setup_paths();
+        let base = server.uri();
+        let md = format!("![alt]({base}/img.png)");
+        let f = ImageCaptionFilters {
+            min_width: 0,
+            min_height: 0,
+            max_tokens: 137,
+            ..Default::default()
+        };
+        let (reg, last_max_tokens) = recording_registry();
+        apply(
+            &md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+            SsrfLevel::Loopback,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            last_max_tokens.load(std::sync::atomic::Ordering::SeqCst),
+            137,
+            "filters.max_tokens must reach captioner.caption()"
+        );
     }
 
     #[cfg(feature = "test-loopback")]

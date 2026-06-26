@@ -685,7 +685,7 @@ impl Default for ImageCaptionsConfig {
     fn default() -> Self {
         Self {
             default: None,
-            max_tokens: 50,
+            max_tokens: 128,
             max_per_page: 10,
             min_width: 200,
             min_height: 200,
@@ -1779,7 +1779,7 @@ bogus = 1
     #[test]
     fn image_captions_defaults_match_spec() {
         let c = ImageCaptionsConfig::default();
-        assert_eq!(c.max_tokens, 50);
+        assert_eq!(c.max_tokens, 128);
         assert_eq!(c.max_per_page, 10);
         assert_eq!(c.min_width, 200);
         assert_eq!(c.min_height, 200);
@@ -1812,7 +1812,7 @@ max_bytes = "1MiB"
         assert_eq!(cfg.image_captions.default.as_deref(), Some("openai"));
         assert_eq!(cfg.image_captions.max_per_page, 5);
         assert_eq!(cfg.image_captions.max_bytes, 1024 * 1024);
-        assert_eq!(cfg.image_captions.max_tokens, 50);
+        assert_eq!(cfg.image_captions.max_tokens, 128);
     }
 
     #[test]
