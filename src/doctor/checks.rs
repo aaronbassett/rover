@@ -82,7 +82,7 @@ impl Check for SqliteSchemaVersion {
     }
     async fn run(&self, ctx: &CheckCtx) -> CheckReport {
         // Sync with MIGRATIONS.len() in src/storage/mod.rs.
-        const EXPECTED: u32 = 6;
+        const EXPECTED: u32 = 7;
         match ctx.db.schema_version().await {
             Ok(v) if v == EXPECTED => CheckReport {
                 check: self.name(),
