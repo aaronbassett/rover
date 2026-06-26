@@ -1,7 +1,9 @@
 //! Per-fetch extraction options carried through the pipeline.
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::config::CacheRestrict;
 use crate::extractor::output::OutputPaths;
 use crate::storage::Db;
 use crate::vlm::CaptionerRegistry;
@@ -88,6 +90,44 @@ pub struct ImageCaptionFilters {
     /// hits (Task 10) do not consume this budget. Resolved from
     /// `[image_captions]` at Task 11 (default `3 * max_per_page` when unset).
     pub max_attempts: usize,
+    /// Resolved image-caption cache settings for this fetch. Populated from
+    /// `[image_captions.cache]` at filter-build time (Task 11); tests
+    /// construct it explicitly. A disabled cache (`enabled = false`) skips
+    /// both lookup and insert in [`crate::extractor::images`].
+    pub cache: ImageCacheCfg,
+}
+
+/// Resolved (non-`Option`) image-caption cache configuration carried per-fetch.
+///
+/// Distinct from [`crate::config::ImageCacheConfig`]: the config form leaves
+/// `ttl` optional (falling back to `cache.max_ttl`); this resolved form has a
+/// concrete `ttl` chosen at filter-build time. Task 11 populates it from
+/// config — the default here is a self-contained sensible fallback so existing
+/// call sites (and tests) compile via `..Default::default()`.
+#[derive(Debug, Clone, Copy)]
+pub struct ImageCacheCfg {
+    /// When `false`, the caption path performs neither cache lookup nor insert.
+    pub enabled: bool,
+    /// A cached row older than this is treated as absent (TTL expiry). A
+    /// zero `ttl` disables reuse entirely (every positive-age row misses).
+    pub ttl: Duration,
+    /// Scope of the content-hash key: global, per-host, or per-page.
+    pub restrict_to: CacheRestrict,
+    /// When `true`, the (zstd-compressed) raw image bytes are stored alongside
+    /// the caption on a cache miss/insert.
+    pub store_raw_image: bool,
+}
+
+impl Default for ImageCacheCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            // 7 days — mirrors `config::default_cache_max_ttl`.
+            ttl: Duration::from_secs(7 * 24 * 60 * 60),
+            restrict_to: CacheRestrict::None,
+            store_raw_image: false,
+        }
+    }
 }
 
 impl Default for ImageCaptionFilters {
@@ -102,6 +142,7 @@ impl Default for ImageCaptionFilters {
             per_domain_concurrency: 2,
             max_concurrent: 2,
             max_attempts: 30,
+            cache: ImageCacheCfg::default(),
         }
     }
 }

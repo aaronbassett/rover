@@ -378,83 +378,132 @@ async fn caption_one_image(
         }
     };
 
-    // Cache lookup. A hit produces a caption without a provider call, so it
-    // must not consume the `max_attempts` budget (provider_called stays false).
-    let cached = if let Some(db) = db {
-        crate::vlm::cache::lookup(
+    // Cache context. The content-hash scope (`restrict_to`) keys on the image
+    // `src`: `host` is the image's hostname and `url` is its full src. Only
+    // resolved when the cache is enabled and a DB is wired.
+    let cache_ctx = if filters.cache.enabled {
+        db.map(|db| {
+            let host = Url::parse(src)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .unwrap_or_default();
+            (db, host)
+        })
+    } else {
+        None
+    };
+
+    // Cache lookup. A fresh hit produces a caption without a provider call, so
+    // it must not consume the `max_attempts` budget (provider_called stays
+    // false). The stored caption was hardened before it was written, so a hit
+    // is returned as-is — it is NOT re-hardened here.
+    if let Some((db, host)) = cache_ctx.as_ref() {
+        let hit = crate::vlm::cache::lookup(
             db,
             &bytes,
             captioner.name(),
             captioner.model_id(),
             filters.max_tokens,
+            filters.cache.restrict_to,
+            host,
+            src,
+            filters.cache.ttl,
         )
         .await
-        .unwrap_or(None)
-    } else {
-        None
-    };
-    let alt_hint = if alt.is_empty() { None } else { Some(alt) };
-    let (caption, provider_called) = match cached {
-        Some(c) => (c, false),
-        None => match captioner
-            .caption(&bytes, alt_hint, filters.max_tokens)
-            .await
-        {
-            Ok(c) => {
-                if let Some(db) = db {
-                    let _ = crate::vlm::cache::insert(
-                        db,
-                        &bytes,
-                        captioner.name(),
-                        captioner.model_id(),
-                        filters.max_tokens,
-                        &c,
-                    )
-                    .await;
-                }
-                (c, true)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "rover::extractor",
-                    url = %src,
-                    err = %e,
-                    "captioner failed; keeping alt text"
-                );
-                // The provider WAS invoked (it errored), so this still counts
-                // as a real attempt against `max_attempts`.
-                return CaptionOutcome {
+        .unwrap_or(None);
+        if let Some(caption) = hit {
+            return CaptionOutcome {
+                src: src.to_string(),
+                succeeded: true,
+                provider_called: false,
+                record: ImageProcessed {
                     src: src.to_string(),
-                    succeeded: false,
-                    provider_called: true,
-                    record: ImageProcessed {
-                        src: src.to_string(),
-                        decision: "skipped".into(),
-                        reason: Some("captioner_error".into()),
-                        captioner: Some(captioner.name().to_string()),
-                        caption: None,
-                        dimensions: dims.map(|(w, h)| ImageDims {
-                            width: w,
-                            height: h,
-                        }),
-                        bytes: None,
-                        error: Some(e.to_string()),
-                    },
-                    replacement: alt.to_string(),
-                };
-            }
-        },
+                    decision: "captioned".into(),
+                    reason: None,
+                    captioner: Some(captioner.name().to_string()),
+                    caption: Some(caption.clone()),
+                    dimensions: dims.map(|(w, h)| ImageDims {
+                        width: w,
+                        height: h,
+                    }),
+                    bytes: None,
+                    error: None,
+                },
+                replacement: format!("![{caption}]({src}{rest})"),
+            };
+        }
+    }
+
+    // Cache miss: call the provider.
+    let alt_hint = if alt.is_empty() { None } else { Some(alt) };
+    let raw_caption = match captioner
+        .caption(&bytes, alt_hint, filters.max_tokens)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                target: "rover::extractor",
+                url = %src,
+                err = %e,
+                "captioner failed; keeping alt text"
+            );
+            // The provider WAS invoked (it errored), so this still counts as a
+            // real attempt against `max_attempts`.
+            return CaptionOutcome {
+                src: src.to_string(),
+                succeeded: false,
+                provider_called: true,
+                record: ImageProcessed {
+                    src: src.to_string(),
+                    decision: "skipped".into(),
+                    reason: Some("captioner_error".into()),
+                    captioner: Some(captioner.name().to_string()),
+                    caption: None,
+                    dimensions: dims.map(|(w, h)| ImageDims {
+                        width: w,
+                        height: h,
+                    }),
+                    bytes: None,
+                    error: Some(e.to_string()),
+                },
+                replacement: alt.to_string(),
+            };
+        }
     };
 
     // Internal-inference hardening (always on, not bypassable): the caption is
     // a product of rover's own inference on attacker-controlled image content.
     // Clean it (patterns, HIGH) before it enters the body — even when
-    // output-side scanning is allowlisted.
-    let caption = crate::guard::harden_for_inference(&caption, true, None, 0.9).cleaned;
+    // output-side scanning is allowlisted. The cache stores the *hardened*
+    // text so a future hit can return it without re-hardening.
+    let caption = crate::guard::harden_for_inference(&raw_caption, true, None, 0.9).cleaned;
+    if let Some((db, host)) = cache_ctx.as_ref() {
+        // Optionally persist the raw image bytes (zstd level 3, matching
+        // `storage::pages`) alongside the caption.
+        let raw_image_zstd = if filters.cache.store_raw_image {
+            zstd::stream::encode_all(bytes.as_slice(), 3).ok()
+        } else {
+            None
+        };
+        let _ = crate::vlm::cache::insert(
+            db,
+            &bytes,
+            captioner.name(),
+            captioner.model_id(),
+            filters.max_tokens,
+            filters.cache.restrict_to,
+            host,
+            src,
+            &caption,
+            raw_image_zstd.as_deref(),
+        )
+        .await;
+    }
     CaptionOutcome {
         src: src.to_string(),
         succeeded: true,
-        provider_called,
+        provider_called: true,
         record: ImageProcessed {
             src: src.to_string(),
             decision: "captioned".into(),

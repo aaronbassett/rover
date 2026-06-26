@@ -88,19 +88,52 @@ async fn cache_short_circuits_second_call() {
         .await
         .unwrap();
 
+    let restrict = rover::config::CacheRestrict::None;
+    let ttl = std::time::Duration::from_secs(3600);
     // First call: miss → real wiremock.
-    let cached = rover::vlm::cache::lookup(&db, PNG, cap.name(), cap.model_id(), 50)
-        .await
-        .unwrap();
+    let cached = rover::vlm::cache::lookup(
+        &db,
+        PNG,
+        cap.name(),
+        cap.model_id(),
+        50,
+        restrict,
+        "h",
+        "u",
+        ttl,
+    )
+    .await
+    .unwrap();
     assert!(cached.is_none());
     let c1 = cap.caption(PNG, None, 50).await.unwrap();
-    rover::vlm::cache::insert(&db, PNG, cap.name(), cap.model_id(), 50, &c1)
-        .await
-        .unwrap();
+    rover::vlm::cache::insert(
+        &db,
+        PNG,
+        cap.name(),
+        cap.model_id(),
+        50,
+        restrict,
+        "h",
+        "u",
+        &c1,
+        None,
+    )
+    .await
+    .unwrap();
     // Second call: must hit cache.
-    let cached2 = rover::vlm::cache::lookup(&db, PNG, cap.name(), cap.model_id(), 50)
-        .await
-        .unwrap();
+    let cached2 = rover::vlm::cache::lookup(
+        &db,
+        PNG,
+        cap.name(),
+        cap.model_id(),
+        50,
+        restrict,
+        "h",
+        "u",
+        ttl,
+    )
+    .await
+    .unwrap();
     assert_eq!(cached2.as_deref(), Some("cached"));
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
