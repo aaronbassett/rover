@@ -196,7 +196,7 @@ async fn caption_one_image(
             alt.to_string()
         }
         CaptionDecision::Caption { dims } => {
-            let bytes = match download_image_bytes(http, src, ssrf_level).await {
+            let bytes = match download_image_bytes(http, src, ssrf_level, filters.max_bytes).await {
                 Ok(b) => b,
                 Err(e) => {
                     *images_failed += 1;
@@ -345,7 +345,9 @@ async fn download_image_bytes(
     http: &reqwest::Client,
     src: &str,
     ssrf_level: SsrfLevel,
+    max_bytes: u64,
 ) -> Result<Vec<u8>, ExtractorError> {
+    use futures::StreamExt as _;
     let url = Url::parse(src).map_err(|source| ExtractorError::ImageUrlInvalid {
         url: src.to_string(),
         source,
@@ -363,14 +365,22 @@ async fn download_image_bytes(
             url: src.to_string(),
             source,
         })?;
-    Ok(resp
-        .bytes()
-        .await
-        .map_err(|source| ExtractorError::ImageDownload {
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|source| ExtractorError::ImageDownload {
             url: src.to_string(),
             source,
-        })?
-        .to_vec())
+        })?;
+        if buf.len() as u64 + chunk.len() as u64 > max_bytes {
+            return Err(ExtractorError::ImageTooLarge {
+                url: src.to_string(),
+                max_bytes,
+            });
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
 }
 
 async fn download_one(
@@ -1132,6 +1142,26 @@ mod tests {
                 }
             ),
             "expected ImageSsrf(Address), got: {err:?}",
+        );
+    }
+
+    #[cfg(feature = "test-loopback")]
+    #[tokio::test]
+    async fn download_aborts_when_body_exceeds_max_bytes() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 5000]))
+            .mount(&server)
+            .await;
+        let url = format!("{}/big.png", server.uri());
+        let err = download_image_bytes(&client(), &url, SsrfLevel::Loopback, 1000)
+            .await
+            .expect_err("must abort over the cap");
+        assert!(
+            matches!(err, ExtractorError::ImageTooLarge { .. }),
+            "got {err:?}"
         );
     }
 
