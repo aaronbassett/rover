@@ -7,6 +7,7 @@ use serde::Serialize;
 use url::Url;
 
 use crate::extractor::frontmatter::{ImageDims, ImageProcessed};
+use crate::extractor::image_limiter::DomainLimiter;
 use crate::extractor::options::ImageCaptionFilters;
 use crate::extractor::options::ImagesMode;
 use crate::extractor::output::OutputPaths;
@@ -66,6 +67,7 @@ pub async fn apply(
         None
     };
     let mut captioned_so_far = 0usize;
+    let limiter = DomainLimiter::new(filters.per_domain_concurrency);
 
     // Two-step: enumerate matches, then transform. Async download requires
     // we can't use `replace_all` directly. `filter_map` guards against any
@@ -94,7 +96,7 @@ pub async fn apply(
             ImagesMode::Drop => String::new(),
             ImagesMode::AltTextOnly => alt.clone(),
             ImagesMode::Download => {
-                match download_one(http, &src, output_paths, ssrf_level).await {
+                match download_one(http, &limiter, &src, output_paths, ssrf_level).await {
                     Ok(local) => {
                         images_downloaded += 1;
                         format!("![{alt}]({local}{rest})")
@@ -116,6 +118,7 @@ pub async fn apply(
                     caption_one_image(
                         cap.as_ref(),
                         http,
+                        &limiter,
                         db,
                         filters,
                         &alt,
@@ -163,6 +166,7 @@ pub async fn apply(
 async fn caption_one_image(
     captioner: &dyn VlmCaptioner,
     http: &reqwest::Client,
+    limiter: &DomainLimiter,
     db: Option<&Db>,
     filters: &ImageCaptionFilters,
     alt: &str,
@@ -173,7 +177,16 @@ async fn caption_one_image(
     processed: &mut Vec<ImageProcessed>,
     ssrf_level: SsrfLevel,
 ) -> String {
-    let decision = classify(src, rest, http, *captioned_so_far, filters, ssrf_level).await;
+    let decision = classify(
+        src,
+        rest,
+        http,
+        limiter,
+        *captioned_so_far,
+        filters,
+        ssrf_level,
+    )
+    .await;
     match decision {
         CaptionDecision::Skip {
             reason,
@@ -196,32 +209,34 @@ async fn caption_one_image(
             alt.to_string()
         }
         CaptionDecision::Caption { dims } => {
-            let bytes = match download_image_bytes(http, src, ssrf_level, filters.max_bytes).await {
-                Ok(b) => b,
-                Err(e) => {
-                    *images_failed += 1;
-                    tracing::warn!(
-                        target: "rover::extractor",
-                        url = %src,
-                        err = %e,
-                        "image download failed during captioning; keeping alt text"
-                    );
-                    processed.push(ImageProcessed {
-                        src: src.to_string(),
-                        decision: "skipped".into(),
-                        reason: Some("download_error".into()),
-                        captioner: Some(captioner.name().to_string()),
-                        caption: None,
-                        dimensions: dims.map(|(w, h)| ImageDims {
-                            width: w,
-                            height: h,
-                        }),
-                        bytes: None,
-                        error: Some(format!("download: {e}")),
-                    });
-                    return alt.to_string();
-                }
-            };
+            let bytes =
+                match download_image_bytes(http, limiter, src, ssrf_level, filters.max_bytes).await
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        *images_failed += 1;
+                        tracing::warn!(
+                            target: "rover::extractor",
+                            url = %src,
+                            err = %e,
+                            "image download failed during captioning; keeping alt text"
+                        );
+                        processed.push(ImageProcessed {
+                            src: src.to_string(),
+                            decision: "skipped".into(),
+                            reason: Some("download_error".into()),
+                            captioner: Some(captioner.name().to_string()),
+                            caption: None,
+                            dimensions: dims.map(|(w, h)| ImageDims {
+                                width: w,
+                                height: h,
+                            }),
+                            bytes: None,
+                            error: Some(format!("download: {e}")),
+                        });
+                        return alt.to_string();
+                    }
+                };
             // Cache lookup.
             let cached = if let Some(db) = db {
                 crate::vlm::cache::lookup(
@@ -343,6 +358,7 @@ async fn ssrf_preflight(url: &Url, src: &str, level: SsrfLevel) -> Result<(), Ex
 
 async fn download_image_bytes(
     http: &reqwest::Client,
+    limiter: &DomainLimiter,
     src: &str,
     ssrf_level: SsrfLevel,
     max_bytes: u64,
@@ -353,6 +369,7 @@ async fn download_image_bytes(
         source,
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
+    let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
     let resp = SSRF_LEVEL
         .scope(ssrf_level, http.get(url.clone()).send())
         .await
@@ -385,6 +402,7 @@ async fn download_image_bytes(
 
 async fn download_one(
     http: &reqwest::Client,
+    limiter: &DomainLimiter,
     src: &str,
     output_paths: &OutputPaths,
     ssrf_level: SsrfLevel,
@@ -394,6 +412,7 @@ async fn download_one(
         source,
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
+    let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
     let resp = SSRF_LEVEL
         .scope(ssrf_level, http.get(url.clone()).send())
         .await
@@ -460,6 +479,7 @@ pub(crate) fn html_attr_dims(rest: &str) -> Option<(u32, u32)> {
 /// not a recognizable image. Errors propagate as `Err`.
 pub(crate) async fn partial_fetch_dimensions(
     http: &reqwest::Client,
+    limiter: &DomainLimiter,
     src: &str,
     ssrf_level: SsrfLevel,
 ) -> Result<Option<(u32, u32)>, ExtractorError> {
@@ -468,6 +488,7 @@ pub(crate) async fn partial_fetch_dimensions(
         source,
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
+    let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
     let resp = SSRF_LEVEL
         .scope(
             ssrf_level,
@@ -498,6 +519,7 @@ pub(crate) async fn partial_fetch_dimensions(
 /// transfer). HEAD request; falls back to range-GET if HEAD is rejected.
 pub(crate) async fn fetch_content_length(
     http: &reqwest::Client,
+    limiter: &DomainLimiter,
     src: &str,
     ssrf_level: SsrfLevel,
 ) -> Result<Option<u64>, ExtractorError> {
@@ -506,6 +528,7 @@ pub(crate) async fn fetch_content_length(
         source,
     })?;
     ssrf_preflight(&url, src, ssrf_level).await?;
+    let _permit = limiter.acquire(url.host_str().unwrap_or("")).await;
     let resp = SSRF_LEVEL
         .scope(ssrf_level, http.head(url.clone()).send())
         .await;
@@ -572,6 +595,7 @@ pub(crate) async fn classify(
     src: &str,
     rest: &str,
     http: &reqwest::Client,
+    limiter: &DomainLimiter,
     captioned_so_far: usize,
     filters: &ImageCaptionFilters,
     ssrf_level: SsrfLevel,
@@ -579,7 +603,7 @@ pub(crate) async fn classify(
     // Step 1: dimensions.
     let dims = match html_attr_dims(rest) {
         Some(d) => Some(d),
-        None => match partial_fetch_dimensions(http, src, ssrf_level).await {
+        None => match partial_fetch_dimensions(http, limiter, src, ssrf_level).await {
             Ok(Some(d)) => Some(d),
             Ok(None) => None,
             Err(_) => None,
@@ -596,7 +620,7 @@ pub(crate) async fn classify(
     }
 
     // Step 2: size.
-    let bytes: Option<u64> = fetch_content_length(http, src, ssrf_level)
+    let bytes: Option<u64> = fetch_content_length(http, limiter, src, ssrf_level)
         .await
         .unwrap_or_default();
     if let Some(n) = bytes
@@ -1035,10 +1059,12 @@ mod tests {
             min_height: 200,
             ..Default::default()
         };
+        let lim = DomainLimiter::new(2);
         let d = classify(
             "https://example.com/icon.svg",
             r#" width="24" height="24""#,
             &client,
+            &lim,
             0,
             &f,
             SsrfLevel::Strict,
@@ -1075,10 +1101,12 @@ mod tests {
         };
         let url = format!("{}/photo.png", server.uri());
         // captioned_so_far == max_per_page → skip
+        let lim = DomainLimiter::new(2);
         let d = classify(
             &url,
             r#" width="500" height="500""#,
             &client,
+            &lim,
             3,
             &f,
             SsrfLevel::Loopback,
@@ -1114,7 +1142,8 @@ mod tests {
         crate::fetcher::client::install_ring_provider();
         let client = reqwest::Client::new();
         let url = format!("{}/img.png", server.uri());
-        let dims = partial_fetch_dimensions(&client, &url, SsrfLevel::Loopback)
+        let lim = DomainLimiter::new(2);
+        let dims = partial_fetch_dimensions(&client, &lim, &url, SsrfLevel::Loopback)
             .await
             .unwrap();
         assert_eq!(dims, Some((1, 1)));
@@ -1130,9 +1159,16 @@ mod tests {
         use crate::fetcher::ssrf::SsrfError;
 
         let p = setup_paths();
-        let err = download_one(&client(), "http://localhost:9/x.png", &p, SsrfLevel::Strict)
-            .await
-            .expect_err("strict must reject the loopback target");
+        let lim = DomainLimiter::new(2);
+        let err = download_one(
+            &client(),
+            &lim,
+            "http://localhost:9/x.png",
+            &p,
+            SsrfLevel::Strict,
+        )
+        .await
+        .expect_err("strict must reject the loopback target");
         assert!(
             matches!(
                 err,
@@ -1156,7 +1192,8 @@ mod tests {
             .mount(&server)
             .await;
         let url = format!("{}/big.png", server.uri());
-        let err = download_image_bytes(&client(), &url, SsrfLevel::Loopback, 1000)
+        let lim = DomainLimiter::new(2);
+        let err = download_image_bytes(&client(), &lim, &url, SsrfLevel::Loopback, 1000)
             .await
             .expect_err("must abort over the cap");
         assert!(

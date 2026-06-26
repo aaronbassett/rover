@@ -74,6 +74,10 @@ pub struct ImageCaptionFilters {
     pub max_tokens: usize,
     /// When Some, overrides the registry's default captioner for this fetch.
     pub captioner_override: Option<String>,
+    /// Maximum concurrent image HTTP requests to any single hostname.
+    /// Applied via [`crate::extractor::image_limiter::DomainLimiter`].
+    /// A value of 0 is treated as 1 (always issues at least one request).
+    pub per_domain_concurrency: u32,
 }
 
 impl Default for ImageCaptionFilters {
@@ -85,6 +89,7 @@ impl Default for ImageCaptionFilters {
             max_bytes: 10 * 1024 * 1024,
             max_tokens: 50,
             captioner_override: None,
+            per_domain_concurrency: 2,
         }
     }
 }

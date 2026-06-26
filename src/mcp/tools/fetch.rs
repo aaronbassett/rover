@@ -376,6 +376,7 @@ fn build_caption_filters(
         max_bytes: cfg.max_bytes,
         max_tokens: cfg.max_tokens,
         captioner_override: override_name,
+        ..Default::default()
     }
 }
 
