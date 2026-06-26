@@ -98,7 +98,7 @@ Two budgets govern the loop:
 
 `max_attempts` unset ⇒ `3 × max_per_page`. `max_concurrent` (also per-captioner) bounds simultaneous provider calls.
 
-Image HTTP is rate-limited per host via `[rate_limit].per_domain_concurrency`. HTTP 429 triggers a bounded retry honoring `Retry-After`, clamped to `[rate_limit].retry_after_ceiling`. Downloads stream and abort at `max_bytes`, so memory use is bounded regardless of image size.
+Image HTTP is rate-limited per host via `[rate_limit].per_domain_concurrency`. HTTP 429 triggers a bounded retry honoring `Retry-After`, clamped to a fixed 5 seconds. Downloads stream and abort at `max_bytes`, so memory use is bounded regardless of image size.
 
 ## Caption cache
 

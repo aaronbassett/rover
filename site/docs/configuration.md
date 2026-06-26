@@ -219,7 +219,7 @@ A free-form section: repeat it for each named captioner. It mirrors the `[backen
 | `base_url` | string | yes for `openai_compat`; unused otherwise | Custom endpoint. For `openai_compat`, auto-normalized to end in `/v1/`. |
 | `api_key_env` | string | no | Env var holding the API key. When unset for cloud providers, the genai library falls back to its provider-default env var. Keyless local servers can omit it. |
 | `max_concurrent` | integer | no | Max concurrent caption calls to this captioner per page. Default `2`. |
-| `max_attempts` | integer | no | Hard cap on provider caption calls per page. Unset ⇒ `3 × image_captions.max_per_page`. Cache hits do not consume this budget. |
+| `max_attempts` | integer | no | Hard cap on provider caption calls per page. Unset ⇒ `3 × image_captions.max_per_page`. Cache hits and pre-caption skips (dimension, size, and per-page budget checks) do not consume this budget. |
 
 Example:
 
