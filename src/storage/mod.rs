@@ -10,6 +10,7 @@
 pub mod error;
 pub mod events;
 pub mod hooks;
+pub mod image_captions;
 pub mod pages;
 pub mod robots;
 pub mod servers;
@@ -89,6 +90,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "006_render_reason.sql",
         include_str!("migrations/006_render_reason.sql"),
+    ),
+    (
+        "007_image_caption_cache.sql",
+        include_str!("migrations/007_image_caption_cache.sql"),
     ),
 ];
 
