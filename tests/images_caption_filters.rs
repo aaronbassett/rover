@@ -168,8 +168,12 @@ async fn per_page_budget_respected() {
         .iter()
         .filter(|x| x.reason.as_deref() == Some("per_page_budget"))
         .count();
+    // Lazy selection stops probing once `max_per_page` successful captions are
+    // reached: exactly 3 are captioned, and the remaining 12 candidates are
+    // never probed — so (unlike the old eager path) they are NOT recorded as
+    // `per_page_budget` skips.
     assert_eq!(captioned, 3);
-    assert_eq!(skipped_budget, 12);
+    assert_eq!(skipped_budget, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
