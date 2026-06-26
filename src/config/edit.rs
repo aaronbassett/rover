@@ -234,16 +234,6 @@ fn settable() -> &'static [SettableSpec] {
             parser: parse_bool,
             expected: "bool",
         },
-        SettableSpec {
-            key: "captioners.<name>.max_concurrent",
-            parser: parse_usize,
-            expected: "integer",
-        },
-        SettableSpec {
-            key: "captioners.<name>.max_attempts",
-            parser: parse_usize,
-            expected: "integer",
-        },
     ]
 }
 
