@@ -10,7 +10,7 @@
 //! The `CaptionerRegistry` (Task 5) holds the configured captioners and is
 //! injected into MCP server state (Task 10).
 //!
-//! Caption results are deterministically cached in `summary_cache` via the
+//! Caption results are deterministically cached in `image_caption_cache` via the
 //! `cache` module (Task 7), keyed on `(sha256(image_bytes), captioner_name,
 //! captioner_model_id, max_tokens)`.
 

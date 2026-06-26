@@ -262,7 +262,10 @@ pub async fn apply(
         images_seen += 1;
         out.push_str(&markdown[cursor..*start]);
         cursor = *end;
-        let replacement = result_by_src.get(src).cloned().unwrap_or_default();
+        let replacement = result_by_src
+            .get(src)
+            .cloned()
+            .unwrap_or_else(|| markdown[*start..*end].to_string());
         out.push_str(&replacement);
     }
     out.push_str(&markdown[cursor..]);
