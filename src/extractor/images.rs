@@ -85,12 +85,29 @@ pub async fn apply(
         })
         .collect();
 
-    let mut out = String::with_capacity(markdown.len());
-    let mut cursor = 0usize;
-    for (start, end, alt, src, rest) in matches {
-        images_seen += 1;
-        out.push_str(&markdown[cursor..start]);
-        cursor = end;
+    // De-duplicate by src: build an ordered list of unique
+    // (start, end, alt, src, rest) tuples using each src's first occurrence,
+    // preserving discovery order. The first occurrence's byte offsets are
+    // carried so arms that keep the original reference (Keep, download
+    // failures) can emit the *raw* matched slice — byte-identical to the
+    // pre-dedup output, which the decoded `src` would not preserve for URLs
+    // containing entities (e.g. `&amp;`).
+    let mut dedup_seen: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(matches.len());
+    let mut unique_matches: Vec<(usize, usize, String, String, String)> =
+        Vec::with_capacity(matches.len());
+    for (start, end, alt, src, rest) in &matches {
+        if dedup_seen.insert(src.clone()) {
+            unique_matches.push((*start, *end, alt.clone(), src.clone(), rest.clone()));
+        }
+    }
+
+    // Process each unique src once, recording the replacement markdown string.
+    // Expensive work (download, caption) is done here; the rewrite loop below
+    // only looks up results.
+    let mut result_by_src: std::collections::HashMap<String, String> =
+        std::collections::HashMap::with_capacity(unique_matches.len());
+    for (start, end, alt, src, rest) in unique_matches {
         let replacement: String = match mode {
             ImagesMode::Keep => markdown[start..end].to_string(),
             ImagesMode::Drop => String::new(),
@@ -145,6 +162,19 @@ pub async fn apply(
                 }
             },
         };
+        result_by_src.insert(src, replacement);
+    }
+
+    // Rewrite: every occurrence counts toward images_seen; replacements are
+    // looked up from the pre-built map so each unique URL is only processed
+    // once above regardless of how many times it appears in the document.
+    let mut out = String::with_capacity(markdown.len());
+    let mut cursor = 0usize;
+    for (start, end, _, src, _) in &matches {
+        images_seen += 1;
+        out.push_str(&markdown[cursor..*start]);
+        cursor = *end;
+        let replacement = result_by_src.get(src).cloned().unwrap_or_default();
         out.push_str(&replacement);
     }
     out.push_str(&markdown[cursor..]);
@@ -712,6 +742,43 @@ mod tests {
     /// caption-failure path.
     struct FailingCaptioner;
 
+    /// A captioner that counts how many times `caption()` is called and
+    /// always returns `"cap"`. Used to assert that duplicate URLs are only
+    /// captioned once.
+    struct CountingCaptioner {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl VlmCaptioner for CountingCaptioner {
+        fn name(&self) -> &str {
+            "count"
+        }
+        fn model_id(&self) -> &str {
+            "count-model"
+        }
+        async fn caption(
+            &self,
+            _image_bytes: &[u8],
+            _alt: Option<&str>,
+            _max_tokens: usize,
+        ) -> Result<String, VlmError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("cap".to_string())
+        }
+    }
+
+    fn counting_registry() -> (CaptionerRegistry, Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let captioner = Arc::new(CountingCaptioner {
+            calls: Arc::clone(&calls),
+        });
+        let mut map: HashMap<String, Arc<dyn VlmCaptioner>> = HashMap::new();
+        map.insert("count".to_string(), captioner);
+        let reg = CaptionerRegistry::__test_construct(map, Some("count".to_string()));
+        (reg, calls)
+    }
+
     #[async_trait::async_trait]
     impl VlmCaptioner for FailingCaptioner {
         fn name(&self) -> &str {
@@ -737,6 +804,53 @@ mod tests {
         let mut map: HashMap<String, Arc<dyn VlmCaptioner>> = HashMap::new();
         map.insert("fail".to_string(), Arc::new(FailingCaptioner));
         CaptionerRegistry::__test_construct(map, Some("fail".to_string()))
+    }
+
+    #[cfg(feature = "test-loopback")]
+    #[tokio::test]
+    async fn duplicate_urls_caption_once() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        // 1x1 PNG — same 67-byte array as captioner_failure_is_labelled_captioner_error.
+        let png: [u8; 67] = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let server = MockServer::start().await;
+        let hits = Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(&png[..]));
+        server.register(hits).await;
+        let p = setup_paths();
+        let u = format!("{}/same.png", server.uri());
+        let md = format!("![a]({u}) and again ![a]({u})");
+        let f = ImageCaptionFilters {
+            min_width: 0,
+            min_height: 0,
+            ..Default::default()
+        };
+        // captioner that counts calls:
+        let (reg, calls) = counting_registry();
+        let r = apply(
+            &md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+            SsrfLevel::Loopback,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "captioned twice"
+        );
+        assert_eq!(r.images_seen, 2);
     }
 
     #[tokio::test]
@@ -948,6 +1062,38 @@ mod tests {
         assert_eq!(r.markdown, md);
         assert_eq!(r.images_seen, 1);
         assert_eq!(r.images_downloaded, 0);
+    }
+
+    #[tokio::test]
+    async fn keep_preserves_raw_entity_encoded_url() {
+        // A `Keep`-mode image whose URL contains `&amp;` must be emitted
+        // byte-for-byte unchanged. `src` is entity-decoded at capture time
+        // (Task 3), so a reconstructed `![alt](src)` would lower `&amp;` to
+        // `&`; the raw matched slice must be used to preserve fidelity. This
+        // is a single, non-duplicate image — the dedup restructure must not
+        // change its output.
+        let p = setup_paths();
+        let md = "Look ![alt](https://x/_next/image?url=a&amp;w=640&amp;q=75) at this.";
+        let f = ImageCaptionFilters::default();
+        let r = apply(
+            md,
+            &ImagesMode::Keep,
+            &p,
+            &client(),
+            None,
+            &f,
+            None,
+            SsrfLevel::Strict,
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.markdown, md, "raw &amp; entity must be preserved");
+        assert!(
+            r.markdown.contains("&amp;"),
+            "entity should not be decoded: {}",
+            r.markdown
+        );
+        assert_eq!(r.images_seen, 1);
     }
 
     #[tokio::test]
