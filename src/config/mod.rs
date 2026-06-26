@@ -634,6 +634,39 @@ fn default_block_service_workers() -> bool {
     true
 }
 
+/// Controls whether the image-caption cache is scoped to the entire store,
+/// per-host, or per-page. `None` means no restriction (global scope).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheRestrict {
+    #[default]
+    None,
+    Host,
+    Page,
+}
+
+/// `[image_captions.cache]` configuration block.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ImageCacheConfig {
+    pub enabled: bool,
+    #[serde(default, with = "humantime_serde::option")]
+    pub ttl: Option<Duration>,
+    pub restrict_to: CacheRestrict,
+    pub store_raw_image: bool,
+}
+
+impl Default for ImageCacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ttl: None,
+            restrict_to: CacheRestrict::None,
+            store_raw_image: false,
+        }
+    }
+}
+
 /// `[image_captions]` defaults block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -645,6 +678,7 @@ pub struct ImageCaptionsConfig {
     pub min_height: u32,
     #[serde(deserialize_with = "humanbytes_to_u64")]
     pub max_bytes: u64,
+    pub cache: ImageCacheConfig,
 }
 
 impl Default for ImageCaptionsConfig {
@@ -656,6 +690,7 @@ impl Default for ImageCaptionsConfig {
             min_width: 200,
             min_height: 200,
             max_bytes: 10 * 1024 * 1024,
+            cache: ImageCacheConfig::default(),
         }
     }
 }
@@ -1979,5 +2014,35 @@ level = true
         // Compile-time guarantee the field is gone: this block must not reference it.
         let c = ImageCaptionsConfig::default();
         assert_eq!(c.max_per_page, 10);
+    }
+
+    #[test]
+    fn image_cache_defaults() {
+        let c = ImageCaptionsConfig::default();
+        assert!(c.cache.enabled);
+        assert_eq!(c.cache.ttl, None);
+        assert!(matches!(c.cache.restrict_to, CacheRestrict::None));
+        assert!(!c.cache.store_raw_image);
+    }
+
+    #[test]
+    fn image_cache_parses_restrict_to() {
+        let toml = r#"
+[image_captions.cache]
+enabled = true
+restrict_to = "host"
+store_raw_image = true
+ttl = "2h"
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(matches!(
+            cfg.image_captions.cache.restrict_to,
+            CacheRestrict::Host
+        ));
+        assert!(cfg.image_captions.cache.store_raw_image);
+        assert_eq!(
+            cfg.image_captions.cache.ttl,
+            Some(std::time::Duration::from_secs(7200))
+        );
     }
 }
