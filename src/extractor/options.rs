@@ -78,6 +78,16 @@ pub struct ImageCaptionFilters {
     /// Applied via [`crate::extractor::image_limiter::DomainLimiter`].
     /// A value of 0 is treated as 1 (always issues at least one request).
     pub per_domain_concurrency: u32,
+    /// Maximum number of captioner provider calls allowed to run concurrently
+    /// across the whole page. Bounds the per-batch caption fan-out via a
+    /// [`tokio::sync::Semaphore`]. A value of 0 is treated as 1.
+    pub max_concurrent: usize,
+    /// Hard cap on the number of *real* captioner provider calls per page.
+    /// The selection loop stops once this many `captioner.caption(...)`
+    /// invocations have been made, independent of how many succeed. Cache
+    /// hits (Task 10) do not consume this budget. Resolved from
+    /// `[image_captions]` at Task 11 (default `3 * max_per_page` when unset).
+    pub max_attempts: usize,
 }
 
 impl Default for ImageCaptionFilters {
@@ -90,6 +100,8 @@ impl Default for ImageCaptionFilters {
             max_tokens: 50,
             captioner_override: None,
             per_domain_concurrency: 2,
+            max_concurrent: 2,
+            max_attempts: 30,
         }
     }
 }

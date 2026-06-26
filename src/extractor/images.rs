@@ -66,7 +66,6 @@ pub async fn apply(
     } else {
         None
     };
-    let mut captioned_so_far = 0usize;
     let limiter = DomainLimiter::new(filters.per_domain_concurrency);
 
     // Two-step: enumerate matches, then transform. Async download requires
@@ -107,62 +106,151 @@ pub async fn apply(
     // only looks up results.
     let mut result_by_src: std::collections::HashMap<String, String> =
         std::collections::HashMap::with_capacity(unique_matches.len());
-    for (start, end, alt, src, rest) in unique_matches {
-        let replacement: String = match mode {
-            ImagesMode::Keep => markdown[start..end].to_string(),
-            ImagesMode::Drop => String::new(),
-            ImagesMode::AltTextOnly => alt.clone(),
-            ImagesMode::Download => {
-                match download_one(http, &limiter, &src, output_paths, ssrf_level).await {
-                    Ok(local) => {
-                        images_downloaded += 1;
-                        format!("![{alt}]({local}{rest})")
-                    }
-                    Err(e) => {
-                        images_failed += 1;
-                        tracing::warn!(
-                            target: "rover::extractor",
-                            url = %src,
-                            err = %e,
-                            "image download failed; keeping original"
-                        );
-                        markdown[start..end].to_string()
-                    }
+
+    if matches!(mode, ImagesMode::Caption) {
+        match captioner.as_ref() {
+            None => {
+                // Unreachable while the resolution block above stays in sync
+                // with this arm; fall back to keeping originals rather than
+                // panicking on what would be an internal invariant slip.
+                tracing::error!(
+                    target: "rover::extractor",
+                    "internal: captioner missing in Caption mode; keeping original images"
+                );
+                for (start, end, _, src, _) in &unique_matches {
+                    images_failed += 1;
+                    result_by_src.insert(src.clone(), markdown[*start..*end].to_string());
                 }
             }
-            ImagesMode::Caption => match captioner.as_ref() {
-                Some(cap) => {
-                    caption_one_image(
+            Some(cap) => {
+                // Budgeted lazy selection + backfill (spec §3.6 / Task 8).
+                //
+                // `candidates` is the ordered unique list from the dedup phase.
+                // Each pass fills a batch of viable candidates (`classify`)
+                // only up to the *remaining* success budget — so probing stops
+                // as soon as we have enough to try — then captions that batch
+                // with bounded provider concurrency. A failed caption backfills
+                // from the next candidate on the following pass. The loop ends
+                // when the success budget is met, the provider-call budget
+                // (`max_attempts`) is spent, or candidates are exhausted.
+                let candidates: Vec<(String, String, String)> = unique_matches
+                    .iter()
+                    .map(|(_, _, alt, src, rest)| (alt.clone(), src.clone(), rest.clone()))
+                    .collect();
+                let sem =
+                    std::sync::Arc::new(tokio::sync::Semaphore::new(filters.max_concurrent.max(1)));
+                let mut idx = 0usize;
+                let mut successes = 0usize;
+                let mut attempts = 0usize;
+
+                while successes < filters.max_per_page && attempts < filters.max_attempts {
+                    // 1) Fill a batch of viable candidates up to the remaining
+                    //    success budget. Candidates beyond a full batch are
+                    //    never probed (this is what stops at `max_per_page`).
+                    let need = filters.max_per_page - successes;
+                    let mut batch: Vec<ClassifiedCandidate> = Vec::new();
+                    while batch.len() < need && idx < candidates.len() {
+                        let (alt, src, rest) = candidates[idx].clone();
+                        idx += 1;
+                        match classify(&src, &rest, http, &limiter, filters, ssrf_level).await {
+                            CaptionDecision::Caption { dims } => batch.push((alt, src, rest, dims)),
+                            CaptionDecision::Skip {
+                                reason,
+                                dims,
+                                bytes,
+                            } => {
+                                images_processed.push(ImageProcessed {
+                                    src: src.clone(),
+                                    decision: "skipped".into(),
+                                    reason: Some(skip_reason_to_str(&reason).to_string()),
+                                    captioner: None,
+                                    caption: None,
+                                    dimensions: dims.map(|(w, h)| ImageDims {
+                                        width: w,
+                                        height: h,
+                                    }),
+                                    bytes,
+                                    error: None,
+                                });
+                                result_by_src.insert(src, alt);
+                            }
+                        }
+                    }
+                    if batch.is_empty() {
+                        break; // no candidates left to try
+                    }
+
+                    // 2) Caption the batch with bounded provider concurrency.
+                    //    Cap the slice at the remaining provider-call budget so
+                    //    we never exceed `max_attempts` real captioner calls.
+                    let room = filters.max_attempts - attempts;
+                    let take = batch.len().min(room);
+                    let outcomes = caption_batch(
+                        &batch[..take],
                         cap.as_ref(),
                         http,
                         &limiter,
                         db,
                         filters,
-                        &alt,
-                        &src,
-                        &rest,
-                        &mut captioned_so_far,
-                        &mut images_failed,
-                        &mut images_processed,
+                        &sem,
                         ssrf_level,
                     )
-                    .await
+                    .await;
+                    for outcome in outcomes {
+                        // `attempts` counts only *real* provider calls, so a
+                        // future cache layer (Task 10) can report a hit with
+                        // `provider_called == false` and consume no budget.
+                        if outcome.provider_called {
+                            attempts += 1;
+                        }
+                        if outcome.succeeded {
+                            successes += 1;
+                        } else {
+                            images_failed += 1;
+                        }
+                        images_processed.push(outcome.record);
+                        result_by_src.insert(outcome.src, outcome.replacement);
+                    }
                 }
-                None => {
-                    // Unreachable while the resolution block above stays in
-                    // sync with this match arm; we fall back to keeping the
-                    // original markdown rather than panicking on what would
-                    // be an internal invariant slip.
-                    tracing::error!(
-                        target: "rover::extractor",
-                        "internal: captioner missing in Caption mode; keeping original image"
-                    );
-                    images_failed += 1;
-                    markdown[start..end].to_string()
+
+                // Candidates the budget never reached (success budget filled,
+                // or the attempt cap hit, before we got to them) are not
+                // failures: keep their alt text and record nothing.
+                for (alt, src, _) in &candidates {
+                    result_by_src
+                        .entry(src.clone())
+                        .or_insert_with(|| alt.clone());
                 }
-            },
-        };
-        result_by_src.insert(src, replacement);
+            }
+        }
+    } else {
+        for (start, end, alt, src, rest) in unique_matches {
+            let replacement: String = match mode {
+                ImagesMode::Keep => markdown[start..end].to_string(),
+                ImagesMode::Drop => String::new(),
+                ImagesMode::AltTextOnly => alt.clone(),
+                ImagesMode::Download => {
+                    match download_one(http, &limiter, &src, output_paths, ssrf_level).await {
+                        Ok(local) => {
+                            images_downloaded += 1;
+                            format!("![{alt}]({local}{rest})")
+                        }
+                        Err(e) => {
+                            images_failed += 1;
+                            tracing::warn!(
+                                target: "rover::extractor",
+                                url = %src,
+                                err = %e,
+                                "image download failed; keeping original"
+                            );
+                            markdown[start..end].to_string()
+                        }
+                    }
+                }
+                ImagesMode::Caption => unreachable!("Caption mode handled above"),
+            };
+            result_by_src.insert(src, replacement);
+        }
     }
 
     // Rewrite: every occurrence counts toward images_seen; replacements are
@@ -188,10 +276,63 @@ pub async fn apply(
     })
 }
 
-/// Caption a single image. Returns the replacement markdown for the image
-/// (either the freshly-captioned `![caption](src)` form or a fallback to
-/// the alt text when the image was skipped or the captioner errored).
-/// Pushes one `ImageProcessed` annotation into `processed` per call.
+/// The result of running one already-classified candidate through the
+/// caption path (download → cache → caption → harden). Returned (rather than
+/// mutating shared state) so a batch can be captioned concurrently and the
+/// caller can fold the outcomes back into the per-page budget counters.
+struct CaptionOutcome {
+    /// The image's `src`, used to key `result_by_src`.
+    src: String,
+    /// `true` when a caption was produced and recorded as `"captioned"`.
+    succeeded: bool,
+    /// `true` when the captioner provider was actually invoked. A download
+    /// error never reaches the provider; a cache hit (Task 10) skips it. Only
+    /// real provider calls count against `max_attempts`.
+    provider_called: bool,
+    /// The single `images_processed` annotation for this candidate.
+    record: ImageProcessed,
+    /// Replacement markdown: `![caption](src…)` on success, alt text on a
+    /// download/captioner failure.
+    replacement: String,
+}
+
+/// Caption a batch of already-classified candidates concurrently, bounded by
+/// `sem` (resolved from `filters.max_concurrent`). Each item additionally
+/// acquires a per-host permit inside [`download_image_bytes`] via `limiter`,
+/// so concurrent captioning stays within the per-domain HTTP budget.
+#[allow(clippy::too_many_arguments)]
+async fn caption_batch(
+    batch: &[ClassifiedCandidate],
+    captioner: &dyn VlmCaptioner,
+    http: &reqwest::Client,
+    limiter: &DomainLimiter,
+    db: Option<&Db>,
+    filters: &ImageCaptionFilters,
+    sem: &std::sync::Arc<tokio::sync::Semaphore>,
+    ssrf_level: SsrfLevel,
+) -> Vec<CaptionOutcome> {
+    let futures = batch.iter().map(|(alt, src, rest, dims)| {
+        let sem = std::sync::Arc::clone(sem);
+        async move {
+            // Permit bounds concurrent provider fan-out; held for the whole
+            // download+caption so the limit reflects in-flight work.
+            let _permit = sem
+                .acquire_owned()
+                .await
+                .expect("caption semaphore is never closed");
+            caption_one_image(
+                captioner, http, limiter, db, filters, alt, src, rest, *dims, ssrf_level,
+            )
+            .await
+        }
+    });
+    futures::future::join_all(futures).await
+}
+
+/// Run one already-classified candidate through the caption path: download
+/// the bytes, consult the cache, call the captioner, and harden the result
+/// before it can enter the body. Returns a [`CaptionOutcome`] — never mutates
+/// shared counters, so it is safe to run many at once.
 #[allow(clippy::too_many_arguments)]
 async fn caption_one_image(
     captioner: &dyn VlmCaptioner,
@@ -202,152 +343,132 @@ async fn caption_one_image(
     alt: &str,
     src: &str,
     rest: &str,
-    captioned_so_far: &mut usize,
-    images_failed: &mut usize,
-    processed: &mut Vec<ImageProcessed>,
+    dims: Option<(u32, u32)>,
     ssrf_level: SsrfLevel,
-) -> String {
-    let decision = classify(
-        src,
-        rest,
-        http,
-        limiter,
-        *captioned_so_far,
-        filters,
-        ssrf_level,
-    )
-    .await;
-    match decision {
-        CaptionDecision::Skip {
-            reason,
-            dims,
-            bytes,
-        } => {
-            processed.push(ImageProcessed {
+) -> CaptionOutcome {
+    let bytes = match download_image_bytes(http, limiter, src, ssrf_level, filters.max_bytes).await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                target: "rover::extractor",
+                url = %src,
+                err = %e,
+                "image download failed during captioning; keeping alt text"
+            );
+            return CaptionOutcome {
                 src: src.to_string(),
-                decision: "skipped".into(),
-                reason: Some(skip_reason_to_str(&reason).to_string()),
-                captioner: None,
-                caption: None,
-                dimensions: dims.map(|(w, h)| ImageDims {
-                    width: w,
-                    height: h,
-                }),
-                bytes,
-                error: None,
-            });
-            alt.to_string()
-        }
-        CaptionDecision::Caption { dims } => {
-            let bytes =
-                match download_image_bytes(http, limiter, src, ssrf_level, filters.max_bytes).await
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        *images_failed += 1;
-                        tracing::warn!(
-                            target: "rover::extractor",
-                            url = %src,
-                            err = %e,
-                            "image download failed during captioning; keeping alt text"
-                        );
-                        processed.push(ImageProcessed {
-                            src: src.to_string(),
-                            decision: "skipped".into(),
-                            reason: Some("download_error".into()),
-                            captioner: Some(captioner.name().to_string()),
-                            caption: None,
-                            dimensions: dims.map(|(w, h)| ImageDims {
-                                width: w,
-                                height: h,
-                            }),
-                            bytes: None,
-                            error: Some(format!("download: {e}")),
-                        });
-                        return alt.to_string();
-                    }
-                };
-            // Cache lookup.
-            let cached = if let Some(db) = db {
-                crate::vlm::cache::lookup(
-                    db,
-                    &bytes,
-                    captioner.name(),
-                    captioner.model_id(),
-                    filters.max_tokens,
-                )
-                .await
-                .unwrap_or(None)
-            } else {
-                None
-            };
-            let alt_hint = if alt.is_empty() { None } else { Some(alt) };
-            let caption = match cached {
-                Some(c) => c,
-                None => match captioner
-                    .caption(&bytes, alt_hint, filters.max_tokens)
-                    .await
-                {
-                    Ok(c) => {
-                        if let Some(db) = db {
-                            let _ = crate::vlm::cache::insert(
-                                db,
-                                &bytes,
-                                captioner.name(),
-                                captioner.model_id(),
-                                filters.max_tokens,
-                                &c,
-                            )
-                            .await;
-                        }
-                        c
-                    }
-                    Err(e) => {
-                        *images_failed += 1;
-                        tracing::warn!(
-                            target: "rover::extractor",
-                            url = %src,
-                            err = %e,
-                            "captioner failed; keeping alt text"
-                        );
-                        processed.push(ImageProcessed {
-                            src: src.to_string(),
-                            decision: "skipped".into(),
-                            reason: Some("captioner_error".into()),
-                            captioner: Some(captioner.name().to_string()),
-                            caption: None,
-                            dimensions: dims.map(|(w, h)| ImageDims {
-                                width: w,
-                                height: h,
-                            }),
-                            bytes: None,
-                            error: Some(e.to_string()),
-                        });
-                        return alt.to_string();
-                    }
+                succeeded: false,
+                provider_called: false,
+                record: ImageProcessed {
+                    src: src.to_string(),
+                    decision: "skipped".into(),
+                    reason: Some("download_error".into()),
+                    captioner: Some(captioner.name().to_string()),
+                    caption: None,
+                    dimensions: dims.map(|(w, h)| ImageDims {
+                        width: w,
+                        height: h,
+                    }),
+                    bytes: None,
+                    error: Some(format!("download: {e}")),
                 },
+                replacement: alt.to_string(),
             };
-            // Internal-inference hardening (always on, not bypassable): the
-            // caption is a product of rover's own inference on attacker-
-            // controlled image content. Clean it (patterns, HIGH) before it
-            // enters the body — even when output-side scanning is allowlisted.
-            let caption = crate::guard::harden_for_inference(&caption, true, None, 0.9).cleaned;
-            *captioned_so_far += 1;
-            processed.push(ImageProcessed {
-                src: src.to_string(),
-                decision: "captioned".into(),
-                reason: None,
-                captioner: Some(captioner.name().to_string()),
-                caption: Some(caption.clone()),
-                dimensions: dims.map(|(w, h)| ImageDims {
-                    width: w,
-                    height: h,
-                }),
-                bytes: None,
-                error: None,
-            });
-            format!("![{caption}]({src}{rest})")
         }
+    };
+
+    // Cache lookup. A hit produces a caption without a provider call, so it
+    // must not consume the `max_attempts` budget (provider_called stays false).
+    let cached = if let Some(db) = db {
+        crate::vlm::cache::lookup(
+            db,
+            &bytes,
+            captioner.name(),
+            captioner.model_id(),
+            filters.max_tokens,
+        )
+        .await
+        .unwrap_or(None)
+    } else {
+        None
+    };
+    let alt_hint = if alt.is_empty() { None } else { Some(alt) };
+    let (caption, provider_called) = match cached {
+        Some(c) => (c, false),
+        None => match captioner
+            .caption(&bytes, alt_hint, filters.max_tokens)
+            .await
+        {
+            Ok(c) => {
+                if let Some(db) = db {
+                    let _ = crate::vlm::cache::insert(
+                        db,
+                        &bytes,
+                        captioner.name(),
+                        captioner.model_id(),
+                        filters.max_tokens,
+                        &c,
+                    )
+                    .await;
+                }
+                (c, true)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "rover::extractor",
+                    url = %src,
+                    err = %e,
+                    "captioner failed; keeping alt text"
+                );
+                // The provider WAS invoked (it errored), so this still counts
+                // as a real attempt against `max_attempts`.
+                return CaptionOutcome {
+                    src: src.to_string(),
+                    succeeded: false,
+                    provider_called: true,
+                    record: ImageProcessed {
+                        src: src.to_string(),
+                        decision: "skipped".into(),
+                        reason: Some("captioner_error".into()),
+                        captioner: Some(captioner.name().to_string()),
+                        caption: None,
+                        dimensions: dims.map(|(w, h)| ImageDims {
+                            width: w,
+                            height: h,
+                        }),
+                        bytes: None,
+                        error: Some(e.to_string()),
+                    },
+                    replacement: alt.to_string(),
+                };
+            }
+        },
+    };
+
+    // Internal-inference hardening (always on, not bypassable): the caption is
+    // a product of rover's own inference on attacker-controlled image content.
+    // Clean it (patterns, HIGH) before it enters the body — even when
+    // output-side scanning is allowlisted.
+    let caption = crate::guard::harden_for_inference(&caption, true, None, 0.9).cleaned;
+    CaptionOutcome {
+        src: src.to_string(),
+        succeeded: true,
+        provider_called,
+        record: ImageProcessed {
+            src: src.to_string(),
+            decision: "captioned".into(),
+            reason: None,
+            captioner: Some(captioner.name().to_string()),
+            caption: Some(caption.clone()),
+            dimensions: dims.map(|(w, h)| ImageDims {
+                width: w,
+                height: h,
+            }),
+            bytes: None,
+            error: None,
+        },
+        replacement: format!("![{caption}]({src}{rest})"),
     }
 }
 
@@ -636,6 +757,11 @@ pub enum SkipReason {
     DimensionsIndeterminate,
 }
 
+/// A candidate that passed [`classify`] and is ready for the caption path:
+/// `(alt, src, rest, dims)`. The dims are carried through so the
+/// `images_processed` record keeps them without a second probe.
+type ClassifiedCandidate = (String, String, String, Option<(u32, u32)>);
+
 #[derive(Debug, Clone)]
 pub(crate) enum CaptionDecision {
     Caption {
@@ -648,19 +774,19 @@ pub(crate) enum CaptionDecision {
     },
 }
 
-/// Run the filter pipeline for a single image. The caller is responsible
-/// for incrementing the budget counter only when `Caption` is returned.
+/// Run the filter pipeline for a single image: decide whether it is worth
+/// captioning. The per-page success budget is *not* enforced here — it is
+/// owned by the caller's selection loop (Task 8), which stops probing once it
+/// has enough viable candidates.
 ///
 /// Pipeline order (matches spec §3.6):
 ///   1. Dimension gate: trust HTML attrs when present; otherwise probe.
 ///   2. Size gate: HEAD or range-GET for Content-Length; reject if too big.
-///   3. Budget gate: reject if already captioned >= max_per_page.
 pub(crate) async fn classify(
     src: &str,
     rest: &str,
     http: &reqwest::Client,
     limiter: &DomainLimiter,
-    captioned_so_far: usize,
     filters: &ImageCaptionFilters,
     ssrf_level: SsrfLevel,
 ) -> CaptionDecision {
@@ -694,15 +820,6 @@ pub(crate) async fn classify(
             reason: SkipReason::AboveMaxBytes,
             dims,
             bytes: Some(n),
-        };
-    }
-
-    // Step 3: budget.
-    if captioned_so_far >= filters.max_per_page {
-        return CaptionDecision::Skip {
-            reason: SkipReason::PerPageBudget,
-            dims,
-            bytes,
         };
     }
 
@@ -804,6 +921,248 @@ mod tests {
         let mut map: HashMap<String, Arc<dyn VlmCaptioner>> = HashMap::new();
         map.insert("fail".to_string(), Arc::new(FailingCaptioner));
         CaptionerRegistry::__test_construct(map, Some("fail".to_string()))
+    }
+
+    /// A captioner that counts every `caption()` call and fails for the first
+    /// `fail_until` calls (0-indexed), succeeding afterwards. Drives the
+    /// backfill path: set `fail_until = N` to fail the first N attempts, or
+    /// `usize::MAX` to always fail while still counting provider calls.
+    struct IndexedCaptioner {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        fail_until: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl VlmCaptioner for IndexedCaptioner {
+        fn name(&self) -> &str {
+            "indexed"
+        }
+        fn model_id(&self) -> &str {
+            "indexed-model"
+        }
+        async fn caption(
+            &self,
+            _image_bytes: &[u8],
+            _alt: Option<&str>,
+            _max_tokens: usize,
+        ) -> Result<String, VlmError> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n < self.fail_until {
+                Err(VlmError::Unavailable {
+                    name: "indexed".into(),
+                    reason: "boom".into(),
+                })
+            } else {
+                Ok("cap".to_string())
+            }
+        }
+    }
+
+    fn indexed_registry(
+        fail_until: usize,
+    ) -> (CaptionerRegistry, Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let captioner = Arc::new(IndexedCaptioner {
+            calls: Arc::clone(&calls),
+            fail_until,
+        });
+        let mut map: HashMap<String, Arc<dyn VlmCaptioner>> = HashMap::new();
+        map.insert("indexed".to_string(), captioner);
+        let reg = CaptionerRegistry::__test_construct(map, Some("indexed".to_string()));
+        (reg, calls)
+    }
+
+    /// The 67-byte 1x1 transparent PNG reused across the caption tests.
+    #[cfg(feature = "test-loopback")]
+    const TINY_PNG: [u8; 67] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    /// Probing stops once `max_per_page` viable candidates have been gathered:
+    /// with 5 viable images and `max_per_page = 2`, exactly 2 are captioned and
+    /// images 4 & 5 are never even probed (their HTTP mocks see zero requests).
+    #[cfg(feature = "test-loopback")]
+    #[tokio::test]
+    async fn stops_probing_at_max_per_page() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // Images 1-3 respond normally (1 & 2 get captioned; 3 is never reached).
+        for i in 1..=3 {
+            Mock::given(path(format!("/img{i}.png")))
+                .respond_with(ResponseTemplate::new(206).set_body_bytes(&TINY_PNG[..]))
+                .mount(&server)
+                .await;
+        }
+        // Images 4 & 5 must never be touched: probing stops at the budget.
+        for i in 4..=5 {
+            Mock::given(path(format!("/img{i}.png")))
+                .respond_with(ResponseTemplate::new(206).set_body_bytes(&TINY_PNG[..]))
+                .expect(0)
+                .mount(&server)
+                .await;
+        }
+
+        let p = setup_paths();
+        let base = server.uri();
+        let md = format!(
+            "![a]({base}/img1.png) ![a]({base}/img2.png) ![a]({base}/img3.png) ![a]({base}/img4.png) ![a]({base}/img5.png)"
+        );
+        let f = ImageCaptionFilters {
+            min_width: 0,
+            min_height: 0,
+            max_per_page: 2,
+            ..Default::default()
+        };
+        let (reg, calls) = counting_registry();
+        let r = apply(
+            &md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+            SsrfLevel::Loopback,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "should caption exactly max_per_page images"
+        );
+        let captioned = r
+            .images_processed
+            .iter()
+            .filter(|x| x.decision == "captioned")
+            .count();
+        assert_eq!(captioned, 2, "exactly two captioned records");
+
+        // Images 4 & 5 received zero requests — probing stopped before them.
+        let reqs = server.received_requests().await.unwrap();
+        let hit4 = reqs.iter().filter(|r| r.url.path() == "/img4.png").count();
+        let hit5 = reqs.iter().filter(|r| r.url.path() == "/img5.png").count();
+        assert_eq!(hit4, 0, "image 4 must not be probed");
+        assert_eq!(hit5, 0, "image 5 must not be probed");
+    }
+
+    /// A failed caption backfills from the next candidate until the success
+    /// budget is met: 4 candidates, captioner fails the first 2 then succeeds,
+    /// `max_per_page = 2` → 2 successful captions and 4 real caption attempts.
+    #[cfg(feature = "test-loopback")]
+    #[tokio::test]
+    async fn backfills_on_caption_failure() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(&TINY_PNG[..]))
+            .mount(&server)
+            .await;
+
+        let p = setup_paths();
+        let base = server.uri();
+        let md = format!(
+            "![a]({base}/i1.png) ![a]({base}/i2.png) ![a]({base}/i3.png) ![a]({base}/i4.png)"
+        );
+        let f = ImageCaptionFilters {
+            min_width: 0,
+            min_height: 0,
+            max_per_page: 2,
+            max_attempts: 10,
+            ..Default::default()
+        };
+        // Fail the first two caption calls, succeed thereafter.
+        let (reg, calls) = indexed_registry(2);
+        let r = apply(
+            &md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+            SsrfLevel::Loopback,
+        )
+        .await
+        .unwrap();
+
+        let captioned = r
+            .images_processed
+            .iter()
+            .filter(|x| x.decision == "captioned")
+            .count();
+        assert_eq!(captioned, 2, "backfill should reach two successes");
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            4,
+            "two failures + two successes = four caption calls"
+        );
+    }
+
+    /// `max_attempts` caps the total number of real provider calls: with an
+    /// always-failing captioner, `max_per_page = 10` and `max_attempts = 3`,
+    /// exactly 3 caption calls are made and then the loop stops (it does not
+    /// keep probing/captioning the remaining candidates).
+    #[cfg(feature = "test-loopback")]
+    #[tokio::test]
+    async fn max_attempts_caps_total_caption_calls() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(&TINY_PNG[..]))
+            .mount(&server)
+            .await;
+
+        let p = setup_paths();
+        let base = server.uri();
+        // Five viable candidates, but max_attempts caps caption calls at 3.
+        let md = format!(
+            "![a]({base}/c1.png) ![a]({base}/c2.png) ![a]({base}/c3.png) ![a]({base}/c4.png) ![a]({base}/c5.png)"
+        );
+        let f = ImageCaptionFilters {
+            min_width: 0,
+            min_height: 0,
+            max_per_page: 10,
+            max_attempts: 3,
+            ..Default::default()
+        };
+        // Always fails, but still counts each provider call.
+        let (reg, calls) = indexed_registry(usize::MAX);
+        let r = apply(
+            &md,
+            &ImagesMode::Caption,
+            &p,
+            &client(),
+            Some(&reg),
+            &f,
+            None,
+            SsrfLevel::Loopback,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "max_attempts must cap caption calls at 3"
+        );
+        let captioned = r
+            .images_processed
+            .iter()
+            .filter(|x| x.decision == "captioned")
+            .count();
+        assert_eq!(captioned, 0, "an always-failing captioner produces none");
     }
 
     #[cfg(feature = "test-loopback")]
@@ -1245,7 +1604,6 @@ mod tests {
             r#" width="24" height="24""#,
             &client,
             &lim,
-            0,
             &f,
             SsrfLevel::Strict,
         )
@@ -1254,48 +1612,6 @@ mod tests {
             d,
             CaptionDecision::Skip {
                 reason: SkipReason::BelowMinDimensions,
-                ..
-            }
-        ));
-    }
-
-    #[tokio::test]
-    async fn classify_skips_per_page_budget() {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-        // Need a real URL that passes dimension+size checks; provide a small mocked image with no Content-Length headache.
-        let server = MockServer::start().await;
-        Mock::given(method("HEAD"))
-            .respond_with(ResponseTemplate::new(200))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(206).set_body_bytes(&[0u8; 100][..]))
-            .mount(&server)
-            .await;
-        crate::fetcher::client::install_ring_provider();
-        let client = reqwest::Client::new();
-        let f = ImageCaptionFilters {
-            max_per_page: 3,
-            ..Default::default()
-        };
-        let url = format!("{}/photo.png", server.uri());
-        // captioned_so_far == max_per_page → skip
-        let lim = DomainLimiter::new(2);
-        let d = classify(
-            &url,
-            r#" width="500" height="500""#,
-            &client,
-            &lim,
-            3,
-            &f,
-            SsrfLevel::Loopback,
-        )
-        .await;
-        assert!(matches!(
-            d,
-            CaptionDecision::Skip {
-                reason: SkipReason::PerPageBudget,
                 ..
             }
         ));
