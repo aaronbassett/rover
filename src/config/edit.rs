@@ -215,9 +215,24 @@ fn settable() -> &'static [SettableSpec] {
             expected: "humansize string or integer (e.g. \"10MiB\")",
         },
         SettableSpec {
-            key: "image_captions.max_concurrent",
-            parser: parse_usize,
-            expected: "integer",
+            key: "image_captions.cache.enabled",
+            parser: parse_bool,
+            expected: "bool",
+        },
+        SettableSpec {
+            key: "image_captions.cache.ttl",
+            parser: parse_string,
+            expected: "humantime string (e.g. \"1h\") or empty string for inherit",
+        },
+        SettableSpec {
+            key: "image_captions.cache.restrict_to",
+            parser: parse_cache_restrict,
+            expected: "one of: none, host, page",
+        },
+        SettableSpec {
+            key: "image_captions.cache.store_raw_image",
+            parser: parse_bool,
+            expected: "bool",
         },
     ]
 }
@@ -288,6 +303,13 @@ fn parse_log_level(s: &str) -> Result<toml_edit::Item, String> {
     match s {
         "trace" | "debug" | "info" | "warn" | "error" => Ok(toml_edit::value(s.to_string())),
         _ => Err(format!("not a valid log level: {s}")),
+    }
+}
+
+fn parse_cache_restrict(s: &str) -> Result<toml_edit::Item, String> {
+    match s {
+        "none" | "host" | "page" => Ok(toml_edit::value(s.to_string())),
+        _ => Err(format!("not a valid cache restrict value: {s}")),
     }
 }
 

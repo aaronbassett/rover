@@ -365,9 +365,18 @@ fn images_mode(arg: Option<&ImagesArg>) -> Result<(ImagesMode, Option<String>), 
 
 /// Resolve `[image_captions]` defaults plus an optional per-call captioner
 /// override into the budget knobs `extractor::images::apply` consumes.
+///
+/// `cap` is the resolved `[captioners.<name>]` block for the effective
+/// captioner (the per-call override if provided, otherwise the
+/// `[image_captions] default`, otherwise `CaptionerConfig::default()`).
+/// `per_domain_concurrency` comes from `[rate_limit]` and `max_ttl` from
+/// `[cache]`; both are passed explicitly so the function stays pure/testable.
 fn build_caption_filters(
     cfg: &crate::config::ImageCaptionsConfig,
     override_name: Option<String>,
+    cap: &crate::config::CaptionerConfig,
+    per_domain_concurrency: u32,
+    max_ttl: std::time::Duration,
 ) -> crate::extractor::options::ImageCaptionFilters {
     crate::extractor::options::ImageCaptionFilters {
         max_per_page: cfg.max_per_page,
@@ -376,6 +385,15 @@ fn build_caption_filters(
         max_bytes: cfg.max_bytes,
         max_tokens: cfg.max_tokens,
         captioner_override: override_name,
+        per_domain_concurrency,
+        max_concurrent: cap.max_concurrent,
+        max_attempts: cap.max_attempts.unwrap_or(cfg.max_per_page * 3),
+        cache: crate::extractor::options::ImageCacheCfg {
+            enabled: cfg.cache.enabled,
+            ttl: cfg.cache.ttl.unwrap_or(max_ttl),
+            restrict_to: cfg.cache.restrict_to,
+            store_raw_image: cfg.cache.store_raw_image,
+        },
     }
 }
 
@@ -575,8 +593,21 @@ impl RoverHandler {
 
         let tables_mode_resolved = tables_mode(args.tables.as_ref())?;
         let (images_mode_resolved, captioner_override) = images_mode(args.images.as_ref())?;
-        let caption_filters =
-            build_caption_filters(&self.config.image_captions, captioner_override);
+        let cap_name =
+            captioner_override
+                .as_deref()
+                .or(self.config.image_captions.default.as_deref());
+        let default_cap = crate::config::CaptionerConfig::default();
+        let cap = cap_name
+            .and_then(|n| self.config.captioners.get(n))
+            .unwrap_or(&default_cap);
+        let caption_filters = build_caption_filters(
+            &self.config.image_captions,
+            captioner_override,
+            cap,
+            self.config.rate_limit.per_domain_concurrency,
+            self.config.cache.max_ttl,
+        );
 
         // Run the M4 post-passes against the cached (pre-pass) body. These
         // always run, even on cache hits: the cached `extracted_md` carries
@@ -1056,5 +1087,28 @@ mod tests {
         let v: FetchArgs =
             serde_json::from_str(r#"{"url":"https://x/","metadata":"skip"}"#).unwrap();
         assert!(matches!(v.metadata, Some(MetadataArg::Skip)));
+    }
+
+    #[test]
+    fn max_attempts_defaults_to_3x_max_per_page() {
+        let ic = crate::config::ImageCaptionsConfig {
+            max_per_page: 7,
+            ..Default::default()
+        };
+        let cap = crate::config::CaptionerConfig {
+            max_attempts: None,
+            max_concurrent: 2,
+            ..Default::default()
+        };
+        let f = build_caption_filters(
+            &ic,
+            None,
+            &cap,
+            /*per_domain*/ 3,
+            /*max_ttl*/ std::time::Duration::from_secs(99),
+        );
+        assert_eq!(f.max_attempts, 21); // 3 * 7
+        assert_eq!(f.max_concurrent, 2);
+        assert_eq!(f.per_domain_concurrency, 3);
     }
 }

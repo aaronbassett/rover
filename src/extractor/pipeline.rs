@@ -74,6 +74,9 @@ pub enum ExtractorError {
 
     #[error("no captioner configured for images.mode = caption")]
     CaptionerNotConfigured,
+
+    #[error("image exceeds max bytes ({max_bytes}): {url}")]
+    ImageTooLarge { url: String, max_bytes: u64 },
 }
 
 /// Successfully extracted article.

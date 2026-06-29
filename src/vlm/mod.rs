@@ -10,7 +10,7 @@
 //! The `CaptionerRegistry` (Task 5) holds the configured captioners and is
 //! injected into MCP server state (Task 10).
 //!
-//! Caption results are deterministically cached in `summary_cache` via the
+//! Caption results are deterministically cached in `image_caption_cache` via the
 //! `cache` module (Task 7), keyed on `(sha256(image_bytes), captioner_name,
 //! captioner_model_id, max_tokens)`.
 
@@ -242,6 +242,7 @@ mod tests {
                 model: Some("gpt-4o-mini".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
                 base_url: None,
+                ..Default::default()
             },
         );
         cfg.image_captions.default = Some("openai".into());
@@ -261,6 +262,7 @@ mod tests {
                 model: Some("gpt-4o-mini".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
                 base_url: None,
+                ..Default::default()
             },
         );
         cfg.image_captions.default = Some("nonsense".into());
@@ -279,6 +281,7 @@ mod tests {
                 model: Some("any-model".into()),
                 api_key_env: None,
                 base_url: None,
+                ..Default::default()
             },
         );
         let err = build(&cfg).unwrap_err();
@@ -310,6 +313,7 @@ mod tests {
                 model: Some("gpt-4o-mini".into()),
                 api_key_env: Some("OPENAI_API_KEY".into()),
                 base_url: None,
+                ..Default::default()
             },
         );
         // image_captions.default left as None.

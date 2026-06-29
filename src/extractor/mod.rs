@@ -3,6 +3,7 @@
 pub mod base_href;
 pub mod frontmatter;
 pub mod image_dims;
+pub mod image_limiter;
 pub mod images;
 pub mod links;
 pub mod metadata;
