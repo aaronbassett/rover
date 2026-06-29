@@ -199,7 +199,8 @@ Settable keys:
 - `mcp.heartbeat_interval`, `mcp.reap_threshold`
 - `debug.log_level`, `debug.har_path`, `debug.har_body_cap`
 - `headless.max_concurrent`, `headless.chrome_executable`
-- `image_captions.default`, `image_captions.max_tokens`, `image_captions.max_per_page`, `image_captions.min_width`, `image_captions.min_height`, `image_captions.max_bytes`, `image_captions.max_concurrent`
+- `image_captions.default`, `image_captions.max_tokens`, `image_captions.max_per_page`, `image_captions.min_width`, `image_captions.min_height`, `image_captions.max_bytes`
+- `image_captions.cache.enabled`, `image_captions.cache.ttl`, `image_captions.cache.restrict_to`, `image_captions.cache.store_raw_image`
 
 Examples:
 

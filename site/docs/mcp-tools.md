@@ -199,11 +199,6 @@ The `content` field is the full agent-facing document: the guard's trusted pream
       "bytes": 18234567
     },
     {
-      "src": "https://example.com/photo.jpg",
-      "decision": "skipped",
-      "reason": "per_page_budget"
-    },
-    {
       "src": "https://example.com/error.jpg",
       "decision": "skipped",
       "reason": "captioner_error",

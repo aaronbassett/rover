@@ -131,10 +131,9 @@ Every image the pipeline touches reports its own outcome. The `fetch` response c
 | --- | --- |
 | `below_min_dimensions` | Smaller than `min_width` × `min_height`. |
 | `above_max_bytes` | Larger than `max_bytes`. |
-| `per_page_budget` | Past the `max_per_page` cap for this page. |
 | `captioner_error` | The captioner was attempted and failed; the entry carries the error string. |
 
-Each entry also carries the detail behind its decision: the measured dimensions, the byte count, the caption text on a hit, or the error string on a failure. The frontmatter adds three running counters, `images_seen`, `images_downloaded`, and `images_failed`. A skipped image isn't a failed one. `per_page_budget` and `below_min_dimensions` are the gates doing their job, not errors. For where these fields sit in the frontmatter envelope, see [Anatomy of a Rover document](/docs/output).
+Each entry also carries the detail behind its decision: the measured dimensions, the byte count, the caption text on a hit, or the error string on a failure. The frontmatter adds three running counters, `images_seen`, `images_downloaded`, and `images_failed`. A skipped image isn't a failed one — `below_min_dimensions` and `above_max_bytes` are the gates doing their job, not errors. Once `max_per_page` captions succeed the loop stops probing the remaining images; they keep their original alt text and produce no `images_processed` entry. For where these fields sit in the frontmatter envelope, see [Anatomy of a Rover document](/docs/output).
 
 ## Security
 
