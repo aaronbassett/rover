@@ -53,7 +53,7 @@ pub struct RoverHandler {
     /// shared `OnceCell` so the first call requesting `headless.mode = On`
     /// (or `Auto` when the SPA heuristic triggers) pays the
     /// browser-launch cost; subsequent calls reuse the same `Arc<HeadlessRenderer>`.
-    /// `serve_stdio` keeps a clone for shutdown.
+    /// `Runtime` keeps a clone for shutdown.
     #[cfg(feature = "headless")]
     pub(crate) headless_renderer:
         Arc<tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>>,

@@ -235,7 +235,8 @@ struct DoctorArgs {
 
 /// Build a `SummarizerService` for CLI subcommands that need it.
 ///
-/// The MCP server builds its own service inside `serve_stdio`; this helper
+/// The MCP server builds its own service inside `build_runtime`
+/// (`src/mcp/runtime.rs`); this helper
 /// exists for CLI paths (e.g. a future `rover fetch --summarize`) so the
 /// construction stays in one place. Currently unused outside the MCP path —
 /// `#[allow(dead_code)]` keeps `warnings = deny` happy until M7's CLI

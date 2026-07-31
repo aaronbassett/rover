@@ -265,6 +265,9 @@ impl Runtime {
         // soon-to-be-deleted row.
         cancel.cancel();
 
+        // Await the scheduler with a short deadline so a wedged worker can't
+        // hang shutdown. The scheduler's own `shutdown_grace` already bounds the
+        // join-set wait inside `run()`.
         match tokio::time::timeout(std::time::Duration::from_secs(5), sched_handle).await {
             Ok(Ok(Ok(()))) => {}
             Ok(Ok(Err(e))) => {

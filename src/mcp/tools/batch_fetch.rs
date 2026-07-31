@@ -79,7 +79,7 @@ impl RoverHandler {
         )
         .await?;
         // Scheduler notification happens inside `storage::tasks::insert` via
-        // the Db-owned notifier installed by `mcp::server::serve_stdio`. No
+        // the Db-owned notifier installed by `mcp::runtime::build_runtime`. No
         // direct send from the tool layer.
         Ok(TaskCreatedResponse {
             task_id: id.as_str().to_string(),
