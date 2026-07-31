@@ -94,3 +94,49 @@ pub async fn spawn_client_with_config(
     std::fs::write(data_dir.join("rover.toml"), config_toml).unwrap();
     spawn_client(data_dir).await
 }
+
+/// Build an `HttpState` for router-level tests. `token` of `None` means no
+/// bearer auth. Uses a real on-disk `Db` in `data_dir` and an offline
+/// extractive summarizer so nothing touches the network.
+pub async fn http_state(data_dir: &Path, token: Option<&str>) -> rover::mcp::http::HttpState {
+    seed_default_tokenizer(data_dir);
+    let db = rover::storage::Db::open(data_dir.join("rover.db"))
+        .await
+        .expect("open db");
+    let config = std::sync::Arc::new(rover::config::Config::default());
+    let summarizer = make_summarizer_service(&db).await;
+    let client =
+        rover::fetcher::client::build_http_client(&config.fetch.user_agent, config.fetch.timeout());
+    let handler = rover::mcp::handler::RoverHandler::new(
+        db.clone(),
+        config.clone(),
+        client,
+        rover::fetcher::ssrf::SsrfLevel::Loopback,
+        None,
+        None,
+        std::sync::Arc::new(rover::fetcher::concurrency::Pacer::new(&config.rate_limit)),
+        summarizer,
+        // `CaptionerRegistry` derives only `Clone` and has private fields —
+        // there is no `Default`. `build()` is the real constructor; an empty
+        // `[captioners]` table yields an empty registry.
+        std::sync::Arc::new(rover::vlm::build(&config).unwrap()),
+        std::sync::Arc::new(rover::guard::Guard::from_config(&config.prompt_injection).unwrap()),
+        rover::mcp::TransportKind::Http,
+        #[cfg(feature = "headless")]
+        std::sync::Arc::new(tokio::sync::OnceCell::new()),
+    );
+    // A NON-loopback bind on purpose. `resolve_allowed_hosts` derives the
+    // loopback allow-list from a loopback bind, and rmcp then rejects any
+    // request whose `Host` header is missing — which is every request
+    // `Request::builder()` produces. Passing 0.0.0.0 disables Host validation,
+    // matching the container case these tests exist to cover. The derivation
+    // itself is covered by the pure unit tests in `src/mcp/http.rs` and by the
+    // real-socket test in Task 9.
+    rover::mcp::http::HttpState::new(
+        handler,
+        db,
+        token,
+        &config.http,
+        "0.0.0.0:0".parse().unwrap(),
+    )
+}
