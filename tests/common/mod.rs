@@ -7,6 +7,7 @@
 
 #![allow(dead_code)]
 
+use std::net::SocketAddr;
 use std::path::Path;
 
 use rmcp::ServiceExt;
@@ -95,10 +96,21 @@ pub async fn spawn_client_with_config(
     spawn_client(data_dir).await
 }
 
-/// Build an `HttpState` for router-level tests. `token` of `None` means no
-/// bearer auth. Uses a real on-disk `Db` in `data_dir` and an offline
-/// extractive summarizer so nothing touches the network.
-pub async fn http_state(data_dir: &Path, token: Option<&str>) -> rover::mcp::http::HttpState {
+/// Build an `HttpState` for router-level tests, bound to a caller-chosen
+/// address. `token` of `None` means no bearer auth. Uses a real on-disk `Db`
+/// in `data_dir` and an offline extractive summarizer so nothing touches the
+/// network.
+///
+/// Most tests want [`http_state`] instead, which fixes `bind` to a
+/// non-loopback placeholder that disables rmcp's `Host` allow-list
+/// entirely. Call this directly when a test needs the allow-list itself
+/// under test — e.g. a loopback bind, where `resolve_allowed_hosts` derives
+/// rmcp's real loopback list and a disallowed `Host` header must 403.
+pub async fn http_state_with_bind(
+    data_dir: &Path,
+    token: Option<&str>,
+    bind: SocketAddr,
+) -> rover::mcp::http::HttpState {
     seed_default_tokenizer(data_dir);
     let db = rover::storage::Db::open(data_dir.join("rover.db"))
         .await
@@ -125,25 +137,38 @@ pub async fn http_state(data_dir: &Path, token: Option<&str>) -> rover::mcp::htt
         #[cfg(feature = "headless")]
         std::sync::Arc::new(tokio::sync::OnceCell::new()),
     );
-    // A NON-loopback bind on purpose. `resolve_allowed_hosts` derives the
-    // loopback allow-list from a loopback bind, and rmcp then rejects any
-    // request whose `Host` header is missing — which is every request
-    // `Request::builder()` produces. Passing 0.0.0.0 disables Host validation,
-    // matching the container case these tests exist to cover. The derivation
-    // itself is covered by the pure unit tests in `src/mcp/http.rs` and by the
-    // real-socket test in Task 9.
-    rover::mcp::http::HttpState::new(
-        handler,
-        db,
-        token,
-        &config.http,
-        "0.0.0.0:0".parse().unwrap(),
-    )
+    rover::mcp::http::HttpState::new(handler, db, token, &config.http, bind)
+}
+
+/// [`http_state_with_bind`] with a NON-loopback bind, on purpose.
+/// `resolve_allowed_hosts` derives the loopback allow-list from a loopback
+/// bind, and rmcp then rejects any request whose `Host` header isn't in that
+/// list. Passing `0.0.0.0:0` disables Host validation entirely, so any
+/// well-formed `Host` (see [`mcp_request`]) is accepted — matching the
+/// container case most of these tests exist to cover. The allow-list
+/// derivation itself is covered by the pure unit tests in `src/mcp/http.rs`,
+/// the enforcement itself by `http_state_with_bind` callers that pass a
+/// loopback address, and the real-socket case by Task 9.
+pub async fn http_state(data_dir: &Path, token: Option<&str>) -> rover::mcp::http::HttpState {
+    http_state_with_bind(data_dir, token, "0.0.0.0:0".parse().unwrap()).await
 }
 
 /// A minimal, well-formed MCP request with the headers rmcp requires.
+///
 /// `Accept` MUST list both `application/json` and `text/event-stream` or
 /// rmcp answers `406` before anything under test is reached.
+///
+/// `Host` is required too: rmcp's `validate_dns_rebinding_headers` demands a
+/// `Host` header (or an HTTP/2 `:authority`) on every request before it even
+/// consults the allow-list — confirmed against
+/// `rmcp-1.7.0/src/transport/streamable_http_server/tower.rs`'s
+/// `parse_host_header`. In-process `oneshot` testing builds the `Request`
+/// directly in Rust, skipping the HTTP/1.1 wire parsing that would normally
+/// populate `Host` from a real client, so without this every request 400s
+/// with `Bad Request: missing Host header` regardless of `allowed_hosts`.
+/// `"localhost"` is in rmcp's default loopback allow-list, so this passes
+/// both under `http_state` (validation disabled) and under a loopback
+/// `http_state_with_bind` (validation enabled, `localhost` allowed).
 ///
 /// `method` is the HTTP method (e.g. `"POST"`); `auth` is an optional raw
 /// `Authorization` header value (e.g. `"Bearer <token>"`).
@@ -155,6 +180,7 @@ pub fn mcp_request(
     let mut b = axum::http::Request::builder()
         .method(method)
         .uri("/mcp")
+        .header(axum::http::header::HOST, "localhost")
         .header(axum::http::header::CONTENT_TYPE, "application/json")
         .header(
             axum::http::header::ACCEPT,
