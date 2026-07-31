@@ -92,6 +92,7 @@ tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "signal", "test-util"] }
 rmcp = { version = "1", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 tower = { version = "0.5", features = ["util"] }
+libc = "0.2"
 
 [features]
 default = []

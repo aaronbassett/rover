@@ -5038,6 +5038,7 @@ dependencies = [
  "httpdate",
  "humantime-serde",
  "jiff",
+ "libc",
  "mime_guess",
  "mistralrs",
  "ort",

@@ -181,6 +181,29 @@ async fn require_bearer(State(state): State<HttpState>, req: Request, next: Next
         .into_response()
 }
 
+/// Log each request that reaches this layer with method, status, and
+/// duration. Layered inside auth (outermost) but outside the body-limit
+/// layer: an oversize-body rejection (`413`) happens on the inner side of
+/// this middleware's `next.run`, so it is captured here. An auth rejection
+/// (`401`) happens on the outer side — `require_bearer` never calls `next`
+/// for a rejected request, so this layer never runs for one — but that case
+/// already has its own `tracing::warn!` at the point of rejection. Tool-level
+/// detail (the tool name, buried in the JSON-RPC body) is not logged here;
+/// parsing the body at this layer would mean buffering it twice.
+async fn log_request(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let started = std::time::Instant::now();
+    let res = next.run(req).await;
+    tracing::debug!(
+        target: "rover::mcp",
+        %method,
+        status = res.status().as_u16(),
+        duration_ms = started.elapsed().as_millis() as u64,
+        "http request"
+    );
+    res
+}
+
 /// Build the `StreamableHttpServerConfig` for the `/mcp` service from the
 /// resolved `HttpState`.
 fn mcp_service_config(state: &HttpState) -> StreamableHttpServerConfig {
@@ -236,6 +259,7 @@ pub fn router(state: HttpState) -> Router<()> {
         // completely unauthenticated.
         .route_service("/mcp", mcp)
         .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
+        .layer(axum::middleware::from_fn(log_request))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_bearer,

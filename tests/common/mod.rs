@@ -183,6 +183,74 @@ pub async fn http_state(data_dir: &Path, token: Option<&str>) -> rover::mcp::htt
     http_state_with(data_dir, token, rover::config::HttpConfig::default()).await
 }
 
+/// Install the ring crypto provider for this test process. Rover pins reqwest
+/// with `rustls-no-provider`, so any in-test reqwest client panics without it.
+/// `install_ring_provider` is already idempotent (its own `OnceLock`,
+/// `src/fetcher/client.rs:18`), so this needs no extra guard.
+pub fn init_crypto() {
+    rover::fetcher::client::install_ring_provider();
+}
+
+/// Spawn `rover mcp --http --bind 127.0.0.1:0` and return the child plus the
+/// resolved base URL. The port is read from the server's own startup log
+/// rather than pre-binding a socket, which avoids a bind race.
+pub async fn spawn_http_server(
+    data_dir: &Path,
+    config_toml: &str,
+    token: Option<&str>,
+) -> (tokio::process::Child, String) {
+    use tokio::io::{AsyncBufReadExt as _, BufReader};
+
+    seed_default_tokenizer(data_dir);
+    let cfg_path = data_dir.join("rover.toml");
+    std::fs::write(&cfg_path, config_toml).unwrap();
+
+    let mut cmd = Command::new(bin_path());
+    cmd.arg("--config")
+        .arg(&cfg_path)
+        .arg("mcp")
+        .arg("--http")
+        .arg("--bind")
+        .arg("127.0.0.1:0");
+    cmd.env("ROVER_DATA_DIR", data_dir);
+    cmd.env("RUST_LOG", "info,rover=debug");
+    if let Some(t) = token {
+        cmd.env("ROVER_HTTP_TOKEN", t);
+    } else {
+        cmd.env_remove("ROVER_HTTP_TOKEN");
+    }
+    cmd.stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn rover mcp --http");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let mut lines = BufReader::new(stderr).lines();
+
+    // Parse `addr=127.0.0.1:PORT` out of the listening line.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    let addr = loop {
+        let line = tokio::time::timeout_at(deadline, lines.next_line())
+            .await
+            .expect("timed out waiting for the listening line")
+            .expect("read stderr")
+            .expect("server exited before logging its address");
+        if let Some(rest) = line.split("addr=").nth(1) {
+            let addr = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            if !addr.is_empty() {
+                break addr;
+            }
+        }
+    };
+
+    // Keep draining stderr so the child never blocks on a full pipe.
+    tokio::spawn(async move { while lines.next_line().await.ok().flatten().is_some() {} });
+
+    (child, format!("http://{addr}"))
+}
+
 /// A minimal, well-formed MCP request with the headers rmcp requires.
 ///
 /// `Accept` MUST list both `application/json` and `text/event-stream` or
