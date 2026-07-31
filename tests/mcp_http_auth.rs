@@ -147,6 +147,42 @@ async fn lowercase_bearer_scheme_is_accepted() {
     );
 }
 
+/// Pins token comparison as case-sensitive, distinct from the scheme match
+/// above. Making the *scheme* case-insensitive (`eq_ignore_ascii_case` on
+/// `"Bearer"`) is correct per RFC 9110 §11.1 / RFC 6750 §2.1 — but widening
+/// that same treatment to the *token* itself would be an easy, plausible
+/// mistake when skimming those RFCs quickly, and it would silently cut the
+/// token's effective entropy. Do not "fix" a failure here by relaxing the
+/// token comparison — the token must stay byte-exact; only the scheme name
+/// is case-insensitive.
+#[tokio::test]
+async fn token_comparison_is_case_sensitive() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = rover::mcp::http::router(common::http_state(tmp.path(), Some(TOKEN)).await);
+
+    let flipped = TOKEN.to_uppercase();
+    assert_ne!(
+        flipped, TOKEN,
+        "sanity check: the flipped token must actually differ from TOKEN"
+    );
+
+    let res = app
+        .oneshot(common::mcp_request(
+            "POST",
+            Some(&format!("Bearer {flipped}")),
+            ping_body(),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        res.status(),
+        StatusCode::UNAUTHORIZED,
+        "a case-flipped token must be rejected — only the Bearer scheme is \
+         case-insensitive, never the token"
+    );
+}
+
 #[tokio::test]
 async fn health_probes_are_never_behind_the_token_wall() {
     let tmp = tempfile::tempdir().unwrap();
