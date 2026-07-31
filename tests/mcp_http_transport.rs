@@ -4,8 +4,34 @@
 mod common;
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use tower::ServiceExt as _;
+
+const TOKEN: &str = "test-token-with-enough-entropy";
+
+/// rmcp's `validate_dns_rebinding_headers` requires a `Host` header (or an
+/// `:authority` pseudo-header) on every request before it even looks at the
+/// allow-list — confirmed against
+/// `rmcp-1.7.0/src/transport/streamable_http_server/tower.rs`'s
+/// `parse_host_header`. In-process `oneshot` testing builds the `Request`
+/// directly in Rust, skipping the HTTP/1.1 wire parsing that would normally
+/// populate `Host` from a real client, so it must be set explicitly here or
+/// every request 400s with `Bad Request: missing Host header` regardless of
+/// `allowed_hosts`. `common::http_state` binds a non-loopback address, which
+/// makes `resolve_allowed_hosts` return `None` (validation disabled), so any
+/// well-formed host value is accepted.
+fn mcp_request(method: &str, auth: Option<&str>, body: Body) -> Request<Body> {
+    let mut b = Request::builder()
+        .method(method)
+        .uri("/mcp")
+        .header(header::HOST, "localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json, text/event-stream");
+    if let Some(a) = auth {
+        b = b.header(header::AUTHORIZATION, a);
+    }
+    b.body(body).unwrap()
+}
 
 #[tokio::test]
 async fn healthz_returns_200_and_version() {
@@ -117,4 +143,124 @@ async fn readyz_returns_503_when_db_query_fails() {
         .await
         .unwrap();
     assert_eq!(body.as_ref(), b"not ready\n");
+}
+
+#[tokio::test]
+async fn initialize_over_http_returns_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = rover::mcp::http::router(common::http_state(tmp.path(), None).await);
+
+    let body = Body::from(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}"#,
+    );
+    let res = app.oneshot(mcp_request("POST", None, body)).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        ct.starts_with("application/json"),
+        "stateless + json_response must yield JSON, got {ct:?}"
+    );
+}
+
+#[tokio::test]
+async fn get_and_delete_on_mcp_are_405_with_a_valid_token() {
+    // Deliberately authenticated: with auth on and no header this would be
+    // 401, which is the middleware's answer, not the transport's.
+    let tmp = tempfile::tempdir().unwrap();
+    let state = common::http_state(tmp.path(), Some(TOKEN)).await;
+    let app = rover::mcp::http::router(state);
+    let auth = format!("Bearer {TOKEN}");
+
+    for method in ["GET", "DELETE"] {
+        let res = app
+            .clone()
+            .oneshot(mcp_request(method, Some(&auth), Body::empty()))
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method} /mcp should be 405"
+        );
+    }
+}
+
+#[tokio::test]
+async fn accept_without_event_stream_is_406() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = rover::mcp::http::router(common::http_state(tmp.path(), None).await);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::HOST, "localhost")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::ACCEPT, "application/json")
+        .body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#))
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::NOT_ACCEPTABLE);
+}
+
+#[tokio::test]
+async fn wrong_content_type_is_415() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = rover::mcp::http::router(common::http_state(tmp.path(), None).await);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(header::HOST, "localhost")
+        .header(header::CONTENT_TYPE, "text/plain")
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .body(Body::from("hello"))
+        .unwrap();
+
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn undeserialisable_body_is_415_not_500() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = rover::mcp::http::router(common::http_state(tmp.path(), None).await);
+
+    let res = app
+        .oneshot(mcp_request("POST", None, Body::from("{not json")))
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+/// `RequestBodyLimitLayer` returns 413 early ONLY when a `Content-Length`
+/// header is present and exceeds the limit
+/// (tower-http-0.6.10/src/limit/service.rs:49-56). Without it the body is
+/// merely wrapped, the overflow reaches rmcp's `expect_json` as a collect
+/// error, and that arm answers 500. `Request::builder().body(...)` sets no
+/// `Content-Length`, so this test MUST set it explicitly or it asserts the
+/// wrong code. Real MCP clients always send it.
+#[tokio::test]
+async fn oversize_body_with_content_length_is_413() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = rover::mcp::http::router(common::http_state(tmp.path(), None).await);
+
+    let huge = vec![b'x'; 17 * 1024 * 1024];
+    let len = huge.len();
+    let mut req = mcp_request("POST", None, Body::from(huge));
+    req.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        axum::http::HeaderValue::from_str(&len.to_string()).unwrap(),
+    );
+
+    let res = app.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }

@@ -9,6 +9,7 @@
 //! body limit, and Host-policy resolution.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Request, State};
@@ -16,29 +17,32 @@ use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
+use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+use tower_http::limit::RequestBodyLimitLayer;
 
 use crate::config::HttpConfig;
 use crate::mcp::handler::RoverHandler;
 use crate::storage::Db;
 
-/// Router state shared by every handler.
+/// Cap on a single request body. MCP tool arguments are small except
+/// `count_tokens`, which accepts inline text.
 ///
-/// `handler`, `allowed_hosts`, and `allowed_origins` are unread until the
-/// `/mcp` route (Task 6) lands; `#[allow(dead_code)]` keeps `warnings = deny`
-/// happy in the meantime, matching `RoverHandler::transport`'s precedent.
-/// `token_digest` lost its `#[allow(dead_code)]` in Task 5: the bearer-auth
-/// middleware below is its first reader.
+/// Uses tower-http's layer, NOT axum's `DefaultBodyLimit`: the latter only
+/// applies to `FromRequest` impls that opt in, and `StreamableHttpService`
+/// consumes the body itself via `body.collect()`, so `DefaultBodyLimit`
+/// would be a silent no-op and an unbounded POST would be buffered in full.
+pub const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// Router state shared by every handler.
 #[derive(Clone)]
 pub struct HttpState {
-    #[allow(dead_code)]
     pub(crate) handler: RoverHandler,
     pub(crate) db: Db,
     /// SHA-256 of the configured bearer token, or `None` for no auth.
     pub(crate) token_digest: Option<[u8; 32]>,
     /// Resolved `Host` allow-list: `None` means validation is disabled.
-    #[allow(dead_code)]
     pub(crate) allowed_hosts: Option<Vec<String>>,
-    #[allow(dead_code)]
     pub(crate) allowed_origins: Vec<String>,
 }
 
@@ -174,6 +178,25 @@ async fn require_bearer(State(state): State<HttpState>, req: Request, next: Next
         .into_response()
 }
 
+/// Build the `StreamableHttpServerConfig` for the `/mcp` service from the
+/// resolved `HttpState`.
+fn mcp_service_config(state: &HttpState) -> StreamableHttpServerConfig {
+    let mut cfg = StreamableHttpServerConfig::default()
+        // Rover has no server-initiated messages — no sampling, no roots,
+        // `list_changed: false` — so SSE framing buys nothing and every POST
+        // is self-contained.
+        .with_stateful_mode(false)
+        .with_json_response(true);
+    cfg = match &state.allowed_hosts {
+        None => cfg.disable_allowed_hosts(),
+        Some(hosts) => cfg.with_allowed_hosts(hosts.clone()),
+    };
+    if !state.allowed_origins.is_empty() {
+        cfg = cfg.with_allowed_origins(state.allowed_origins.clone());
+    }
+    cfg
+}
+
 /// Build the router. Pure — no I/O, no sockets — so tests drive it in-process
 /// via `tower::ServiceExt::oneshot`. Returns `Router<()>` because axum
 /// implements `Service` only for a router with its state already applied.
@@ -186,14 +209,34 @@ pub fn router(state: HttpState) -> Router<()> {
         .route("/readyz", get(readyz))
         .with_state(state.clone());
 
+    let handler = state.handler.clone();
+    let mcp = StreamableHttpService::new(
+        move || Ok(handler.clone()),
+        // `NeverSessionManager` is correct, not a placeholder: the
+        // `M: SessionManager` bound is on the impl block regardless of
+        // stateful mode, and the stateless path never calls it — GET/DELETE
+        // are answered 405 before the manager is touched, and POST uses
+        // `serve_directly` + `OneshotTransport`.
+        Arc::new(NeverSessionManager::default()),
+        mcp_service_config(&state),
+    );
+
     let protected = Router::new()
-        // `/mcp` is mounted in Task 6; until then this router is empty and
-        // the auth layer has nothing to guard.
+        // `route_service`, not `nest_service`: it registers the service for
+        // ALL methods, so GET/DELETE reach rmcp and get its 405 rather than
+        // axum's, and it avoids `nest`'s path-stripping, which one fixed
+        // route has no use for.
+        //
+        // CRITICAL ordering: `.route_service` must come BEFORE `.layer`.
+        // axum applies each layer only to routes already registered, so
+        // appending the route after the layers would leave `/mcp`
+        // completely unauthenticated.
+        .route_service("/mcp", mcp)
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_BYTES))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_bearer,
-        ))
-        .with_state(state);
+        ));
 
     public.merge(protected)
 }
