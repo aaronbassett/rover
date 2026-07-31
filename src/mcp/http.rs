@@ -116,6 +116,23 @@ async fn readyz(State(state): State<HttpState>) -> impl IntoResponse {
     }
 }
 
+/// Strip a `Bearer ` prefix from an `Authorization` header value.
+///
+/// The scheme name is matched case-insensitively — RFC 9110 §11.1 and RFC
+/// 6750 §2.1 both specify that the auth-scheme token is case-insensitive, so
+/// a conforming client sending `bearer <token>` or `BEARER <token>` must
+/// still be accepted. The separating space and the token itself are matched
+/// exactly, same as before: this only relaxes the scheme's case, nothing
+/// else (no tolerance added for extra whitespace).
+fn strip_bearer_prefix(v: &str) -> Option<&str> {
+    let (scheme, token) = v.split_once(' ')?;
+    if scheme.eq_ignore_ascii_case("Bearer") {
+        Some(token)
+    } else {
+        None
+    }
+}
+
 /// Reject requests without a valid bearer token, before any dispatch work.
 ///
 /// The response does not distinguish "absent" from "wrong", and the presented
@@ -129,12 +146,16 @@ async fn require_bearer(State(state): State<HttpState>, req: Request, next: Next
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(strip_bearer_prefix)
         .map(digest);
 
-    // Compare as slices: subtle 2.6.1 implements ConstantTimeEq for [T] but
-    // NOT for [T; N], so `p.ct_eq(&expected)` relies on deref coercion finding
-    // the slice impl. Be explicit.
+    // SECURITY: compare as slices, not arrays, and via `ConstantTimeEq`, not
+    // `==`. subtle 2.6.1 implements `ConstantTimeEq` for `[T]` but NOT for
+    // `[T; N]`, so `p.ct_eq(&expected)` would rely on deref coercion finding
+    // the slice impl — be explicit instead. A plain `==` here would return as
+    // soon as it finds the first differing byte, leaking (via response
+    // timing) how many leading bytes of a guess matched the real digest —
+    // exactly the oracle a constant-time comparison exists to deny.
     let ok = presented.is_some_and(|p| {
         use subtle::ConstantTimeEq as _;
         p.as_slice().ct_eq(expected.as_slice()).into()
@@ -220,5 +241,73 @@ mod tests {
             resolve_allowed_hosts(&list, addr("127.0.0.1:7683")),
             Some(list)
         );
+    }
+
+    /// Guards the constant-time comparison itself, not just its observable
+    /// pass/fail outcome. Replacing `p.as_slice().ct_eq(expected.as_slice())`
+    /// with `presented == Some(expected)` still makes every behavioural test
+    /// in `tests/mcp_http_auth.rs` pass — a plain `==` is functionally
+    /// correct, it just leaks timing information proportional to how many
+    /// leading bytes of a guess match the real digest, which is exactly the
+    /// class of bug those tests cannot see. So this test reads the source
+    /// directly and checks the comparison operator that ships, not just what
+    /// it computes.
+    ///
+    /// Comments are stripped before searching: the `// SECURITY:` comment
+    /// right above the real comparison mentions `ct_eq` in prose, so a naive
+    /// substring search over the raw body would still pass even if the code
+    /// were reverted to a plain `==` underneath an unchanged comment — this
+    /// was caught by hand-testing the guard (temporarily swapping in `==` and
+    /// confirming the *first* version of this test kept passing) before this
+    /// version shipped, not assumed safe.
+    #[test]
+    fn require_bearer_uses_constant_time_comparison() {
+        let src = include_str!("http.rs");
+        let body = function_body(src, "async fn require_bearer")
+            .expect("require_bearer not found in src/mcp/http.rs — did it get renamed?");
+        let code_only = strip_line_comments(body);
+        assert!(
+            code_only.contains("ct_eq"),
+            "require_bearer no longer calls `ct_eq` (subtle::ConstantTimeEq) on the \
+             token digests — a plain `==` comparison is not constant-time and \
+             reintroduces a timing side-channel that leaks the correct bearer \
+             token one byte at a time"
+        );
+    }
+
+    /// Drop everything from the first `//` to the end of each line. Good
+    /// enough for `require_bearer`'s body specifically: none of its string
+    /// literals contain `//`, so this can't misfire by truncating a real
+    /// string value — it only removes actual comment text.
+    fn strip_line_comments(src: &str) -> String {
+        src.lines()
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Extract the brace-balanced body of the first function in `src` whose
+    /// text contains `signature`, from the signature's opening `{` through
+    /// its matching closing `}`. Used only by the source-scraping guard
+    /// above; not a general-purpose parser (no awareness of braces inside
+    /// string/char literals or comments — `require_bearer` doesn't contain
+    /// any, so this is sufficient here).
+    fn function_body<'a>(src: &'a str, signature: &str) -> Option<&'a str> {
+        let start = src.find(signature)?;
+        let open = src[start..].find('{')? + start;
+        let mut depth = 0usize;
+        for (i, ch) in src[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(&src[open..=open + i]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 }
