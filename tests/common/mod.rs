@@ -220,12 +220,34 @@ pub async fn spawn_http_server(
         cmd.env_remove("ROVER_HTTP_TOKEN");
     }
     cmd.stderr(std::process::Stdio::piped());
+    // Never hold the harness's stdout pipe open: the child inherits stdout
+    // by default, and an orphaned child (see `kill_on_drop` below — this is
+    // the belt to that suspenders) holding a piped stdout open is exactly
+    // what wedges a `cargo test | ...` capture indefinitely, long after the
+    // test process itself has exited.
+    cmd.stdout(std::process::Stdio::null());
+    // SIGKILL this child from `Drop` if the returned `Child` is ever dropped
+    // without an explicit `.kill()` — e.g. a `.expect()`/assertion panic
+    // partway through a test, before that test's own cleanup runs. Tokio
+    // does NOT kill on drop by default (unlike rmcp's `TokioChildProcess`,
+    // which wraps its child in `ChildWithCleanup` for exactly this reason —
+    // see `common::spawn_client`), so without this a panicking test leaks a
+    // live `rover --http` server that keeps LISTENing after the test binary
+    // exits.
+    cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn().expect("spawn rover mcp --http");
     let stderr = child.stderr.take().expect("stderr piped");
     let mut lines = BufReader::new(stderr).lines();
 
-    // Parse `addr=127.0.0.1:PORT` out of the listening line.
+    // Parse `addr=127.0.0.1:PORT` out of the listening line. Requires the
+    // line to also contain "HTTP listening" (the fixed text in
+    // `src/mcp/http.rs`'s startup log) and the captured token to parse as a
+    // `SocketAddr`, not just the presence of the substring `addr=` — under
+    // `RUST_LOG=info,rover=debug` any third-party dependency logging at INFO
+    // could otherwise emit an unrelated line containing `addr=` and produce
+    // a bogus base URL, trading a clean timeout for a confusing connection
+    // failure.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     let addr = loop {
         let line = tokio::time::timeout_at(deadline, lines.next_line())
@@ -233,15 +255,15 @@ pub async fn spawn_http_server(
             .expect("timed out waiting for the listening line")
             .expect("read stderr")
             .expect("server exited before logging its address");
-        if let Some(rest) = line.split("addr=").nth(1) {
-            let addr = rest
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            if !addr.is_empty() {
-                break addr;
-            }
+        if !line.contains("HTTP listening") {
+            continue;
+        }
+        let Some(rest) = line.split("addr=").nth(1) else {
+            continue;
+        };
+        let candidate = rest.split_whitespace().next().unwrap_or_default();
+        if candidate.parse::<std::net::SocketAddr>().is_ok() {
+            break candidate.to_string();
         }
     };
 

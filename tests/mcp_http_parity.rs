@@ -155,42 +155,62 @@ async fn stdio_and_http_produce_the_same_document() {
     // `Json<FetchOutput>` (src/mcp/handler.rs:135), which rmcp places in
     // `structured_content`; `FetchOutput` is `#[serde(untagged)]`, so
     // `FetchResponse`'s fields (`content`, `cache_status` —
-    // src/mcp/envelope.rs:48-49) sit at the JSON root. Working on the
-    // unescaped markdown avoids all backslash arithmetic.
-    let parts = |r: &rmcp::model::CallToolResult| {
-        let v = r.structured_content.as_ref().expect("structured content");
-        (
-            v["content"].as_str().expect("content").to_string(),
-            v["cache_status"]
-                .as_str()
-                .expect("cache_status")
-                .to_string(),
-        )
+    // src/mcp/envelope.rs:48-49) sit at the JSON root.
+    //
+    // Compare the WHOLE `structured_content` object, not a hand-picked pair
+    // of fields: projecting only `content`/`cache_status` would let a future
+    // field that legitimately differs by transport (`summarized`,
+    // `auto_summarized`, `summarizer_fallback`, `revalidation`) drift
+    // silently, since nothing would ever look at it.
+    let structured = |r: &rmcp::model::CallToolResult| {
+        r.structured_content
+            .as_ref()
+            .expect("structured content")
+            .clone()
     };
-    let (stdio_doc, stdio_cache) = parts(&stdio_result);
-    let (http_doc, http_cache) = parts(&http_result);
+    let stdio_json = structured(&stdio_result);
+    let http_json = structured(&http_result);
 
-    assert_eq!(stdio_cache, "miss", "the stdio call should be a cache miss");
-    assert_eq!(http_cache, "hit", "the http call should be a cache hit");
+    assert_eq!(
+        stdio_json["cache_status"].as_str(),
+        Some("miss"),
+        "the stdio call should be a cache miss, got: {stdio_json}"
+    );
+    assert_eq!(
+        http_json["cache_status"].as_str(),
+        Some("hit"),
+        "the http call should be a cache hit, got: {http_json}"
+    );
 
-    let norm = |s: &str| {
-        let s = regex::Regex::new(r"untrusted-content-[0-9a-f]{6}")
-            .unwrap()
-            .replace_all(s, "untrusted-content-NONCE")
-            .into_owned();
-        let s = regex::Regex::new(r"nonce: [0-9a-f]{6}")
-            .unwrap()
-            .replace_all(&s, "nonce: NONCE")
-            .into_owned();
-        regex::Regex::new(r#"fetched_at: "[^"]*""#)
-            .unwrap()
-            .replace_all(&s, r#"fetched_at: "TS""#)
-            .into_owned()
+    // Normalise the two fields that vary per call regardless of transport —
+    // the injection-guard nonce (both its tag form and its bare `nonce: `
+    // preamble form) and `fetched_at`, working on the unescaped `content`
+    // string to avoid JSON-escaping arithmetic — then blank `cache_status`,
+    // whose miss-vs-hit difference is deliberate and already asserted
+    // above. Everything else in the object is compared verbatim.
+    let norm = |mut v: serde_json::Value| {
+        if let Some(content) = v.get("content").and_then(|c| c.as_str()) {
+            let s = regex::Regex::new(r"untrusted-content-[0-9a-f]{6}")
+                .unwrap()
+                .replace_all(content, "untrusted-content-NONCE")
+                .into_owned();
+            let s = regex::Regex::new(r"nonce: [0-9a-f]{6}")
+                .unwrap()
+                .replace_all(&s, "nonce: NONCE")
+                .into_owned();
+            let s = regex::Regex::new(r#"fetched_at: "[^"]*""#)
+                .unwrap()
+                .replace_all(&s, r#"fetched_at: "TS""#)
+                .into_owned();
+            v["content"] = serde_json::Value::String(s);
+        }
+        v["cache_status"] = serde_json::Value::String("NORMALISED".to_string());
+        v
     };
 
     assert_eq!(
-        norm(&stdio_doc),
-        norm(&http_doc),
+        norm(stdio_json),
+        norm(http_json),
         "the same fetch must yield the same document over both transports"
     );
 }
