@@ -30,13 +30,15 @@ impl TransportKind {
 pub mod envelope;
 pub mod error;
 pub mod handler;
-pub mod server;
+pub mod http;
+pub mod runtime;
+pub mod stdio;
 pub mod tools;
 
 pub use envelope::{CacheStatus, CountResponse, CountSource, FetchResponse, RoverError};
 pub use error::McpError;
 pub use handler::RoverHandler;
-pub use server::serve_stdio;
+pub use stdio::serve_stdio;
 
 #[cfg(test)]
 mod tests {

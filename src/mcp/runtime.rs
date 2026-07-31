@@ -1,31 +1,44 @@
-//! `rover mcp` server lifecycle.
+//! Transport-agnostic MCP server runtime.
 //!
-//! Wires together: startup reap of stale `servers` rows, upsert of the
-//! current process's row, a tokio interval heartbeat task, a SIGINT/SIGTERM
-//! handler, and the rmcp stdio service.
+//! Everything `rover mcp` needs regardless of how bytes reach it: the
+//! `servers` row lifecycle, heartbeat, signal handling, HTTP client, pacer,
+//! scheduler, summarizer/guard/captioner registries, and the handler. The
+//! transport modules (`stdio`, `http`) build one of these, serve it, and
+//! hand it back to `shutdown`.
 
 use std::sync::Arc;
 
-use rmcp::ServiceExt;
-use rmcp::transport::io::stdio;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::fetcher::ssrf::SsrfLevel;
+use crate::mcp::TransportKind;
 use crate::mcp::handler::RoverHandler;
 use crate::storage::Db;
 use crate::tasks::WorkerDeps;
 use crate::tasks::default_spawner;
 use crate::tasks::scheduler::{Scheduler, SchedulerConfig};
 
-pub async fn serve_stdio(
+pub struct Runtime {
+    pub handler: RoverHandler,
+    pub cancel: CancellationToken,
+    sched_handle: tokio::task::JoinHandle<Result<(), crate::tasks::TasksError>>,
+    db: Db,
+    pid: i64,
+    har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
+    #[cfg(feature = "headless")]
+    headless_renderer: Arc<tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>>,
+}
+
+pub async fn build_runtime(
     db: Db,
     config: Arc<Config>,
     ssrf_level: SsrfLevel,
     ssrf_project_root: Option<std::path::PathBuf>,
     har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
-) -> anyhow::Result<()> {
+    transport: TransportKind,
+) -> anyhow::Result<Runtime> {
     let pid = std::process::id() as i64;
     let version = env!("CARGO_PKG_VERSION").to_string();
 
@@ -35,6 +48,7 @@ pub async fn serve_stdio(
         tracing::info!(
             target: "rover::mcp",
             reaped,
+            transport = transport.as_str(),
             "reaped stale servers rows on startup"
         );
     }
@@ -44,6 +58,7 @@ pub async fn serve_stdio(
         target: "rover::mcp",
         pid,
         version = %version,
+        transport = transport.as_str(),
         "rover mcp registered"
     );
 
@@ -205,92 +220,85 @@ pub async fn serve_stdio(
         summarizer,
         captioners,
         guard.clone(),
+        transport,
         #[cfg(feature = "headless")]
         headless_renderer,
     );
 
-    let service = handler.serve(stdio()).await?;
+    Ok(Runtime {
+        handler,
+        cancel,
+        sched_handle,
+        db,
+        pid,
+        har_recorder: har_recorder_for_shutdown,
+        #[cfg(feature = "headless")]
+        headless_renderer: headless_renderer_for_shutdown,
+    })
+}
 
-    // Wait until either the client closes the transport or a signal fires.
-    // We wrap `service` in an `Option` so the cancel branch can drop it
-    // explicitly — releasing the handler (and its `Arc` clone of the
-    // headless `OnceCell`) before the renderer shutdown below.
-    let mut service_holder = Some(service);
-    tokio::select! {
-        res = async {
-            let s = service_holder.take().expect("service present");
-            s.waiting().await
-        } => {
-            match res {
-                Ok(reason) => tracing::info!(
-                    target: "rover::mcp",
-                    reason = ?reason,
-                    "service loop ended"
-                ),
-                Err(e) => tracing::warn!(
-                    target: "rover::mcp",
-                    error = ?e,
-                    "service task join error"
-                ),
+impl Runtime {
+    /// Drain and tear down. Consumes `self` so the handler — and therefore
+    /// its clone of the headless `OnceCell` — is released before we try to
+    /// take exclusive ownership of the renderer.
+    ///
+    /// HTTP callers MUST drop the router and its `StreamableHttpService`
+    /// before calling this: the service factory closure holds a
+    /// `RoverHandler` for the life of the router, and each in-flight request
+    /// holds another clone. Otherwise `Arc::try_unwrap` below always takes
+    /// the `Err` branch and logs a spurious warning on every shutdown.
+    pub async fn shutdown(self) -> anyhow::Result<()> {
+        let Self {
+            handler,
+            cancel,
+            sched_handle,
+            db,
+            pid,
+            har_recorder,
+            #[cfg(feature = "headless")]
+            headless_renderer,
+        } = self;
+        drop(handler);
+
+        // Make sure the heartbeat + signal tasks see the cancel before we
+        // delete the row — otherwise the heartbeat can race and re-touch a
+        // soon-to-be-deleted row.
+        cancel.cancel();
+
+        match tokio::time::timeout(std::time::Duration::from_secs(5), sched_handle).await {
+            Ok(Ok(Ok(()))) => {}
+            Ok(Ok(Err(e))) => {
+                tracing::warn!(target: "rover::mcp", error = ?e, "scheduler exited with error");
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(target: "rover::mcp", error = ?e, "scheduler task join error");
+            }
+            Err(_) => {
+                tracing::warn!(target: "rover::mcp", "scheduler shutdown timed out");
             }
         }
-        _ = cancel.cancelled() => {
-            tracing::info!(target: "rover::mcp", "shutting down on signal");
-        }
-    }
-    // Drop the rmcp service explicitly (cancel-branch case) so the handler is
-    // released before we try to take exclusive ownership of the renderer.
-    drop(service_holder);
 
-    // Make sure the heartbeat + signal tasks see the cancel before we
-    // delete the row — otherwise the heartbeat can race and re-touch a
-    // soon-to-be-deleted row.
-    cancel.cancel();
-
-    // Await the scheduler with a short deadline so a wedged worker can't
-    // hang shutdown. The scheduler's own `shutdown_grace` already bounds the
-    // join-set wait inside `run()`.
-    match tokio::time::timeout(std::time::Duration::from_secs(5), sched_handle).await {
-        Ok(Ok(Ok(()))) => {}
-        Ok(Ok(Err(e))) => {
-            tracing::warn!(target: "rover::mcp", error = ?e, "scheduler exited with error");
+        if let Some(r) = &har_recorder
+            && let Err(e) = r.flush().await
+        {
+            tracing::warn!(target: "rover::fetcher", error = ?e, "har shutdown flush failed");
         }
-        Ok(Err(e)) => {
-            tracing::warn!(target: "rover::mcp", error = ?e, "scheduler task join error");
-        }
-        Err(_) => {
-            tracing::warn!(target: "rover::mcp", "scheduler shutdown timed out");
-        }
-    }
 
-    // Final HAR flush on shutdown so a clean client disconnect leaves a
-    // complete file on disk (rather than depending on the next interval tick).
-    if let Some(r) = &har_recorder_for_shutdown
-        && let Err(e) = r.flush().await
-    {
-        tracing::warn!(target: "rover::fetcher", error = ?e, "har shutdown flush failed");
-    }
-
-    // M9 fix C1: stop the headless browser if it was ever launched. We've
-    // already dropped `service` (which owns the handler holding the only
-    // other strong reference to the OnceCell + inner Arc) above, so the
-    // `try_unwrap` should normally succeed and let us cleanly close the
-    // browser. If it doesn't, log and let the renderer's own destructor
-    // close the underlying chromiumoxide handle.
-    #[cfg(feature = "headless")]
-    if let Some(renderer_arc) = headless_renderer_for_shutdown.get().cloned() {
-        drop(headless_renderer_for_shutdown);
-        match Arc::try_unwrap(renderer_arc) {
-            Ok(renderer) => renderer.shutdown().await,
-            Err(_still_shared) => {
-                tracing::warn!(
-                    target: "rover::mcp",
-                    "headless renderer still has outstanding Arc references at shutdown; skipping explicit shutdown",
-                );
+        #[cfg(feature = "headless")]
+        if let Some(renderer_arc) = headless_renderer.get().cloned() {
+            drop(headless_renderer);
+            match Arc::try_unwrap(renderer_arc) {
+                Ok(renderer) => renderer.shutdown().await,
+                Err(_still_shared) => {
+                    tracing::warn!(
+                        target: "rover::mcp",
+                        "headless renderer still has outstanding Arc references at shutdown; skipping explicit shutdown",
+                    );
+                }
             }
         }
-    }
 
-    db.delete_server_self(pid).await?;
-    Ok(())
+        db.delete_server_self(pid).await?;
+        Ok(())
+    }
 }

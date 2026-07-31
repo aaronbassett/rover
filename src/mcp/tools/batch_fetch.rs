@@ -4,7 +4,7 @@
 //! `batch_fetch` task carrying serialised `BatchFetchParams`, and returns
 //! the immediate `TaskCreatedResponse` envelope. The scheduler is notified
 //! by the storage layer itself — see `storage::tasks::insert` and the
-//! bridge installed in `mcp::server::serve_stdio`. SSRF rejects pre-empt
+//! bridge installed in `mcp::runtime::build_runtime`. SSRF rejects pre-empt
 //! the task insert.
 
 use schemars::JsonSchema;

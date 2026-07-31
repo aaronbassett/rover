@@ -338,6 +338,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
+                crate::mcp::TransportKind::Stdio,
                 #[cfg(feature = "headless")]
                 std::sync::Arc::new(tokio::sync::OnceCell::new()),
             ),
