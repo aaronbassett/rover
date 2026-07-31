@@ -320,9 +320,10 @@ fn warn_on_posture(bind: SocketAddr, token: Option<&str>, config: &Config, ssrf_
                 tracing::warn!(
                     target: "rover::mcp",
                     %bind,
-                    "binding a NON-LOOPBACK address with NO bearer token: every caller can \
-                     spend your configured cloud API keys, read the entire cache database, \
-                     and fetch the web under your IP and User-Agent. Set ROVER_HTTP_TOKEN."
+                    "binding a NON-LOOPBACK address with no ROVER_HTTP_TOKEN configured: \
+                     every caller can spend your configured cloud API keys, read the entire \
+                     cache database, and fetch the web under your IP and User-Agent. Set \
+                     ROVER_HTTP_TOKEN."
                 );
             }
         }
@@ -335,7 +336,10 @@ fn warn_on_posture(bind: SocketAddr, token: Option<&str>, config: &Config, ssrf_
                      short token is offline-crackable. Generate one with: openssl rand -hex 32"
                 );
             }
-            tracing::info!(target: "rover::mcp", "bearer auth enabled on POST /mcp");
+            tracing::info!(
+                target: "rover::mcp",
+                "ROVER_HTTP_TOKEN configured; POST /mcp requires it"
+            );
         }
     }
 
