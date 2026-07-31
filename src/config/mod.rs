@@ -51,6 +51,9 @@ pub struct Config {
     pub mcp: McpConfig,
 
     #[serde(default)]
+    pub http: HttpConfig,
+
+    #[serde(default)]
     pub output: OutputConfig,
 
     #[serde(default)]
@@ -273,6 +276,48 @@ fn default_heartbeat_interval() -> Duration {
 
 fn default_reap_threshold() -> Duration {
     Duration::from_secs(60)
+}
+
+/// HTTP transport settings. Topology only — the bearer token is
+/// environment-only (`ROVER_HTTP_TOKEN`) and deliberately has no key here,
+/// so a live credential never sits in a file people paste into issues.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpConfig {
+    /// Listen address. Overridden by `ROVER_HTTP_BIND`, then `--bind`.
+    #[serde(default = "default_http_bind")]
+    pub bind: String,
+
+    /// Inbound `Host` allow-list. `[]` derives from the bind (loopback →
+    /// rmcp's loopback list, non-loopback → disabled); `["*"]` disables
+    /// explicitly; any other non-empty list is used verbatim.
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+
+    /// Browser `Origin` allow-list. Empty disables Origin validation.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+
+    /// Permit tool modes that emit server-side filesystem paths
+    /// (`tables.mode = "csv_file"`, `images.mode = "download"`) over HTTP.
+    /// Only correct when client and server share a volume at identical paths.
+    #[serde(default)]
+    pub allow_server_paths: bool,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            bind: default_http_bind(),
+            allowed_hosts: Vec::new(),
+            allowed_origins: Vec::new(),
+            allow_server_paths: false,
+        }
+    }
+}
+
+fn default_http_bind() -> String {
+    "127.0.0.1:7683".to_string()
 }
 
 /// Output configuration. When `dir` is `None`, `ROVER_OUTPUT_DIR` (if set)

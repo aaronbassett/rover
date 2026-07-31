@@ -147,9 +147,30 @@ fn render_toml_value(v: &toml::Value) -> String {
         toml::Value::Integer(n) => n.to_string(),
         toml::Value::Float(f) => f.to_string(),
         toml::Value::Boolean(b) => b.to_string(),
-        toml::Value::Array(_) | toml::Value::Table(_) => {
-            toml::to_string(v).unwrap_or_default().trim().to_string()
+        // `toml::to_string` only serialises tables — a bare array errors with
+        // UnsupportedType and `unwrap_or_default()` silently rendered "".
+        toml::Value::Array(items) => {
+            let rendered: Vec<String> = items.iter().map(render_toml_value).collect();
+            format!("[{}]", rendered.join(", "))
         }
+        toml::Value::Table(_) => toml::to_string(v).unwrap_or_default().trim().to_string(),
         toml::Value::Datetime(d) => d.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_arrays_inline() {
+        let empty = toml::Value::Array(vec![]);
+        assert_eq!(render_toml_value(&empty), "[]");
+
+        let list = toml::Value::Array(vec![
+            toml::Value::String("localhost".into()),
+            toml::Value::String("127.0.0.1".into()),
+        ]);
+        assert_eq!(render_toml_value(&list), "[\"localhost\", \"127.0.0.1\"]");
     }
 }

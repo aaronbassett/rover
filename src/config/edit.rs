@@ -105,6 +105,11 @@ fn settable() -> &'static [SettableSpec] {
             expected: "humantime string",
         },
         SettableSpec {
+            key: "robots.failure_ttl",
+            parser: parse_string,
+            expected: "humantime string",
+        },
+        SettableSpec {
             key: "rate_limit.requests_per_minute_per_domain",
             parser: parse_int,
             expected: "integer",
@@ -116,6 +121,11 @@ fn settable() -> &'static [SettableSpec] {
         },
         SettableSpec {
             key: "rate_limit.global_concurrency",
+            parser: parse_int,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "rate_limit.max_retries",
             parser: parse_int,
             expected: "integer",
         },
@@ -234,7 +244,34 @@ fn settable() -> &'static [SettableSpec] {
             parser: parse_bool,
             expected: "bool",
         },
+        SettableSpec {
+            key: "mcp.heartbeat_interval",
+            parser: parse_string,
+            expected: "humantime string",
+        },
+        SettableSpec {
+            key: "mcp.reap_threshold",
+            parser: parse_string,
+            expected: "humantime string",
+        },
+        SettableSpec {
+            key: "http.bind",
+            parser: parse_string,
+            expected: "string",
+        },
+        SettableSpec {
+            key: "http.allow_server_paths",
+            parser: parse_bool,
+            expected: "bool",
+        },
     ]
+}
+
+/// The dotted keys `rover config set` accepts. Exposed so tests can assert
+/// this list, `provenance::known_leaves()`, and the docs stay in agreement.
+#[must_use]
+pub fn settable_keys() -> Vec<&'static str> {
+    settable().iter().map(|s| s.key).collect()
 }
 
 fn parse_string(s: &str) -> Result<toml_edit::Item, String> {
