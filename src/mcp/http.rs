@@ -11,9 +11,10 @@
 use std::net::SocketAddr;
 
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::config::HttpConfig;
@@ -22,17 +23,17 @@ use crate::storage::Db;
 
 /// Router state shared by every handler.
 ///
-/// `handler`, `token_digest`, `allowed_hosts`, and `allowed_origins` are
-/// unread until the bearer-auth middleware (Task 5) and the `/mcp` route
-/// (Task 6) land; `#[allow(dead_code)]` keeps `warnings = deny` happy in the
-/// meantime, matching `RoverHandler::transport`'s precedent.
+/// `handler`, `allowed_hosts`, and `allowed_origins` are unread until the
+/// `/mcp` route (Task 6) lands; `#[allow(dead_code)]` keeps `warnings = deny`
+/// happy in the meantime, matching `RoverHandler::transport`'s precedent.
+/// `token_digest` lost its `#[allow(dead_code)]` in Task 5: the bearer-auth
+/// middleware below is its first reader.
 #[derive(Clone)]
 pub struct HttpState {
     #[allow(dead_code)]
     pub(crate) handler: RoverHandler,
     pub(crate) db: Db,
     /// SHA-256 of the configured bearer token, or `None` for no auth.
-    #[allow(dead_code)]
     pub(crate) token_digest: Option<[u8; 32]>,
     /// Resolved `Host` allow-list: `None` means validation is disabled.
     #[allow(dead_code)]
@@ -115,6 +116,43 @@ async fn readyz(State(state): State<HttpState>) -> impl IntoResponse {
     }
 }
 
+/// Reject requests without a valid bearer token, before any dispatch work.
+///
+/// The response does not distinguish "absent" from "wrong", and the presented
+/// token is never logged.
+async fn require_bearer(State(state): State<HttpState>, req: Request, next: Next) -> Response {
+    let Some(expected) = state.token_digest else {
+        return next.run(req).await; // auth disabled
+    };
+
+    let presented = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(digest);
+
+    // Compare as slices: subtle 2.6.1 implements ConstantTimeEq for [T] but
+    // NOT for [T; N], so `p.ct_eq(&expected)` relies on deref coercion finding
+    // the slice impl. Be explicit.
+    let ok = presented.is_some_and(|p| {
+        use subtle::ConstantTimeEq as _;
+        p.as_slice().ct_eq(expected.as_slice()).into()
+    });
+
+    if ok {
+        return next.run(req).await;
+    }
+
+    tracing::warn!(target: "rover::mcp", "rejected request: invalid bearer token");
+    (
+        StatusCode::UNAUTHORIZED,
+        [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+        "unauthorized\n",
+    )
+        .into_response()
+}
+
 /// Build the router. Pure — no I/O, no sockets — so tests drive it in-process
 /// via `tower::ServiceExt::oneshot`. Returns `Router<()>` because axum
 /// implements `Service` only for a router with its state already applied.
@@ -122,10 +160,21 @@ async fn readyz(State(state): State<HttpState>) -> impl IntoResponse {
 /// No `#[must_use]` here: `Router<()>` is already `#[must_use]` in axum, and
 /// stacking our own triggers `clippy::double_must_use`.
 pub fn router(state: HttpState) -> Router<()> {
-    Router::new()
+    let public = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .with_state(state)
+        .with_state(state.clone());
+
+    let protected = Router::new()
+        // `/mcp` is mounted in Task 6; until then this router is empty and
+        // the auth layer has nothing to guard.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_bearer,
+        ))
+        .with_state(state);
+
+    public.merge(protected)
 }
 
 #[cfg(test)]

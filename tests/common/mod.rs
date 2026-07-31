@@ -140,3 +140,28 @@ pub async fn http_state(data_dir: &Path, token: Option<&str>) -> rover::mcp::htt
         "0.0.0.0:0".parse().unwrap(),
     )
 }
+
+/// A minimal, well-formed MCP request with the headers rmcp requires.
+/// `Accept` MUST list both `application/json` and `text/event-stream` or
+/// rmcp answers `406` before anything under test is reached.
+///
+/// `method` is the HTTP method (e.g. `"POST"`); `auth` is an optional raw
+/// `Authorization` header value (e.g. `"Bearer <token>"`).
+pub fn mcp_request(
+    method: &str,
+    auth: Option<&str>,
+    body: axum::body::Body,
+) -> axum::http::Request<axum::body::Body> {
+    let mut b = axum::http::Request::builder()
+        .method(method)
+        .uri("/mcp")
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header(
+            axum::http::header::ACCEPT,
+            "application/json, text/event-stream",
+        );
+    if let Some(a) = auth {
+        b = b.header(axum::http::header::AUTHORIZATION, a);
+    }
+    b.body(body).unwrap()
+}
