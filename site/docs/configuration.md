@@ -287,7 +287,7 @@ When the `[backends]` map is empty, Rover installs an implicit `default` extract
 | `ROVER_LOG_LEVEL` | `debug.log_level` | |
 | `RUST_LOG` | tracing filter | Takes precedence over `debug.log_level`. |
 
-`rover config show` annotates every leaf with its effective source: `defaults`, `file`, or `env`. Only the 25 leaves listed by `provenance::known_leaves()` are tracked. They cover every section above except the dynamic `[backends.*]` map and the rate-limit timing knobs (`initial_backoff`, `max_backoff`, `retry_after_ceiling`, `jitter_seed`, `deferred_retry_threshold_secs`, `max_retries`).
+`rover config show` annotates every leaf with its effective source: `defaults`, `file`, or `env`. Only the 45 leaves listed by `provenance::known_leaves()` are tracked, and coverage varies by section rather than being all-or-nothing. Two dynamic sections — the free-form `[backends.<name>]` and `[captioners.<name>]` maps — are entirely untracked, and so is all of `[prompt_injection]`. A few other sections track their primary knobs but omit some secondary ones: `cache` omits `stale_while_revalidate_window` and `override_no_store_domains`; `rate_limit` omits `initial_backoff`, `max_backoff`, `retry_after_ceiling`, `jitter_seed`, and `deferred_retry_threshold_secs`; `robots` omits `ignore_domains`; and `headless` omits `auto_detect_spa`, `launch_delay_secs`, `default_wait`, and `timeout_secs`. Every other section above — `fetch`, `ssrf`, `tokenizer`, `mcp`, `output`, `summarization` (including `summarization.tables`), `image_captions` (including `image_captions.cache`), and `debug` — is tracked in full.
 
 ## Worked example
 
