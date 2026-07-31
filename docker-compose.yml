@@ -1,0 +1,21 @@
+# Rover on an internal network. No host port is published: agent containers
+# reach it at http://rover:7683/mcp and nothing binds on the host.
+services:
+  rover:
+    build: .
+    environment:
+      # Fails the whole `up` if unset, rather than starting an open instance.
+      ROVER_HTTP_TOKEN: "${ROVER_HTTP_TOKEN:?set ROVER_HTTP_TOKEN in .env — generate with: openssl rand -hex 32}"
+      ROVER_CONFIG: /config/rover.toml
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      RUST_LOG: info
+    volumes:
+      - rover-data:/data
+      - ./rover.toml:/config/rover.toml:ro
+    networks: [agents]
+
+volumes:
+  rover-data:
+
+networks:
+  agents:

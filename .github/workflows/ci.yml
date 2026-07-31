@@ -67,6 +67,7 @@ jobs:
         run: |
           cargo test --features test-loopback \
             --test cli_batch_snapshot \
+            --test cli_config \
             --test cross_process_notify \
             --test extractor_images \
             --test extractor_images_ssrf \
@@ -86,6 +87,9 @@ jobs:
             --test mcp_count_tokens_estimates \
             --test mcp_fetch_caption_override \
             --test mcp_get_metadata \
+            --test mcp_http_auth \
+            --test mcp_http_transport \
+            --test mcp_stdio_path_modes \
             --test mcp_summarize \
             --test meta_hook \
             --test meta_use \
@@ -119,3 +123,22 @@ jobs:
       # `cargo check`, not `cargo test`: the MSRV contract is "the code
       # compiles on 1.96.0", not "the environment-dependent tests pass".
       - run: cargo check --all-targets --features test-loopback
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the server image
+        run: docker build -t rover:ci .
+      - name: Smoke-test the health probes
+        run: |
+          docker run --rm -d --name rover-ci -p 7683:7683 \
+            -e ROVER_HTTP_TOKEN=ci-token-with-enough-entropy rover:ci
+          for i in $(seq 1 30); do
+            if curl -fsS localhost:7683/healthz; then break; fi
+            sleep 2
+          done
+          curl -fsS localhost:7683/healthz
+          curl -fsS localhost:7683/readyz
+          docker rm -f rover-ci
