@@ -16,6 +16,8 @@ pub struct Args {
     pub per_host_concurrency: Option<u32>,
     pub global_concurrency: Option<u32>,
     pub max_retries: Option<u8>,
+    pub http: bool,
+    pub bind: Option<String>,
 }
 
 pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
@@ -83,6 +85,9 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
             None
         };
 
+    // Read before `cfg` moves into the `Arc` below.
+    let default_http_bind = cfg.http.bind.clone();
+
     let cfg = Arc::new(cfg);
 
     let data_dir = crate::paths::data_dir();
@@ -91,5 +96,29 @@ pub async fn run(args: Args, config_path: Option<&Path>) -> anyhow::Result<()> {
         .await
         .context("opening cache database")?;
 
+    if args.http {
+        // --bind flag → ROVER_HTTP_BIND → [http] bind → default.
+        let raw = args
+            .bind
+            .clone()
+            .or_else(|| {
+                std::env::var("ROVER_HTTP_BIND")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or(default_http_bind);
+        let bind: std::net::SocketAddr = raw
+            .parse()
+            .with_context(|| format!("invalid HTTP bind address `{raw}`"))?;
+        return crate::mcp::http::serve_http(
+            db,
+            cfg,
+            ssrf_level,
+            ssrf_project_root,
+            har_recorder,
+            bind,
+        )
+        .await;
+    }
     mcp::serve_stdio(db, cfg, ssrf_level, ssrf_project_root, har_recorder).await
 }

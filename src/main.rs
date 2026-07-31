@@ -169,6 +169,14 @@ struct McpArgs {
     /// Override [rate_limit] max_retries.
     #[arg(long)]
     max_retries: Option<u8>,
+
+    /// Serve MCP over Streamable HTTP instead of stdio.
+    #[arg(long)]
+    http: bool,
+
+    /// Listen address for --http. Overrides ROVER_HTTP_BIND and [http] bind.
+    #[arg(long, requires = "http")]
+    bind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -464,6 +472,8 @@ impl McpArgs {
             per_host_concurrency: self.per_host_concurrency,
             global_concurrency: self.global_concurrency,
             max_retries: self.max_retries,
+            http: self.http,
+            bind: self.bind,
         }
     }
 }

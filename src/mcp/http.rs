@@ -21,8 +21,11 @@ use rmcp::transport::streamable_http_server::session::never::NeverSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use tower_http::limit::RequestBodyLimitLayer;
 
-use crate::config::HttpConfig;
+use crate::config::{Config, HttpConfig};
+use crate::fetcher::ssrf::SsrfLevel;
+use crate::mcp::TransportKind;
 use crate::mcp::handler::RoverHandler;
+use crate::mcp::runtime::build_runtime;
 use crate::storage::Db;
 
 /// Cap on a single request body. MCP tool arguments are small except
@@ -239,6 +242,120 @@ pub fn router(state: HttpState) -> Router<()> {
         ));
 
     public.merge(protected)
+}
+
+/// Serve MCP over Streamable HTTP until SIGINT/SIGTERM, then drain.
+///
+/// # Errors
+///
+/// Returns an error if the listener cannot bind or the runtime cannot be
+/// built. JSON-RPC and tool errors become wire responses and do not bubble.
+pub async fn serve_http(
+    db: Db,
+    config: Arc<Config>,
+    ssrf_level: SsrfLevel,
+    ssrf_project_root: Option<std::path::PathBuf>,
+    har_recorder: Option<Arc<crate::fetcher::har::HarRecorder>>,
+    bind: SocketAddr,
+) -> anyhow::Result<()> {
+    let token = std::env::var("ROVER_HTTP_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+    warn_on_posture(bind, token.as_deref(), &config, ssrf_level);
+
+    // Bind BEFORE build_runtime. `build_runtime` upserts the `servers` row and
+    // spawns the scheduler; if the bind then fails (port in use) we would
+    // return early without `runtime.shutdown()`, leaving a live row until the
+    // reaper catches it.
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+
+    let runtime = build_runtime(
+        db.clone(),
+        config.clone(),
+        ssrf_level,
+        ssrf_project_root,
+        har_recorder,
+        TransportKind::Http,
+    )
+    .await?;
+
+    let cancel = runtime.cancel.clone();
+    let state = HttpState::new(
+        runtime.handler.clone(),
+        db,
+        token.as_deref(),
+        &config.http,
+        bind,
+    );
+    let app = router(state);
+
+    // Report the *resolved* address, not the requested one, so a `:0`
+    // ephemeral bind logs the port actually assigned — tests parse this line
+    // to discover the port.
+    let local_addr = listener.local_addr()?;
+    tracing::info!(
+        target: "rover::mcp",
+        addr = %local_addr,
+        "rover mcp HTTP listening (POST /mcp, GET /healthz, GET /readyz)"
+    );
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move { cancel.cancelled().await })
+        .await?;
+
+    tracing::info!(target: "rover::mcp", "HTTP server drained; shutting down");
+    // `axum::serve` has returned, so the router and its service factory (and
+    // therefore their `RoverHandler` clones) are dropped. Only now is it safe
+    // to run the shutdown tail — see `Runtime::shutdown`.
+    runtime.shutdown().await
+}
+
+/// State the security posture at boot. Never silently.
+fn warn_on_posture(bind: SocketAddr, token: Option<&str>, config: &Config, ssrf_level: SsrfLevel) {
+    let public = !bind.ip().is_loopback();
+
+    match token {
+        None => {
+            if public {
+                tracing::warn!(
+                    target: "rover::mcp",
+                    %bind,
+                    "binding a NON-LOOPBACK address with NO bearer token: every caller can \
+                     spend your configured cloud API keys, read the entire cache database, \
+                     and fetch the web under your IP and User-Agent. Set ROVER_HTTP_TOKEN."
+                );
+            }
+        }
+        Some(t) => {
+            if t.len() < 16 {
+                tracing::warn!(
+                    target: "rover::mcp",
+                    len = t.len(),
+                    "ROVER_HTTP_TOKEN is shorter than 16 characters; a leaked digest of a \
+                     short token is offline-crackable. Generate one with: openssl rand -hex 32"
+                );
+            }
+            tracing::info!(target: "rover::mcp", "bearer auth enabled on POST /mcp");
+        }
+    }
+
+    if resolve_allowed_hosts(&config.http.allowed_hosts, bind).is_none() {
+        tracing::info!(
+            target: "rover::mcp",
+            "Host validation DISABLED (non-loopback bind or explicit \"*\"): DNS-rebinding \
+             defence protects localhost services from browsers and adds nothing here"
+        );
+    }
+
+    if public && token.is_none() && matches!(ssrf_level, SsrfLevel::Lan | SsrfLevel::None) {
+        tracing::warn!(
+            target: "rover::mcp",
+            level = ?ssrf_level,
+            "UNAUTHENTICATED INTERNAL-NETWORK FETCH PROXY: a public bind with no token and \
+             ssrf.level = lan|none lets any caller reach RFC1918 and ULA addresses on this \
+             network. Set ROVER_HTTP_TOKEN or lower ssrf.level."
+        );
+    }
 }
 
 #[cfg(test)]
