@@ -57,6 +57,7 @@ Rover fixes all four. Extraction is the battle-tested [`readabilityrs`](https://
 | Structured metadata (schema.org / OG / Twitter) | ✅ `get_metadata` | ❌ (must ask in the prompt) | ❌ |
 | Inline image captioning | ✅ cloud VLMs (OpenAI / Anthropic / Gemini / compatible) | ❌ | ❌ |
 | Works offline / no per-fetch API cost | ✅ extractive backend, no API key | ❌ model call per fetch | ✅ |
+| Shared instance for multiple agents | ✅ `rover mcp --http` — bearer auth, one cache for every caller | ❌ stdio, one process per agent | ❌ |
 
 <sub>✅ full · ◻️ partial/optional · ❌ no · — n/a · `WebFetch` column per the [official Claude Code docs](https://docs.claude.com/en/docs/claude-code).</sub>
 
@@ -85,6 +86,8 @@ To add just the MCP server by hand, run `claude mcp add rover -- rover mcp` for 
   }
 }
 ```
+
+Running Rover for more than one agent? `rover mcp --http` serves the same tools over Streamable HTTP instead, so every caller on the network shares one instance and its cache. See [Deployment](https://rover-fetch.com/docs/deployment).
 
 Your agent now has these tools:
 

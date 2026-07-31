@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
         'dynamic-pages',
         'images',
         'batch',
+        'deployment',
       ],
     },
     {

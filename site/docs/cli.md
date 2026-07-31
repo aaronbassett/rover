@@ -84,9 +84,29 @@ The body is replaced with the summary, then `--max-tokens` applies on top if set
 rover mcp [--ignore-robots]
           [--rate-limit-rpm <N>] [--per-host-concurrency <N>]
           [--global-concurrency <N>] [--max-retries <N>]
+          [--http [--bind <ADDR>]]
 ```
 
 Starts the MCP server over stdio. Takes the same `--rate-limit-*` and `--ignore-robots` overrides as `fetch`, applied for the lifetime of the server rather than a single request. Loads the resolved default config (or `--config <path>`) at startup, like every other subcommand. See [MCP tools](/docs/mcp-tools) for the tool surface it exposes.
+
+### `rover mcp --http`
+
+Serve MCP over Streamable HTTP instead of stdio, so multiple agents can share one running instance and its cache.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--http` | off | Selects the HTTP transport. Not feature-gated — every build has it. |
+| `--bind <ADDR>` | `[http] bind` | Requires `--http`. Overrides `ROVER_HTTP_BIND` and `[http] bind`. |
+
+Bind resolution: `--bind` → `ROVER_HTTP_BIND` → `[http] bind` → `127.0.0.1:7683`.
+
+| Endpoint | Behaviour |
+| --- | --- |
+| `POST /mcp` | The JSON-RPC endpoint. Stateless, JSON responses only — Rover sends no server-initiated messages, so SSE framing has nothing to carry. |
+| `GET /healthz` | Liveness. `200` with the running Rover version. |
+| `GET /readyz` | Readiness. Opens the cache database; `200` if it answers, `503` if it doesn't. |
+
+Neither health endpoint sits behind `ROVER_HTTP_TOKEN`. See [`[http]`](/docs/configuration#http) for the config block and [Deployment](/docs/deployment) for the container setup, request-size limits, and the security posture of running this exposed on a network.
 
 ## `rover cache`
 

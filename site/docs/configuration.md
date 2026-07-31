@@ -110,6 +110,19 @@ The CLI (`rover fetch`) always revalidates synchronously, regardless of the wind
 | `heartbeat_interval` | duration | `"5s"` | Per-task heartbeat write cadence. Must be `> 0`. |
 | `reap_threshold` | duration | `"60s"` | If a task hasn't heartbeat within this window, its owning process is considered dead and the task is marked `failed`. Must be `> 0`. |
 
+## `[http]`
+
+Consulted only by `rover mcp --http`; the stdio transport ignores it entirely. See [`rover mcp --http`](/docs/cli) for the flags and endpoints, and [Deployment](/docs/deployment) for running it in a container.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `bind` | string | `"127.0.0.1:7683"` | Listen address. Overridden by `ROVER_HTTP_BIND`, then `--bind`. |
+| `allowed_hosts` | `array<string>` | `[]` | Inbound `Host` allow-list. `[]` derives from the bind: a loopback bind enforces `localhost` / `127.0.0.1` / `::1`; a non-loopback bind disables the check, since Host validation defends a browser-reachable localhost service against DNS rebinding, and a deliberately exposed port has nothing for it to protect. `["*"]` disables it explicitly regardless of bind. Any other list is used verbatim. |
+| `allowed_origins` | `array<string>` | `[]` | Browser `Origin` allow-list. Empty disables Origin validation. |
+| `allow_server_paths` | bool | `false` | Permit `tables.mode = "csv_file"` and `images.mode = "download"` over HTTP. Both write to Rover's own filesystem and return an absolute path a remote caller can't read — only correct when client and server share a volume at identical paths. |
+
+The bearer token has no config key. Set `ROVER_HTTP_TOKEN` in the environment; unset means every request is accepted unauthenticated. Generate one with `openssl rand -hex 32` — see [Deployment](/docs/deployment) for why that matters more here than for most tokens.
+
 ## `[output]`
 
 | Key | Type | Default | Description |
@@ -284,10 +297,11 @@ When the `[backends]` map is empty, Rover installs an implicit `default` extract
 | `ROVER_CONFIG` | config file path | Overrides the default config location for every subcommand when no `--config` is passed. |
 | `ROVER_DATA_DIR` | data dir (cache db, downloads) | |
 | `ROVER_OUTPUT_DIR` | `output.dir` | |
+| `ROVER_HTTP_BIND` | `http.bind` | Only consulted by `rover mcp --http`; overridden in turn by `--bind`. |
 | `ROVER_LOG_LEVEL` | `debug.log_level` | |
 | `RUST_LOG` | tracing filter | Takes precedence over `debug.log_level`. |
 
-`rover config show` annotates every leaf with its effective source: `defaults`, `file`, or `env`. Only the 45 leaves listed by `provenance::known_leaves()` are tracked, and coverage varies by section rather than being all-or-nothing. Two dynamic sections — the free-form `[backends.<name>]` and `[captioners.<name>]` maps — are entirely untracked, and so is all of `[prompt_injection]`. A few other sections track their primary knobs but omit some secondary ones: `cache` omits `stale_while_revalidate_window` and `override_no_store_domains`; `rate_limit` omits `initial_backoff`, `max_backoff`, `retry_after_ceiling`, `jitter_seed`, and `deferred_retry_threshold_secs`; `robots` omits `ignore_domains`. `headless` is the sparsest: it tracks only 2 of its 12 keys (`max_concurrent`, `chrome_executable`) and omits the other 10 — `auto_detect_spa`, `default_wait`, `timeout_secs`, `launch_delay_secs`, and all six `block_*` toggles (`block_images`, `block_fonts`, `block_media`, `block_css`, `block_third_party`, `block_service_workers`). Every other section above — `fetch`, `ssrf`, `tokenizer`, `mcp`, `output`, `summarization` (including `summarization.tables`), `image_captions` (including `image_captions.cache`), and `debug` — is tracked in full.
+`rover config show` annotates every leaf with its effective source: `defaults`, `file`, or `env`. Only the 45 leaves listed by `provenance::known_leaves()` are tracked, and coverage varies by section rather than being all-or-nothing. Two dynamic sections — the free-form `[backends.<name>]` and `[captioners.<name>]` maps — are entirely untracked, and so is all of `[prompt_injection]`. A few other sections track their primary knobs but omit some secondary ones: `cache` omits `stale_while_revalidate_window` and `override_no_store_domains`; `rate_limit` omits `initial_backoff`, `max_backoff`, `retry_after_ceiling`, `jitter_seed`, and `deferred_retry_threshold_secs`; `robots` omits `ignore_domains`. `headless` is the sparsest: it tracks only 2 of its 12 keys (`max_concurrent`, `chrome_executable`) and omits the other 10 — `auto_detect_spa`, `default_wait`, `timeout_secs`, `launch_delay_secs`, and all six `block_*` toggles (`block_images`, `block_fonts`, `block_media`, `block_css`, `block_third_party`, `block_service_workers`). Every other section above — `fetch`, `ssrf`, `tokenizer`, `mcp`, `http`, `output`, `summarization` (including `summarization.tables`), `image_captions` (including `image_captions.cache`), and `debug` — is tracked in full.
 
 ## Worked example
 
