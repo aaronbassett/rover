@@ -44,6 +44,13 @@ pub enum McpError {
 
     #[error("summarizer error: {0}")]
     Summarizer(#[from] crate::summarizer::SummarizerError),
+
+    #[error(
+        "`{mode}` writes files to the server's filesystem and returns absolute paths, which a \
+         remote HTTP caller cannot read. Use a different mode, or mount the same volume at the \
+         same path in both containers and set `[http] allow_server_paths = true`."
+    )]
+    ServerPathModeUnavailable { mode: &'static str },
 }
 
 impl McpError {
@@ -78,6 +85,9 @@ impl McpError {
                 RoverError::new(RoverError::TOO_MANY_URLS, self.to_string())
             }
             Self::EmptyUrlList => RoverError::new(RoverError::EMPTY_URL_LIST, self.to_string()),
+            Self::ServerPathModeUnavailable { .. } => {
+                RoverError::new(RoverError::INVALID_ARGS, self.to_string())
+            }
             Self::Tokenizer(e) => match e {
                 TokenizerError::UnknownFamily(name) => RoverError::new(
                     RoverError::INVALID_ARGS,

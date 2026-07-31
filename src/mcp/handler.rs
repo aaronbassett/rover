@@ -44,10 +44,7 @@ pub struct RoverHandler {
     /// `moderate` output level with methods 1+2 active.
     pub(crate) guard: std::sync::Arc<crate::guard::Guard>,
     /// Which transport this handler is serving. Path-emitting tool modes are
-    /// refused over HTTP; see `tools/fetch.rs`. Unread until that refusal
-    /// lands, so `#[allow(dead_code)]` keeps `warnings = deny` happy in the
-    /// meantime.
-    #[allow(dead_code)]
+    /// refused over HTTP; see `reject_server_path_modes` in `tools/fetch.rs`.
     pub(crate) transport: crate::mcp::TransportKind,
     /// M9 fix C1: lazily-initialized headless renderer. The handler owns a
     /// shared `OnceCell` so the first call requesting `headless.mode = On`
@@ -233,6 +230,7 @@ fn into_error_data(err: crate::mcp::error::McpError) -> ErrorData {
             | McpError::InvalidUrl(_)
             | McpError::TooManyUrls { .. }
             | McpError::EmptyUrlList
+            | McpError::ServerPathModeUnavailable { .. }
             | McpError::Summarizer(
                 crate::summarizer::SummarizerError::NoSuchBackend { .. }
                     | crate::summarizer::SummarizerError::InvalidRequest { .. }

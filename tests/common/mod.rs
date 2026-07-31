@@ -96,26 +96,27 @@ pub async fn spawn_client_with_config(
     spawn_client(data_dir).await
 }
 
-/// Build an `HttpState` for router-level tests, bound to a caller-chosen
-/// address. `token` of `None` means no bearer auth. Uses a real on-disk `Db`
-/// in `data_dir` and an offline extractive summarizer so nothing touches the
-/// network.
-///
-/// Most tests want [`http_state`] instead, which fixes `bind` to a
-/// non-loopback placeholder that disables rmcp's `Host` allow-list
-/// entirely. Call this directly when a test needs the allow-list itself
-/// under test — e.g. a loopback bind, where `resolve_allowed_hosts` derives
-/// rmcp's real loopback list and a disallowed `Host` header must 403.
-pub async fn http_state_with_bind(
+/// Shared builder behind [`http_state_with_bind`] and [`http_state_with`].
+/// Uses a real on-disk `Db` in `data_dir` and an offline extractive
+/// summarizer so nothing touches the network, and installs the given
+/// `http_cfg` on the handler's `Arc<Config>` — not just on `HttpState` —
+/// since `RoverHandler::fetch_inner`'s server-path guard reads
+/// `self.config.http.allow_server_paths` from that `Arc`, not from
+/// `HttpState`.
+async fn build_http_state(
     data_dir: &Path,
     token: Option<&str>,
     bind: SocketAddr,
+    http_cfg: rover::config::HttpConfig,
 ) -> rover::mcp::http::HttpState {
     seed_default_tokenizer(data_dir);
     let db = rover::storage::Db::open(data_dir.join("rover.db"))
         .await
         .expect("open db");
-    let config = std::sync::Arc::new(rover::config::Config::default());
+    let config = std::sync::Arc::new(rover::config::Config {
+        http: http_cfg,
+        ..Default::default()
+    });
     let summarizer = make_summarizer_service(&db).await;
     let client =
         rover::fetcher::client::build_http_client(&config.fetch.user_agent, config.fetch.timeout());
@@ -140,6 +141,35 @@ pub async fn http_state_with_bind(
     rover::mcp::http::HttpState::new(handler, db, token, &config.http, bind)
 }
 
+/// Build an `HttpState` for router-level tests, bound to a caller-chosen
+/// address, with a default `HttpConfig`. `token` of `None` means no bearer
+/// auth.
+///
+/// Most tests want [`http_state`] instead, which fixes `bind` to a
+/// non-loopback placeholder that disables rmcp's `Host` allow-list
+/// entirely. Call this directly when a test needs the allow-list itself
+/// under test — e.g. a loopback bind, where `resolve_allowed_hosts` derives
+/// rmcp's real loopback list and a disallowed `Host` header must 403.
+pub async fn http_state_with_bind(
+    data_dir: &Path,
+    token: Option<&str>,
+    bind: SocketAddr,
+) -> rover::mcp::http::HttpState {
+    build_http_state(data_dir, token, bind, rover::config::HttpConfig::default()).await
+}
+
+/// [`http_state`] with a caller-supplied `HttpConfig` — e.g. to set
+/// `allow_server_paths = true` and verify a call that would otherwise be
+/// refused now goes through. Binds to the same `0.0.0.0:0` placeholder as
+/// [`http_state`], so Host validation stays disabled.
+pub async fn http_state_with(
+    data_dir: &Path,
+    token: Option<&str>,
+    http_cfg: rover::config::HttpConfig,
+) -> rover::mcp::http::HttpState {
+    build_http_state(data_dir, token, "0.0.0.0:0".parse().unwrap(), http_cfg).await
+}
+
 /// [`http_state_with_bind`] with a NON-loopback bind, on purpose.
 /// `resolve_allowed_hosts` derives the loopback allow-list from a loopback
 /// bind, and rmcp then rejects any request whose `Host` header isn't in that
@@ -150,7 +180,7 @@ pub async fn http_state_with_bind(
 /// the enforcement itself by `http_state_with_bind` callers that pass a
 /// loopback address, and the real-socket case by Task 9.
 pub async fn http_state(data_dir: &Path, token: Option<&str>) -> rover::mcp::http::HttpState {
-    http_state_with_bind(data_dir, token, "0.0.0.0:0".parse().unwrap()).await
+    http_state_with(data_dir, token, rover::config::HttpConfig::default()).await
 }
 
 /// A minimal, well-formed MCP request with the headers rmcp requires.
