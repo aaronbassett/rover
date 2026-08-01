@@ -19,7 +19,7 @@ Global flags:
 | --- | --- |
 | `--config <path>` | Load this TOML file for the invocation. The file must exist. |
 
-Every subcommand — `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — resolves the same config file. With `--config <path>`, Rover loads that file and errors if it is missing. Without it, Rover loads the default config: the file named by `ROVER_CONFIG` if set, otherwise the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) or a project-local `./rover.toml`, whichever exists first. If none exists, built-in defaults apply. A file written by `rover config set` is therefore picked up by `rover fetch` and `rover mcp` without passing `--config`.
+Every subcommand — `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — resolves the same config file. With `--config <path>`, Rover loads that file and errors if it is missing. Without it: if `ROVER_CONFIG` is set to a non-empty value, Rover treats it exactly like `--config` — that file must exist and parse, or Rover fails loudly (an explicit redirect never silently falls back). With `ROVER_CONFIG` unset or empty, Rover searches the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) then a project-local `./rover.toml`, loading the first that exists; if none exists, built-in defaults apply. A file written by `rover config set` is therefore picked up by `rover fetch` and `rover mcp` without passing `--config`.
 
 ```sh
 rover config set ssrf.level loopback   # writes ~/.config/rover/rover.toml
@@ -84,9 +84,44 @@ The body is replaced with the summary, then `--max-tokens` applies on top if set
 rover mcp [--ignore-robots]
           [--rate-limit-rpm <N>] [--per-host-concurrency <N>]
           [--global-concurrency <N>] [--max-retries <N>]
+          [--http [--bind <ADDR>]]
 ```
 
 Starts the MCP server over stdio. Takes the same `--rate-limit-*` and `--ignore-robots` overrides as `fetch`, applied for the lifetime of the server rather than a single request. Loads the resolved default config (or `--config <path>`) at startup, like every other subcommand. See [MCP tools](/docs/mcp-tools) for the tool surface it exposes.
+
+### `rover mcp --http`
+
+Serve MCP over Streamable HTTP instead of stdio, so multiple agents can share one running instance and its cache.
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--http` | off | Selects the HTTP transport. Not feature-gated — every build has it. |
+| `--bind <ADDR>` | `[http] bind` | Requires `--http`. Overrides `ROVER_HTTP_BIND` and `[http] bind`. |
+
+Bind resolution: `--bind` → `ROVER_HTTP_BIND` → `[http] bind` → `127.0.0.1:7683`.
+
+| Endpoint | Behaviour |
+| --- | --- |
+| `POST /mcp` | The JSON-RPC endpoint. Stateless, JSON responses only — Rover sends no server-initiated messages, so SSE framing has nothing to carry. |
+| `GET /healthz` | Liveness. `200` with the running Rover version. |
+| `GET /readyz` | Readiness. Opens the cache database; `200` if it answers, `503` if it doesn't. |
+
+Neither health endpoint sits behind `ROVER_HTTP_TOKEN`. See [`[http]`](/docs/configuration#http) for the config block and [Deployment](/docs/deployment) for the container setup, request-size limits, and the security posture of running this exposed on a network.
+
+`POST /mcp` requires `Content-Type: application/json` and an `Accept` header listing **both** `application/json` and `text/event-stream` — send `Accept: application/json, text/event-stream` even though only JSON ever comes back; rmcp 406s a request that advertises only one.
+
+Status codes, beyond the `200`/`503` above, are all transport-level — a tool-call failure is a JSON-RPC error inside a `200`, never one of these:
+
+| Status | Cause |
+| --- | --- |
+| `401` | Missing or wrong bearer token. |
+| `403` | `Host` or `Origin` failed validation. |
+| `405` | `GET` or `DELETE /mcp` — only `POST` is served. |
+| `406` | `Accept` doesn't list both `application/json` and `text/event-stream`. |
+| `413` | Body over 16 MiB with a `Content-Length` header present. See [Deployment](/docs/deployment#request-limits) for the no-`Content-Length` case, which isn't `413`. |
+| `415` | `Content-Type` isn't `application/json`, or the body fails to deserialise. |
+
+With `ROVER_HTTP_TOKEN` set, every unrouted path — including `/healthz/` or `/readyz/` with a trailing slash, which are different, unrouted paths, not the same endpoint with looser matching — returns `401`, not `404`: the auth layer wraps the fallback too. Without a token, unrouted paths `404` normally.
 
 ## `rover cache`
 
@@ -201,6 +236,7 @@ Settable keys:
 - `headless.max_concurrent`, `headless.chrome_executable`
 - `image_captions.default`, `image_captions.max_tokens`, `image_captions.max_per_page`, `image_captions.min_width`, `image_captions.min_height`, `image_captions.max_bytes`
 - `image_captions.cache.enabled`, `image_captions.cache.ttl`, `image_captions.cache.restrict_to`, `image_captions.cache.store_raw_image`
+- `http.bind`, `http.allow_server_paths`
 
 Examples:
 

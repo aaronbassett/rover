@@ -3,7 +3,7 @@
 //! `batch_fetch`, `retry`, and `revalidate` all need the same HTTP client +
 //! pacer + four config blocks + SSRF level. The original M6 implementation
 //! defined three byte-identical structs (`BatchDeps`/`RetryDeps`/`RevalidateDeps`);
-//! collapsing them into one keeps the three-clone wiring in `mcp::server`
+//! collapsing them into one keeps the three-clone wiring in `mcp::runtime`
 //! honest and saves three identical test-fixture helpers.
 
 use std::path::PathBuf;

@@ -320,6 +320,31 @@ pub enum HeadlessModeWire {
     Auto,
 }
 
+/// Refuse tool modes that write files and return absolute server-side paths
+/// when the caller is remote. Called before any network or tokenizer work so
+/// a refusal is free and needs no I/O.
+fn reject_server_path_modes(
+    args: &FetchArgs,
+    transport: crate::mcp::TransportKind,
+    allow_server_paths: bool,
+) -> Result<(), McpError> {
+    if transport != crate::mcp::TransportKind::Http || allow_server_paths {
+        return Ok(());
+    }
+    if matches!(tables_mode(args.tables.as_ref())?, TablesMode::CsvFile) {
+        return Err(McpError::ServerPathModeUnavailable {
+            mode: "tables.mode = csv_file",
+        });
+    }
+    let (images, _) = images_mode(args.images.as_ref())?;
+    if matches!(images, ImagesMode::Download) {
+        return Err(McpError::ServerPathModeUnavailable {
+            mode: "images.mode = download",
+        });
+    }
+    Ok(())
+}
+
 fn tables_mode(arg: Option<&TablesArg>) -> Result<TablesMode, McpError> {
     Ok(match arg {
         None | Some(TablesArg::Embed) => TablesMode::Embed,
@@ -491,6 +516,8 @@ impl RoverHandler {
     /// Tool body, decoupled from the `#[tool]` macro for unit testing.
     /// Task 11 wires this into the router; here it's a plain async method.
     pub async fn fetch_inner(&self, args: FetchArgs) -> Result<FetchOutput, McpError> {
+        reject_server_path_modes(&args, self.transport, self.config.http.allow_server_paths)?;
+
         let url = Url::parse(&args.url).map_err(|e| McpError::InvalidUrl(e.to_string()))?;
         if matches!(args.max_tokens, Some(0)) {
             return Err(McpError::InvalidArgs(

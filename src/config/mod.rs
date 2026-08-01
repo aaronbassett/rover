@@ -51,6 +51,9 @@ pub struct Config {
     pub mcp: McpConfig,
 
     #[serde(default)]
+    pub http: HttpConfig,
+
+    #[serde(default)]
     pub output: OutputConfig,
 
     #[serde(default)]
@@ -273,6 +276,48 @@ fn default_heartbeat_interval() -> Duration {
 
 fn default_reap_threshold() -> Duration {
     Duration::from_secs(60)
+}
+
+/// HTTP transport settings. Topology only — the bearer token is
+/// environment-only (`ROVER_HTTP_TOKEN`) and deliberately has no key here,
+/// so a live credential never sits in a file people paste into issues.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpConfig {
+    /// Listen address. Overridden by `ROVER_HTTP_BIND`, then `--bind`.
+    #[serde(default = "default_http_bind")]
+    pub bind: String,
+
+    /// Inbound `Host` allow-list. `[]` derives from the bind (loopback →
+    /// rmcp's loopback list, non-loopback → disabled); `["*"]` disables
+    /// explicitly; any other non-empty list is used verbatim.
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+
+    /// Browser `Origin` allow-list. Empty disables Origin validation.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+
+    /// Permit tool modes that emit server-side filesystem paths
+    /// (`tables.mode = "csv_file"`, `images.mode = "download"`) over HTTP.
+    /// Only correct when client and server share a volume at identical paths.
+    #[serde(default)]
+    pub allow_server_paths: bool,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            bind: default_http_bind(),
+            allowed_hosts: Vec::new(),
+            allowed_origins: Vec::new(),
+            allow_server_paths: false,
+        }
+    }
+}
+
+fn default_http_bind() -> String {
+    "127.0.0.1:7683".to_string()
 }
 
 /// Output configuration. When `dir` is `None`, `ROVER_OUTPUT_DIR` (if set)
@@ -1029,29 +1074,98 @@ pub fn resolve_existing_config_path() -> Option<PathBuf> {
     config_candidates().into_iter().find(|p| p.is_file())
 }
 
+/// Where the "active" config file is, and what a missing/unreadable file
+/// there is allowed to mean. The one thing every caller of this must get
+/// right: [`Explicit`](ConfigLocation::Explicit) means a read failure is a
+/// loud error, never a silent fallback to defaults — that's the whole
+/// contract `--config` and a non-empty `ROVER_CONFIG` share. Shared by
+/// [`load_resolved`] and by `rover config show` / `set`
+/// (`src/cli/config.rs`) so all three agree on both the path AND on what a
+/// failure to read it means; before this type existed, `config show`/`set`
+/// called [`resolve_existing_config_path`] directly and silently diverged
+/// from `load_resolved`'s fail-loudly contract — `config show` in
+/// particular would print `# defaults | file (<path that was never read>)`,
+/// actively misleading given that reporting provenance is its entire job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigLocation {
+    /// `--config`, or `ROVER_CONFIG` set to a non-empty value. The caller
+    /// MUST treat a missing or unreadable file at `path` as a hard error.
+    /// `source` is `"--config"` or `"ROVER_CONFIG"`, for logging only.
+    Explicit { path: PathBuf, source: &'static str },
+    /// Found via [`resolve_existing_config_path`]'s platform-config-dir-
+    /// then-`./rover.toml` search. The file exists at resolution time; a
+    /// caller MAY still treat a later read failure as an error (TOCTOU), but
+    /// its ABSENCE is not this variant — that's [`ConfigLocation::None`].
+    Found(PathBuf),
+    /// No explicit redirect and nothing found by the search. Built-in
+    /// defaults are the correct, expected outcome — there is no file to
+    /// fail to read. [`default_config_path`] names where one would be
+    /// created, for display or for `config set`'s create-on-first-write.
+    None,
+}
+
+/// Resolve where the active config file is, applying the same "explicit
+/// redirect must exist" contract [`load_resolved`] uses. `explicit` is the
+/// `--config` CLI flag; when absent, a non-empty `ROVER_CONFIG` is the next
+/// explicit source, then the platform-config-dir-then-`./rover.toml` search.
+///
+/// Empty `ROVER_CONFIG` is treated as unset, not as an explicit redirect to
+/// nowhere — the same convention `ROVER_DATA_DIR` (`src/paths.rs`) and
+/// `ROVER_HTTP_BIND` (`src/cli/mcp.rs`) already use, since `VAR: ${VAR:-}`
+/// is a common shell/CI/compose idiom for "unset unless overridden".
+pub fn resolve_config_location(explicit: Option<&Path>) -> ConfigLocation {
+    if let Some(path) = explicit {
+        return ConfigLocation::Explicit {
+            path: path.to_path_buf(),
+            source: "--config",
+        };
+    }
+    if let Ok(rover_config) = std::env::var("ROVER_CONFIG")
+        && !rover_config.is_empty()
+    {
+        return ConfigLocation::Explicit {
+            path: PathBuf::from(rover_config),
+            source: "ROVER_CONFIG",
+        };
+    }
+    match resolve_existing_config_path() {
+        Some(path) => ConfigLocation::Found(path),
+        None => ConfigLocation::None,
+    }
+}
+
 /// Load the effective config, resolving the default path when `--config` is
 /// absent.
 ///
-/// - `Some(path)`: an explicitly requested file. It MUST exist and parse — a
-///   typo in `--config` fails loudly rather than silently falling back to
-///   defaults.
-/// - `None`: search the default candidates (`ROVER_CONFIG`, then the platform
-///   config dir, then `./rover.toml`) and load the first that exists; if none
-///   exists, fall back to built-in defaults (the config file is optional).
+/// - `Some(path)`, or `None` with `ROVER_CONFIG` set to a non-empty value:
+///   an explicit redirect. It MUST exist and parse — a typo fails loudly
+///   rather than silently falling back to defaults. This matters in
+///   practice: a container that bind-mounts a config file from a host path
+///   which doesn't exist gets a *directory* at that mount point instead of a
+///   missing file (Docker's behaviour, not Rover's), and treating that the
+///   same as "no config configured" would silently apply built-in defaults
+///   while the operator's `[http]`/`[ssrf]` settings never take effect.
+/// - Otherwise: search the platform config dir then `./rover.toml`, and
+///   load the first that exists; if none exists, fall back to built-in
+///   defaults (the config file is optional).
+///
+/// See [`ConfigLocation`] and [`resolve_config_location`] for the shared
+/// resolution logic (also used by `rover config show` / `set`) and the full
+/// empty-`ROVER_CONFIG` rationale.
 ///
 /// Runtime subcommands call this instead of [`load`] so a saved config file is
 /// honored without requiring `--config` on every invocation.
 pub fn load_resolved(explicit: Option<&Path>) -> Result<Config, ConfigError> {
-    if let Some(path) = explicit {
-        tracing::debug!(path = %path.display(), "loading config from --config");
-        return load(Some(path));
-    }
-    match resolve_existing_config_path() {
-        Some(path) => {
+    match resolve_config_location(explicit) {
+        ConfigLocation::Explicit { path, source } => {
+            tracing::debug!(path = %path.display(), source, "loading config from an explicit redirect");
+            load(Some(&path))
+        }
+        ConfigLocation::Found(path) => {
             tracing::debug!(path = %path.display(), "loading config from resolved default path");
             load(Some(&path))
         }
-        None => {
+        ConfigLocation::None => {
             tracing::debug!("no config file found at any default path; using built-in defaults");
             Ok(Config::default())
         }
@@ -1145,10 +1259,23 @@ fn validate(cfg: &mut Config) -> Result<(), String> {
     Ok(())
 }
 
+/// Serialises `ROVER_CONFIG` env mutation across every test in the `--lib`
+/// binary that touches it — not just within this file. `cargo test --lib`
+/// runs every unit test in one process across many threads, so a lock local
+/// to one module protects nothing against a test in a DIFFERENT module
+/// mutating the same env var concurrently; `src/cli/config.rs`'s test
+/// module reaches this same static for exactly that reason. Same
+/// convention as `src/paths.rs`'s module-local `ENV_LOCK` for
+/// `ROVER_DATA_DIR`, which only ever needed to guard one file.
+#[cfg(test)]
+pub(crate) static ROVER_CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    use super::ROVER_CONFIG_ENV_LOCK as ENV_LOCK;
 
     #[test]
     fn apply_overrides_clamps_concurrency_minimum() {
@@ -2000,6 +2127,68 @@ level = true
     fn load_resolved_falls_back_to_defaults_when_nothing_resolves() {
         let cfg = load_resolved_from(None, None).unwrap();
         assert_eq!(cfg.fetch.timeout_secs, default_timeout_secs());
+    }
+
+    /// `ROVER_CONFIG` is an explicit redirect exactly like `--config`:
+    /// pointing it at a path that isn't a readable file must fail loudly,
+    /// never silently fall back to built-in defaults. A directory at that
+    /// path is the specific shape this guards — it's what Docker leaves
+    /// behind when a bind-mount source doesn't exist on the host (see
+    /// `docker-compose.yml` / `rover.toml.example`), and before this fix
+    /// `resolve_existing_config_path`'s `.is_file()` filter silently
+    /// treated that identically to "no config configured".
+    #[test]
+    fn load_resolved_fails_loudly_when_rover_config_env_is_unreadable() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_not_a_file = tmp.path().join("rover.toml");
+        std::fs::create_dir_all(&dir_not_a_file).unwrap();
+
+        // SAFETY: `_guard` (`ROVER_CONFIG_ENV_LOCK`) serialises this against
+        // every other test in the `--lib` binary that touches
+        // `ROVER_CONFIG` — see the other test below, and
+        // `src/cli/config.rs`'s test module, which reaches the same lock.
+        unsafe { std::env::set_var("ROVER_CONFIG", &dir_not_a_file) };
+        let result = load_resolved(None);
+        unsafe { std::env::remove_var("ROVER_CONFIG") };
+
+        assert!(
+            matches!(result, Err(ConfigError::Read { .. })),
+            "expected a loud Read error for a directory at the ROVER_CONFIG \
+             path, got: {result:?}"
+        );
+    }
+
+    /// `ROVER_CONFIG: ${ROVER_CONFIG:-}` is a common shell/CI/compose idiom
+    /// for "unset unless overridden" — a compose file that writes
+    /// `ROVER_CONFIG: ${ROVER_CONFIG:-}` into the container environment
+    /// sets the variable to an empty string, not unset. This pins that
+    /// case: it must NOT take the "explicit redirect" branch (which would
+    /// try to read a config file at the empty path and hard-error with
+    /// `failed to read config at : No such file or directory`), regardless
+    /// of what the search-then-default fallback actually resolves to on
+    /// this machine — that part is already covered by
+    /// `load_resolved_loads_resolved_default_when_no_explicit` and
+    /// `load_resolved_falls_back_to_defaults_when_nothing_resolves` via the
+    /// environment-independent `load_resolved_from` core. The regression
+    /// this guards is specifically "empty must not error", so asserting
+    /// `Ok(_)` — not a specific resolved `Config` — is the correct,
+    /// environment-independent scope for this test.
+    #[test]
+    fn load_resolved_treats_empty_rover_config_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        // SAFETY: see `_guard` above.
+        unsafe { std::env::set_var("ROVER_CONFIG", "") };
+        let result = load_resolved(None);
+        unsafe { std::env::remove_var("ROVER_CONFIG") };
+
+        assert!(
+            result.is_ok(),
+            "an empty ROVER_CONFIG must be treated as unset and fall through \
+             to the search-then-default behaviour, not hard-error — got: \
+             {result:?}"
+        );
     }
 
     #[test]

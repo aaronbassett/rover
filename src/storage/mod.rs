@@ -49,7 +49,7 @@ pub struct Db {
 
 impl Db {
     /// Install the scheduler-bound new-task notifier. Called once, after the
-    /// scheduler channel exists, by `mcp::server::serve_stdio`.
+    /// scheduler channel exists, by `mcp::runtime::build_runtime`.
     pub fn set_new_task_sender(&self, tx: NewTaskNotify) {
         *self.new_task_tx.lock().expect("new_task_tx mutex poisoned") = Some(tx);
     }

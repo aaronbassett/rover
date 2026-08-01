@@ -169,6 +169,14 @@ struct McpArgs {
     /// Override [rate_limit] max_retries.
     #[arg(long)]
     max_retries: Option<u8>,
+
+    /// Serve MCP over Streamable HTTP instead of stdio.
+    #[arg(long)]
+    http: bool,
+
+    /// Listen address for --http. Overrides ROVER_HTTP_BIND and [http] bind.
+    #[arg(long, requires = "http")]
+    bind: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -235,7 +243,8 @@ struct DoctorArgs {
 
 /// Build a `SummarizerService` for CLI subcommands that need it.
 ///
-/// The MCP server builds its own service inside `serve_stdio`; this helper
+/// The MCP server builds its own service inside `build_runtime`
+/// (`src/mcp/runtime.rs`); this helper
 /// exists for CLI paths (e.g. a future `rover fetch --summarize`) so the
 /// construction stays in one place. Currently unused outside the MCP path —
 /// `#[allow(dead_code)]` keeps `warnings = deny` happy until M7's CLI
@@ -463,6 +472,8 @@ impl McpArgs {
             per_host_concurrency: self.per_host_concurrency,
             global_concurrency: self.global_concurrency,
             max_retries: self.max_retries,
+            http: self.http,
+            bind: self.bind,
         }
     }
 }

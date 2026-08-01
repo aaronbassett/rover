@@ -102,6 +102,26 @@ pub fn known_leaves() -> &'static [&'static str] {
         "debug.har_path",
         "debug.har_body_cap",
         "debug.log_level",
+        "http.bind",
+        "http.allowed_hosts",
+        "http.allowed_origins",
+        "http.allow_server_paths",
+        "mcp.heartbeat_interval",
+        "mcp.reap_threshold",
+        "rate_limit.max_retries",
+        "robots.failure_ttl",
+        "headless.max_concurrent",
+        "headless.chrome_executable",
+        "image_captions.default",
+        "image_captions.max_tokens",
+        "image_captions.max_per_page",
+        "image_captions.min_width",
+        "image_captions.min_height",
+        "image_captions.max_bytes",
+        "image_captions.cache.enabled",
+        "image_captions.cache.ttl",
+        "image_captions.cache.restrict_to",
+        "image_captions.cache.store_raw_image",
     ]
 }
 
@@ -110,6 +130,7 @@ pub fn env_overrides() -> &'static [(&'static str, &'static str)] {
     &[
         ("debug.log_level", "ROVER_LOG_LEVEL"),
         ("output.dir", "ROVER_OUTPUT_DIR"),
+        ("http.bind", "ROVER_HTTP_BIND"),
     ]
 }
 

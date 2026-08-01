@@ -67,6 +67,7 @@ jobs:
         run: |
           cargo test --features test-loopback \
             --test cli_batch_snapshot \
+            --test cli_config \
             --test cross_process_notify \
             --test extractor_images \
             --test extractor_images_ssrf \
@@ -86,6 +87,10 @@ jobs:
             --test mcp_count_tokens_estimates \
             --test mcp_fetch_caption_override \
             --test mcp_get_metadata \
+            --test mcp_http_allow_server_paths \
+            --test mcp_http_auth \
+            --test mcp_http_transport \
+            --test mcp_stdio_path_modes \
             --test mcp_summarize \
             --test meta_hook \
             --test meta_use \
@@ -119,3 +124,43 @@ jobs:
       # `cargo check`, not `cargo test`: the MSRV contract is "the code
       # compiles on 1.96.0", not "the environment-dependent tests pass".
       - run: cargo check --all-targets --features test-loopback
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the server image
+        run: docker build -t rover:ci .
+      - name: Smoke-test the health probes
+        run: |
+          docker run --rm -d --name rover-ci -p 7683:7683 \
+            -e ROVER_HTTP_TOKEN=ci-token-with-enough-entropy rover:ci
+          for i in $(seq 1 30); do
+            if curl -fsS localhost:7683/healthz; then break; fi
+            sleep 2
+          done
+          curl -fsS localhost:7683/healthz
+          curl -fsS localhost:7683/readyz
+      - name: Smoke-test /mcp requires the configured token
+        # Guards against exactly the gap `tests/mcp_http_parity.rs`'s
+        # `spawned_server_enforces_the_configured_token` covers for a
+        # subprocess-spawned binary: this job builds and runs the actual
+        # container image with ROVER_HTTP_TOKEN set, but previously only
+        # ever probed the deliberately-unauthenticated /healthz and
+        # /readyz — so a real container shipping with auth broken wide
+        # open would have passed this job identically.
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST localhost:7683/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"ping"}')
+          echo "status: $status"
+          if [ "$status" != "401" ]; then
+            echo "::error::expected 401 for /mcp with no Authorization header against a container built with ROVER_HTTP_TOKEN set, got $status"
+            exit 1
+          fi
+      - name: Stop the container
+        if: always()
+        run: docker rm -f rover-ci

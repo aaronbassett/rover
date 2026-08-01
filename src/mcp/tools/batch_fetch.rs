@@ -4,7 +4,7 @@
 //! `batch_fetch` task carrying serialised `BatchFetchParams`, and returns
 //! the immediate `TaskCreatedResponse` envelope. The scheduler is notified
 //! by the storage layer itself — see `storage::tasks::insert` and the
-//! bridge installed in `mcp::server::serve_stdio`. SSRF rejects pre-empt
+//! bridge installed in `mcp::runtime::build_runtime`. SSRF rejects pre-empt
 //! the task insert.
 
 use schemars::JsonSchema;
@@ -79,7 +79,7 @@ impl RoverHandler {
         )
         .await?;
         // Scheduler notification happens inside `storage::tasks::insert` via
-        // the Db-owned notifier installed by `mcp::server::serve_stdio`. No
+        // the Db-owned notifier installed by `mcp::runtime::build_runtime`. No
         // direct send from the tool layer.
         Ok(TaskCreatedResponse {
             task_id: id.as_str().to_string(),

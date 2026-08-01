@@ -40,6 +40,7 @@ async fn fixture_handler() -> (RoverHandler, Db) {
             rover::guard::Guard::from_config(&rover::config::Config::default().prompt_injection)
                 .unwrap(),
         ),
+        rover::mcp::TransportKind::Stdio,
         #[cfg(feature = "headless")]
         Arc::new(tokio::sync::OnceCell::new()),
     );

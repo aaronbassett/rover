@@ -1,0 +1,41 @@
+# Example config for `rover mcp --http` in the shipped `docker-compose.yml`.
+#
+# Copy this to `rover.toml` before your first `docker compose up` —
+# `docker-compose.yml` bind-mounts `./rover.toml:/config/rover.toml:ro`, and
+# if that source path doesn't exist, Docker silently creates a directory
+# there instead of failing. Rover then finds an unreadable, non-file
+# `ROVER_CONFIG` path, falls back to built-in defaults with no warning, and
+# the settings below never take effect:
+#
+#   cp rover.toml.example rover.toml
+#
+# `rover.toml` itself is gitignored — it's your local, possibly
+# environment-specific config, not something to commit. Every key here is
+# optional; see https://rover-fetch.com/docs/configuration for the full
+# reference.
+
+[http]
+# `bind` is set by the image's own CMD (`--bind 0.0.0.0:7683`) and by
+# `ROVER_HTTP_BIND` if you override it — this key is listed for completeness
+# and rarely needs to change in the container.
+# bind = "0.0.0.0:7683"
+
+# Inbound `Host` allow-list. `[]` (the default) auto-derives from the bind:
+# a non-loopback bind like the container's disables the check entirely,
+# since Host validation defends a browser-reachable localhost service
+# against DNS rebinding, and a deliberately exposed port has nothing for it
+# to protect. Uncomment to pin it to the compose service name instead:
+# allowed_hosts = ["rover:7683"]
+
+# Set true only when the client container mounts the SAME volume at the
+# SAME path as this one — otherwise leave it false. See the "Server-side
+# paths" section in the deployment docs before touching this.
+allow_server_paths = false
+
+[ssrf]
+# `strict` (the default) is public IPs only — the right posture for a
+# service other containers on this network can call. Only widen this if you
+# understand that a public bind with no ROVER_HTTP_TOKEN AND ssrf.level =
+# "lan" or "none" turns Rover into an unauthenticated internal-network fetch
+# proxy (Rover logs a startup warning naming this exact condition).
+level = "strict"

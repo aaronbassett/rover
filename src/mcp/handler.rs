@@ -20,7 +20,7 @@ use crate::storage::Db;
 ///
 /// Note: this struct no longer carries its own scheduler `Sender`. Every
 /// `storage::tasks::insert` call notifies the scheduler via the `Db`-owned
-/// notifier installed by `mcp::server::serve_stdio`, so the MCP tool layer
+/// notifier installed by `mcp::runtime::build_runtime`, so the MCP tool layer
 /// has no extra wiring to do — it just inserts.
 #[derive(Clone)]
 pub struct RoverHandler {
@@ -43,11 +43,14 @@ pub struct RoverHandler {
     /// Prompt-injection guard. Always present; default config yields the
     /// `moderate` output level with methods 1+2 active.
     pub(crate) guard: std::sync::Arc<crate::guard::Guard>,
+    /// Which transport this handler is serving. Path-emitting tool modes are
+    /// refused over HTTP; see `reject_server_path_modes` in `tools/fetch.rs`.
+    pub(crate) transport: crate::mcp::TransportKind,
     /// M9 fix C1: lazily-initialized headless renderer. The handler owns a
     /// shared `OnceCell` so the first call requesting `headless.mode = On`
     /// (or `Auto` when the SPA heuristic triggers) pays the
     /// browser-launch cost; subsequent calls reuse the same `Arc<HeadlessRenderer>`.
-    /// `serve_stdio` keeps a clone for shutdown.
+    /// `Runtime` keeps a clone for shutdown.
     #[cfg(feature = "headless")]
     pub(crate) headless_renderer:
         Arc<tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>>,
@@ -67,6 +70,7 @@ impl RoverHandler {
         summarizer: Arc<crate::summarizer::SummarizerService>,
         captioners: Arc<crate::vlm::CaptionerRegistry>,
         guard: Arc<crate::guard::Guard>,
+        transport: crate::mcp::TransportKind,
         #[cfg(feature = "headless")] headless_renderer: Arc<
             tokio::sync::OnceCell<Arc<crate::fetcher::headless::HeadlessRenderer>>,
         >,
@@ -100,6 +104,7 @@ impl RoverHandler {
             summarizer,
             captioners,
             guard,
+            transport,
             #[cfg(feature = "headless")]
             headless_renderer,
             tool_router,
@@ -225,6 +230,7 @@ fn into_error_data(err: crate::mcp::error::McpError) -> ErrorData {
             | McpError::InvalidUrl(_)
             | McpError::TooManyUrls { .. }
             | McpError::EmptyUrlList
+            | McpError::ServerPathModeUnavailable { .. }
             | McpError::Summarizer(
                 crate::summarizer::SummarizerError::NoSuchBackend { .. }
                     | crate::summarizer::SummarizerError::InvalidRequest { .. }
