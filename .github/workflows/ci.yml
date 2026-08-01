@@ -240,6 +240,23 @@ jobs:
       - name: Build the headless image
         run: docker build --target runtime-headless -t rover:ci-headless .
 
+      # Rover itself under the profile. Without this the gate is asymmetric:
+      # the raw-Chromium probe below bypasses Rover via `--entrypoint`, and
+      # the negative probe asserts Rover *refuses*, so "Rover can never
+      # launch, on any input" satisfies both. Rover's Chrome is not the
+      # probe's — `--headless=new`, CDP request interception, an explicit
+      # `user_data_dir`, and real page loads spawning renderer/GPU/utility
+      # processes are all syscall surface `--dump-dom about:blank` never
+      # touches.
+      - name: Headless image renders WITH the profile
+        run: |
+          set -euo pipefail
+          out=$(docker run --rm --security-opt seccomp=./chrome.json --shm-size=1g \
+            rover:ci-headless doctor 2>&1); echo "$out"
+          echo "$out" | grep -qi "browser launched"
+
+      # Kept alongside the Rover run: it isolates Chromium from Rover, so
+      # when the pair disagrees you know which side broke.
       - name: Headless image renders with the sandbox enabled
         run: |
           set -euo pipefail
