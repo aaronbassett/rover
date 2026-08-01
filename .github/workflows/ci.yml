@@ -143,17 +143,37 @@ jobs:
         # symmetric difference touches only {clone, setns, unshare}.
         #
         # raw.githubusercontent.com is an external dependency outside this
-        # repo's control. Retried a few times, then downgraded to a
-        # non-blocking warning rather than failing the whole job on a
-        # transient network blip unrelated to this change — a real drift
-        # regression still fails loudly once the fetch succeeds.
+        # repo's control, and the two fetch-failure modes mean opposite
+        # things, so they are handled differently:
+        #
+        #   - Connection failure (curl exit non-zero; DNS, TLS, timeout,
+        #     reset) — a transient blip unrelated to this change. Warn and
+        #     pass; an outage should not block merges.
+        #   - Non-2xx HTTP response — the resource is gone or moved, so
+        #     chrome.json's stated provenance is now unverifiable and this
+        #     check would otherwise go dark permanently. moby moving this
+        #     file is the exact event that produced the Critical this check
+        #     exists to prevent, so it fails the job.
+        #
+        # `curl -f` cannot make that distinction (a 404 becomes a generic
+        # non-zero exit) and `--retry-all-errors` would retry it, so the
+        # status is captured explicitly with `-w` and `-f` is dropped.
+        # `--retry 3` still covers transient 5xx before the non-2xx rule
+        # bites; a 5xx that survives three retries is treated as a moved
+        # resource, which is the conservative direction for a security claim.
         run: |
           set -euo pipefail
           upstream_url='https://raw.githubusercontent.com/moby/profiles/main/seccomp/default.json'
-          if ! curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
-              -o /tmp/upstream-seccomp.json "$upstream_url"; then
-            echo "::warning::could not reach $upstream_url after retries — skipping the chrome.json drift check for this run"
+          curl_rc=0
+          http_status=$(curl -sSL --retry 3 --retry-delay 2 \
+            -o /tmp/upstream-seccomp.json -w '%{http_code}' "$upstream_url") || curl_rc=$?
+          if [ "$curl_rc" -ne 0 ]; then
+            echo "::warning::could not reach $upstream_url after retries (curl exit $curl_rc, http status ${http_status:-none}) — skipping the chrome.json drift check for this run"
             exit 0
+          fi
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "::error::$upstream_url returned HTTP $http_status — the upstream profile moved or was removed, so chrome.json's documented provenance can no longer be verified. Re-derive chrome.json from the profile's new location and update this URL."
+            exit 1
           fi
           python3 - <<'PY'
           import json
