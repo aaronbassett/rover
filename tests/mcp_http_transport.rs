@@ -443,59 +443,12 @@ async fn download_images_mode_is_refused_over_http() {
     assert!(text.contains("download") && text.contains("allow_server_paths"));
 }
 
-/// The escape hatch: with `[http] allow_server_paths = true`, the same
-/// `csv_file` call that the two tests above refuse must go through instead.
-/// Unlike those two, this call is not hermetic — the guard now lets it
-/// reach the network — so it's pointed at a local `wiremock` origin rather
-/// than `https://example.com/`, and `ROVER_DATA_DIR` is set so
-/// `tokenizer::ensure_loaded` (reached via `fetch_inner` after the guard)
-/// finds the fixture tokenizer `common::http_state_with` seeds, instead of
-/// resolving the developer's real data directory.
-#[tokio::test]
-async fn csv_file_tables_mode_is_allowed_when_allow_server_paths_is_true() {
-    let tmp = tempfile::tempdir().unwrap();
-    // SAFETY: this is the only test in this binary that touches
-    // `ROVER_DATA_DIR`; the two refusal tests above never reach
-    // `tokenizer::ensure_loaded` (the sole consumer of `paths::data_dir()`
-    // on this call path), so there is nothing else in this process racing
-    // this mutation.
-    unsafe { std::env::set_var("ROVER_DATA_DIR", tmp.path()) };
-
-    let server = wiremock::MockServer::start().await;
-    wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .respond_with(
-            wiremock::ResponseTemplate::new(200)
-                .insert_header("Content-Type", "text/html; charset=utf-8")
-                .set_body_string("<html><body><h1>hello from wiremock</h1></body></html>"),
-        )
-        .mount(&server)
-        .await;
-
-    let http_cfg = rover::config::HttpConfig {
-        allow_server_paths: true,
-        ..Default::default()
-    };
-    let app = rover::mcp::http::router(common::http_state_with(tmp.path(), None, http_cfg).await);
-
-    let body = Body::from(format!(
-        r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"fetch_tool","arguments":{{"url":"{}","tables":{{"mode":"csv_file"}}}}}}}}"#,
-        server.uri(),
-    ));
-    let res = app.oneshot(mcp_request("POST", None, body)).await.unwrap();
-
-    assert_eq!(res.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
-        .await
-        .unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|e| panic!("response body was not valid JSON: {e}"));
-    assert!(
-        json.get("error").is_none(),
-        "allow_server_paths=true must not refuse the call, got: {json}"
-    );
-    let text = String::from_utf8_lossy(&bytes);
-    assert!(
-        text.contains("hello from wiremock"),
-        "expected the fetched page content to come through, got: {text}"
-    );
-}
+// `csv_file_tables_mode_is_allowed_when_allow_server_paths_is_true` used to
+// live here. It moved to `tests/mcp_http_allow_server_paths.rs` because it
+// mutates `ROVER_DATA_DIR` via `std::env::set_var`, which is unsound to run
+// alongside sibling tests in the same binary: libtest runs the other tests
+// in this file on their own threads, `setenv` races any concurrent
+// `getenv`, and both `tempfile::tempdir()` (reads `TMPDIR`) and every
+// `reqwest::Client` built by this binary's other tests (proxy-var scanning)
+// call `getenv`. One test per binary removes the sibling threads entirely.
+// See `tests/mcp_http_allow_server_paths.rs` for the full rationale.

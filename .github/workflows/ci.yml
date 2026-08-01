@@ -87,6 +87,7 @@ jobs:
             --test mcp_count_tokens_estimates \
             --test mcp_fetch_caption_override \
             --test mcp_get_metadata \
+            --test mcp_http_allow_server_paths \
             --test mcp_http_auth \
             --test mcp_http_transport \
             --test mcp_stdio_path_modes \
