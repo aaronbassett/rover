@@ -21,7 +21,7 @@ Headless rendering ships behind the `headless` Cargo feature and is not in the d
 cargo install rover-fetch --features headless
 ```
 
-The feature needs a Chrome or Chromium browser on the host. Rover auto-detects it on standard install paths. If the browser lives elsewhere, point `chrome_executable` in the `[headless]` config block at it. To confirm the launch path resolves:
+The feature needs a Chrome or Chromium browser on the host, except in the `runtime-headless` container target, which carries its own (see [Deployment](/docs/deployment#spa-rendering)). Elsewhere Rover auto-detects the browser on standard install paths. If it lives somewhere else, point `chrome_executable` in the `[headless]` config block at it. To confirm the launch path resolves:
 
 ```sh
 rover doctor
