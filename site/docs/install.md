@@ -43,6 +43,16 @@ cargo install --git https://github.com/aaronbassett/rover --locked
 
 Requires Rust 1.96+.
 
+## Container
+
+The repository's `Dockerfile` builds an image instead of a binary on `PATH`. The default target ships without Chromium, matching the default Cargo build; a separate `runtime-headless` target adds it:
+
+```sh
+docker build --target runtime-headless -t rover:headless .
+```
+
+See [Deployment](/docs/deployment#spa-rendering) for the run flags Chrome's sandbox needs and for running Rover as a shared container on the network.
+
 ## Verify
 
 ```sh

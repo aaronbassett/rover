@@ -29,6 +29,8 @@ rover doctor
 
 When the feature is compiled, `doctor` launches the browser to verify it works, rather than only checking the binary exists on disk. See [Installation](/docs/install) for install paths and [Optional features](/docs/features) for the full feature list.
 
+In a container, use the `runtime-headless` build target instead — it carries Chromium and needs no host browser, but does need a seccomp profile to start Chrome's sandbox. See [Deployment](/docs/deployment#spa-rendering).
+
 ## Per-call control
 
 The MCP `fetch` tool takes a `headless` argument that decides per call whether to render. There are three modes:
