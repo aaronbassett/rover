@@ -9,7 +9,7 @@ Run Rover as a container on a shared network and every agent that can reach it g
 
 ## Compose
 
-The repository ships a `docker-compose.yml` that runs the image on an internal network with no host port published. Agent containers reach Rover at `http://rover:7683/mcp`; nothing else on the host can.
+The repository ships two compose files, one per image. `docker-compose.yml` runs the default image; `docker-compose.headless.yml` runs the `runtime-headless` image with the flags Chrome needs, covered under [SPA rendering](#spa-rendering). Both put Rover on an internal network with no host port published: agent containers reach it at `http://rover:7683/mcp`; nothing else on the host can. The file below is the default one.
 
 ```yaml
 # Rover on an internal network. No host port is published: agent containers
@@ -107,7 +107,7 @@ Or use the overlay, which sets the flags below for you:
 docker compose -f docker-compose.headless.yml up
 ```
 
-That image is about 1.1GB against the default's 83MB, almost entirely Chromium and its dependencies.
+That image is about 1.2GB against the default's 83MB — both measured on arm64 — almost entirely Chromium and its dependencies.
 
 ### It needs three run flags
 
@@ -145,4 +145,4 @@ Treat the container network as the primary boundary, not the token — put Rover
 
 `/healthz/` and `/readyz/` — trailing slash — are different, unrouted paths, not the same endpoint with looser matching. Once a token is set, every unrouted path returns `401` instead of `404`, so a probe pointed at the wrong URL fails as an auth error rather than a connection error. Configure your orchestrator's probe against the exact path, no trailing slash.
 
-The image has no shell, so there's no in-container `HEALTHCHECK` — Docker's `healthcheck:` needs a command to run inside the container, and distroless doesn't have one. The shipped compose file has no `healthcheck:` block for the same reason: probe `/readyz` from your orchestrator, the way it already reaches the container over the network.
+Neither image defines a `HEALTHCHECK`, and neither compose file has a `healthcheck:` block. For the default image there's no choice: Docker's `healthcheck:` needs a command to run inside the container and distroless has no shell. `runtime-headless` is `debian:bookworm-slim` and does have one, so it could — it deliberately doesn't, because an in-container probe would be a second, differently-configured way to ask the same question. Probe `/readyz` from your orchestrator instead, the way it already reaches the container over the network.
