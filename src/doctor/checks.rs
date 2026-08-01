@@ -641,10 +641,51 @@ impl Check for HeadlessBrowserLaunches {
             Err(e) => CheckReport {
                 check: self.name(),
                 status: CheckStatus::Fail,
-                detail: Some(format!(
-                    "{e}. See docs/features.md for install instructions."
-                )),
+                detail: Some(headless_failure_detail(&e)),
             },
         }
+    }
+}
+
+#[cfg(feature = "headless")]
+fn headless_failure_detail(e: &crate::fetcher::headless::HeadlessError) -> String {
+    use crate::fetcher::headless::HeadlessError;
+    match e {
+        // Already carries its own remediation; the install hint would misdirect.
+        HeadlessError::SandboxUnavailable => e.to_string(),
+        _ => format!("{e}. See docs/features.md for install instructions."),
+    }
+}
+
+#[cfg(all(test, feature = "headless"))]
+mod tests {
+    use super::*;
+
+    /// A sandbox failure already carries its own remediation. Appending
+    /// "see features.md for install instructions" points at a page about
+    /// installing a browser that is, in this case, installed and working.
+    #[test]
+    fn sandbox_failure_detail_omits_the_install_hint() {
+        let detail =
+            headless_failure_detail(&crate::fetcher::headless::HeadlessError::SandboxUnavailable);
+        assert!(
+            !detail.contains("install instructions"),
+            "install hint wrongly appended to a sandbox failure: {detail}"
+        );
+        assert!(
+            detail.contains("chrome.json"),
+            "lost the remediation: {detail}"
+        );
+    }
+
+    #[test]
+    fn other_failures_keep_the_install_hint() {
+        let detail = headless_failure_detail(
+            &crate::fetcher::headless::HeadlessError::LaunchFailed("no such file".into()),
+        );
+        assert!(
+            detail.contains("install instructions"),
+            "install hint should still appear for a genuine launch failure: {detail}"
+        );
     }
 }
