@@ -263,16 +263,35 @@ jobs:
       # Rover itself under the profile. Without this the gate is asymmetric:
       # the raw-Chromium probe below bypasses Rover via `--entrypoint`, and
       # the negative probe asserts Rover *refuses*, so "Rover can never
-      # launch, on any input" satisfies both. Rover's Chrome is not the
-      # probe's — `--headless=new`, CDP request interception, an explicit
-      # `user_data_dir`, and real page loads spawning renderer/GPU/utility
-      # processes are all syscall surface `--dump-dom about:blank` never
-      # touches.
+      # launch, on any input" satisfies both.
+      #
+      # What this proves: Rover's own launch arguments start a sandboxed
+      # Chromium under the profile — `--headless=new` and an explicit
+      # `user_data_dir` (browser.rs:42-44), neither of which the raw probe's
+      # `--dump-dom about:blank` uses.
+      #
+      # What it does NOT prove: that Rover can *render* under the profile.
+      # `HeadlessBrowserLaunches` calls `browser::launch()` and drops the
+      # browser immediately — no navigation, so no CDP request interception
+      # and no renderer/GPU/utility processes spawned by a real page load.
+      # Rendering a real page under the profile is still uncovered.
+      #
+      # `set +e` around the run is load-bearing twice over. Under `set -e` the
+      # assignment itself aborts on a non-zero exit, so `echo "$out"` never
+      # runs and the failure this step exists to catch would surface as a bare
+      # "Process completed with exit code 1" with no diagnostic. It also
+      # decouples the gate from `doctor`'s aggregate exit code: `doctor` exits
+      # non-zero if *any* check fails, and `NetworkReachable` does a live
+      # `HEAD https://example.com` (checks.rs:167), so a transient blip would
+      # otherwise red this job. The grep carries the assertion alone.
       - name: Headless image renders WITH the profile
         run: |
           set -euo pipefail
+          set +e
           out=$(docker run --rm --security-opt seccomp=./chrome.json --shm-size=1g \
-            rover:ci-headless doctor 2>&1); echo "$out"
+            rover:ci-headless doctor 2>&1)
+          set -e
+          echo "$out"
           echo "$out" | grep -qi "browser launched"
 
       # Kept alongside the Rover run: it isolates Chromium from Rover, so
