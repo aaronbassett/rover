@@ -5,7 +5,7 @@ title: Installation
 
 # Installation
 
-Three channels: Homebrew, a prebuilt binary, or Cargo. All of them install a binary named `rover`. Current release: `v0.1.0`.
+Four channels: Homebrew, a prebuilt binary, Cargo, or a container. The first three install a binary named `rover`; the container builds an image instead. Current release: `v0.1.0`.
 
 ## Homebrew (macOS)
 
