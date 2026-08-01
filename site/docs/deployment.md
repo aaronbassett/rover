@@ -27,6 +27,13 @@ services:
       - rover-data:/data
       - ./rover.toml:/config/rover.toml:ro
     networks: [agents]
+    # Bounded, not Docker's unbounded default: an unauthenticated caller on
+    # this network can drive hundreds of rejected requests/sec against
+    # /mcp, and without a cap that fills the host disk. See "Security
+    # limits" below.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 volumes:
   rover-data:
@@ -88,11 +95,13 @@ A request body over 16 MiB is rejected. With a `Content-Length` header — every
 
 ## Security limits
 
-The bearer token is compared in constant time, but nothing throttles the comparison itself: there is no rate limiting or lockout on repeated failed attempts, and no throttling on the per-rejection log line. A short or predictable `ROVER_HTTP_TOKEN` is brute-forceable at line rate. Generate a real one:
+The bearer token is compared in constant time, but nothing rate-limits or locks out repeated failed attempts — a short or predictable `ROVER_HTTP_TOKEN` is brute-forceable at line rate. Generate a real one:
 
 ```bash
 openssl rand -hex 32
 ```
+
+That's a deliberate gap, not an oversight: the deployment target is a trusted container network, and closing it is only defensible if an operator can actually see abuse happening. Two things make that possible. Every rejection carries the caller's address (`peer = <addr>`) so you know who to look at, and the line itself is throttled to at most once per second with a `suppressed` count folded in — an unauthenticated caller hammering `/mcp` produces one log line a second, not one per request, so the log itself can't become the disk-filling attack (`docker-compose.yml`'s `logging:` limits are the second half of that same mitigation). Neither of those slows an attacker down; they only make the attempt visible.
 
 Treat the container network as the primary boundary, not the token — put Rover on a network only trusted callers can reach, the way the compose file above does, and let the token be a second layer rather than the only one.
 

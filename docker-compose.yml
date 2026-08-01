@@ -13,6 +13,15 @@ services:
       - rover-data:/data
       - ./rover.toml:/config/rover.toml:ro
     networks: [agents]
+    # Bounded, not the Docker default (unbounded json-file): an
+    # unauthenticated caller on this network can drive hundreds of rejected
+    # requests/sec against /mcp (no rate limiting on failed auth — see
+    # src/mcp/http.rs's RejectionThrottle for the per-process half of this
+    # mitigation), and without a cap that fills the host disk before anyone
+    # holds a valid token.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 volumes:
   rover-data:

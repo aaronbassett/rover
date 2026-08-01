@@ -9,10 +9,12 @@
 //! body limit, and Host-policy resolution.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -47,6 +49,10 @@ pub struct HttpState {
     /// Resolved `Host` allow-list: `None` means validation is disabled.
     pub(crate) allowed_hosts: Option<Vec<String>>,
     pub(crate) allowed_origins: Vec<String>,
+    /// Throttles the failed-auth rejection log line. Shared via `Arc` so
+    /// every clone of `HttpState` (one per request, via `State` extraction)
+    /// counts against the same window.
+    pub(crate) rejection_throttle: Arc<RejectionThrottle>,
 }
 
 impl HttpState {
@@ -64,7 +70,58 @@ impl HttpState {
             token_digest: token.filter(|t| !t.is_empty()).map(digest),
             allowed_hosts: resolve_allowed_hosts(&cfg.allowed_hosts, bind),
             allowed_origins: cfg.allowed_origins.clone(),
+            rejection_throttle: Arc::new(RejectionThrottle::new()),
         }
+    }
+}
+
+/// Throttles the failed-auth rejection log line to at most one line per
+/// second, folding any rejections observed inside that window into a
+/// `suppressed` count carried on the next line that does get emitted.
+///
+/// Exists because this branch ships with no rate limiting on failed auth —
+/// accepted because the deployment target is a trusted container network,
+/// but that acceptance only holds if an operator can see abuse happening.
+/// An unthrottled `tracing::warn!` per rejection would itself be the
+/// amplification vector: a caller with no valid token can still drive
+/// hundreds of rejections per second, and hundreds of log lines per second
+/// is exactly what `docker-compose.yml`'s `logging:` limits exist to bound
+/// (see its comment) — better to never generate that volume in the first
+/// place.
+pub(crate) struct RejectionThrottle {
+    /// Rejections observed since the last emitted line, including the one
+    /// about to trigger emission — so `total - 1` on the line that fires is
+    /// the count of OTHER rejections folded into it.
+    pending: AtomicU64,
+    last_emit: Mutex<Instant>,
+}
+
+impl RejectionThrottle {
+    fn new() -> Self {
+        Self {
+            pending: AtomicU64::new(0),
+            // Set far enough in the past that the very first rejection this
+            // process ever sees emits immediately, rather than silently
+            // waiting up to a second for a window that only just opened.
+            last_emit: Mutex::new(Instant::now() - Duration::from_secs(1)),
+        }
+    }
+
+    /// Record one rejection. Returns `Some(suppressed)` exactly when the
+    /// caller should emit a log line — `suppressed` is how many OTHER
+    /// rejections landed inside the same one-second window — or `None` when
+    /// a line already went out within the last second and this rejection is
+    /// being counted silently instead.
+    fn record(&self) -> Option<u64> {
+        self.pending.fetch_add(1, Ordering::Relaxed);
+        let mut last = self.last_emit.lock().unwrap();
+        if last.elapsed() < Duration::from_secs(1) {
+            return None;
+        }
+        *last = Instant::now();
+        drop(last);
+        let total = self.pending.swap(0, Ordering::Relaxed);
+        Some(total.saturating_sub(1))
     }
 }
 
@@ -140,6 +197,19 @@ fn strip_bearer_prefix(v: &str) -> Option<&str> {
     }
 }
 
+/// The failed-auth rejection log message.
+///
+/// Deliberately avoids the words "Bearer"/"Basic" followed by whitespace and
+/// another token: `src/telemetry/redact.rs`'s `AUTH_HEADER_VALUE` regex
+/// (`(?i)\b(Bearer|Basic)\s+\S+`) matches that shape anywhere in a field
+/// value, credential or not, and previously ate the word "token" out of the
+/// line this replaced (`"rejected request: invalid bearer token"` →
+/// `"...invalid bearer <redacted>"` in the shipped log). Named as a constant,
+/// rather than inlined at both `tracing::warn!` call sites below, specifically
+/// so `rejection_message_survives_auth_redaction` can assert against the
+/// exact production string instead of a copy that could drift from it.
+const REJECTION_MESSAGE: &str = "rejected request: missing or invalid Authorization header";
+
 /// Reject requests without a valid bearer token, before any dispatch work.
 ///
 /// The response does not distinguish "absent" from "wrong", and the presented
@@ -148,6 +218,20 @@ async fn require_bearer(State(state): State<HttpState>, req: Request, next: Next
     let Some(expected) = state.token_digest else {
         return next.run(req).await; // auth disabled
     };
+
+    // `ConnectInfo` is populated by `serve_http` via
+    // `into_make_service_with_connect_info::<SocketAddr>()`, which only a
+    // real `axum::serve` over a bound socket provides. In-process
+    // `tower::ServiceExt::oneshot` tests (the whole `mcp_http_*` router
+    // suite) build the `Request` directly and never go through that make
+    // service, so this extension is absent there — read it as an `Option`
+    // via `extensions().get()` rather than as a required extractor
+    // parameter, so its absence is tolerated rather than failing the
+    // extraction (which would 500 every oneshot test in that suite).
+    let peer = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| *addr);
 
     let presented = req
         .headers()
@@ -172,7 +256,35 @@ async fn require_bearer(State(state): State<HttpState>, req: Request, next: Next
         return next.run(req).await;
     }
 
-    tracing::warn!(target: "rover::mcp", "rejected request: invalid bearer token");
+    // Throttled to at most one line per second (`RejectionThrottle`): with
+    // no rate limiting on failed auth, an unthrottled line per rejection
+    // would itself be a disk-filling amplification vector for an
+    // unauthenticated caller. `record()` returns `Some(suppressed)` only on
+    // the call that should actually emit.
+    if let Some(suppressed) = state.rejection_throttle.record() {
+        // `message = REJECTION_MESSAGE` (a named field), not a trailing
+        // format-string literal: both compile to the same `message` field
+        // key, but this form passes the `&'static str` through `Value`'s
+        // string impl untouched — the same code path
+        // `rejection_message_survives_auth_redaction` exercises directly —
+        // rather than through `Arguments`'s `Debug` impl, which this test
+        // suite has no independent way to pin as behaviourally identical.
+        match peer {
+            Some(addr) => tracing::warn!(
+                target: "rover::mcp",
+                peer = %addr,
+                suppressed,
+                message = REJECTION_MESSAGE
+            ),
+            None => tracing::warn!(
+                target: "rover::mcp",
+                peer = "unknown",
+                suppressed,
+                message = REJECTION_MESSAGE
+            ),
+        }
+    }
+
     (
         StatusCode::UNAUTHORIZED,
         [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
@@ -323,9 +435,18 @@ pub async fn serve_http(
         "rover mcp HTTP listening (POST /mcp, GET /healthz, GET /readyz)"
     );
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move { cancel.cancelled().await })
-        .await?;
+    // `into_make_service_with_connect_info` is what populates the
+    // `ConnectInfo<SocketAddr>` request extension `require_bearer` reads for
+    // the rejection warn's `peer` field. Plain `axum::serve(listener, app)`
+    // (the prior wiring) never inserts it — the peer address would silently
+    // never appear in that log line no matter what the middleware did with
+    // it.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move { cancel.cancelled().await })
+    .await?;
 
     tracing::info!(target: "rover::mcp", "HTTP server drained; shutting down");
     // `axum::serve` has returned, so the router and its service factory (and
@@ -392,6 +513,65 @@ mod tests {
 
     fn addr(s: &str) -> SocketAddr {
         s.parse().unwrap()
+    }
+
+    /// Pins the exact defect this module's history warns about: verified
+    /// real output once showed `message=rejected request: invalid bearer
+    /// <redacted>` because `src/telemetry/redact.rs`'s `AUTH_HEADER_VALUE`
+    /// regex (`(?i)\b(Bearer|Basic)\s+\S+`) matched the prose "bearer
+    /// token" in the old message and ate the word "token". This test runs
+    /// the CURRENT `REJECTION_MESSAGE` through the real redactor —
+    /// `redact_authorization`, the exact function `RedactingFormatEvent`
+    /// calls on every field value including the implicit `message` field —
+    /// and asserts it comes back byte-for-byte unchanged. It targets the
+    /// production string directly (not a copy that could drift from it),
+    /// so a future edit that reintroduces a `Bearer`/`Basic`-shaped
+    /// substring fails here, deterministically, without needing to spin up
+    /// a real tracing subscriber or a live server.
+    #[test]
+    fn rejection_message_survives_auth_redaction() {
+        let redacted = crate::telemetry::redact::redact_authorization(REJECTION_MESSAGE);
+        assert_eq!(
+            redacted, REJECTION_MESSAGE,
+            "the rejection message is no longer immune to the Bearer/Basic \
+             redaction regex — got: {redacted:?}"
+        );
+    }
+
+    /// A fresh throttle emits on its very first rejection — the "far enough
+    /// in the past" initial `last_emit` matters: a naive `Instant::now()`
+    /// would make the first caller wait up to a second before anything
+    /// logged at all.
+    #[test]
+    fn rejection_throttle_emits_immediately_on_first_rejection() {
+        let t = RejectionThrottle::new();
+        assert_eq!(
+            t.record(),
+            Some(0),
+            "first rejection should emit with 0 suppressed"
+        );
+    }
+
+    /// Deterministic without sleeping: a whole burst of `record()` calls
+    /// back-to-back completes in microseconds, comfortably inside the
+    /// one-second window, so only the very first call can possibly emit —
+    /// every call after it must be folded into `pending` instead of
+    /// producing its own line.
+    #[test]
+    fn rejection_throttle_folds_a_burst_into_one_suppressed_count() {
+        let t = RejectionThrottle::new();
+        assert_eq!(t.record(), Some(0));
+        for _ in 0..99 {
+            assert_eq!(
+                t.record(),
+                None,
+                "a rejection inside the same one-second window must not emit its own line"
+            );
+        }
+        // The window has not elapsed yet (this test runs in microseconds),
+        // so nothing has drained `pending` — confirm the count silently
+        // accumulated rather than being dropped.
+        assert_eq!(t.pending.load(Ordering::Relaxed), 99);
     }
 
     #[test]
