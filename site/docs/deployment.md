@@ -91,11 +91,37 @@ Point an MCP client at the container's `/mcp` path with the token in an `Authori
 
 The first `count_tokens` call, or the first token-budgeted `fetch`, downloads a tokenizer from HuggingFace into `/data/.cache/huggingface/hub`. It happens once per volume — after that, the tokenizer is cached alongside everything else under `/data` and every later call is offline. If the container has no outbound network access, that first call fails.
 
-## No SPA rendering
+## SPA rendering
 
-The image is built without the `headless` Cargo feature, so it ships without Chromium. `headless.mode = "on"` returns the `headless_feature_not_compiled` error rather than a silent fallback; `auto` and the default just behave like a plain fetch. See [JavaScript & dynamic pages](/docs/dynamic-pages) for the full mode-by-mode behaviour.
+The default image ships without Chromium: it is built without the `headless` Cargo feature, so `headless.mode = "on"` returns `headless_feature_not_compiled` and `auto` behaves like a plain fetch. See [JavaScript & dynamic pages](/docs/dynamic-pages) for the mode-by-mode behaviour.
 
-That's a deliberate omission, not a missing feature. Rover renders whatever page an agent asks for, and that page is untrusted by definition — running Chrome in a container without its sandbox, the usual workaround for "browser in Docker," hands a hostile page more room to move than not rendering it at all. If you need SPA rendering, run the `headless`-featured binary directly, on a host where Chrome's sandbox stays intact.
+A second build target adds it:
+
+```bash
+docker build --target runtime-headless -t rover:headless .
+```
+
+Or use the overlay, which sets the flags below for you:
+
+```bash
+docker compose -f docker-compose.headless.yml up
+```
+
+That image is about 1.1GB against the default's 83MB, almost entirely Chromium and its dependencies.
+
+### It needs three run flags
+
+Chrome's sandbox does not start under Docker's default seccomp profile, which blocks the user namespaces it relies on. Running it needs:
+
+- `--security-opt seccomp=chrome.json` — the profile is in the repository root
+- `--shm-size=1g` — Chrome crashes on non-trivial pages with Docker's 64MB `/dev/shm`
+- a non-root user — already set in the image; do not override it
+
+Without the profile, Rover refuses to render and tells you so. Chrome's own error output suggests `--no-sandbox` as a workaround. Do not take it: it removes the boundary that keeps a hostile page inside the renderer process, and Rover renders whatever page an agent asks for.
+
+### Rebuilding is how you get security fixes
+
+The image installs Chromium from `bookworm-security` at build time and deliberately does not pin the version, so each rebuild picks up Debian's current backport. Nothing pushes a new image to you — Rover ships a Dockerfile, not a registry image — so the browser's patch level is a function of how often you rebuild. Chrome sandbox escapes are exploited in the wild; an image built once and left alone drifts to a known-vulnerable browser.
 
 ## Request limits
 
