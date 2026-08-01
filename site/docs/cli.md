@@ -19,7 +19,7 @@ Global flags:
 | --- | --- |
 | `--config <path>` | Load this TOML file for the invocation. The file must exist. |
 
-Every subcommand — `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — resolves the same config file. With `--config <path>`, Rover loads that file and errors if it is missing. Without it, Rover loads the default config: the file named by `ROVER_CONFIG` if set, otherwise the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) or a project-local `./rover.toml`, whichever exists first. If none exists, built-in defaults apply. A file written by `rover config set` is therefore picked up by `rover fetch` and `rover mcp` without passing `--config`.
+Every subcommand — `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — resolves the same config file. With `--config <path>`, Rover loads that file and errors if it is missing. Without it: if `ROVER_CONFIG` is set to a non-empty value, Rover treats it exactly like `--config` — that file must exist and parse, or Rover fails loudly (an explicit redirect never silently falls back). With `ROVER_CONFIG` unset or empty, Rover searches the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) then a project-local `./rover.toml`, loading the first that exists; if none exists, built-in defaults apply. A file written by `rover config set` is therefore picked up by `rover fetch` and `rover mcp` without passing `--config`.
 
 ```sh
 rover config set ssrf.level loopback   # writes ~/.config/rover/rover.toml

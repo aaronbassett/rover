@@ -1080,18 +1080,23 @@ pub fn resolve_existing_config_path() -> Option<PathBuf> {
 /// - `Some(path)`: an explicitly requested file. It MUST exist and parse — a
 ///   typo in `--config` fails loudly rather than silently falling back to
 ///   defaults.
-/// - `None`, `ROVER_CONFIG` set: same contract as `--config` — an explicit
-///   redirect MUST exist and parse. It does not fall through to the platform
-///   config dir, `./rover.toml`, or built-in defaults. This matters in
-///   practice: a container that bind-mounts a config file from a host path
-///   which doesn't exist gets a *directory* at that mount point instead of a
-///   missing file (Docker's behaviour, not Rover's), and treating that the
-///   same as "no config configured" would silently apply built-in defaults
-///   while the operator's `[http]`/`[ssrf]` settings never take effect.
-/// - `None`, `ROVER_CONFIG` unset: search the remaining default candidates
-///   (the platform config dir, then `./rover.toml`) and load the first that
-///   exists; if none exists, fall back to built-in defaults (the config file
-///   is optional).
+/// - `None`, `ROVER_CONFIG` set to a non-empty value: same contract as
+///   `--config` — an explicit redirect MUST exist and parse. It does not
+///   fall through to the platform config dir, `./rover.toml`, or built-in
+///   defaults. This matters in practice: a container that bind-mounts a
+///   config file from a host path which doesn't exist gets a *directory* at
+///   that mount point instead of a missing file (Docker's behaviour, not
+///   Rover's), and treating that the same as "no config configured" would
+///   silently apply built-in defaults while the operator's `[http]`/`[ssrf]`
+///   settings never take effect.
+/// - `None`, `ROVER_CONFIG` unset OR set to an empty string: search the
+///   remaining default candidates (the platform config dir, then
+///   `./rover.toml`) and load the first that exists; if none exists, fall
+///   back to built-in defaults (the config file is optional). Empty is
+///   treated as unset, not as an explicit redirect to nowhere — the same
+///   convention `ROVER_DATA_DIR` and `ROVER_HTTP_BIND` already use — since
+///   `VAR: ${VAR:-}` is a common shell/CI/compose idiom for "unset unless
+///   overridden".
 ///
 /// Runtime subcommands call this instead of [`load`] so a saved config file is
 /// honored without requiring `--config` on every invocation.
@@ -1100,7 +1105,16 @@ pub fn load_resolved(explicit: Option<&Path>) -> Result<Config, ConfigError> {
         tracing::debug!(path = %path.display(), "loading config from --config");
         return load(Some(path));
     }
-    if let Ok(rover_config) = std::env::var("ROVER_CONFIG") {
+    // Empty is treated as unset, not as "explicitly redirect to the empty
+    // path" — matching `ROVER_DATA_DIR` (`src/paths.rs`) and
+    // `ROVER_HTTP_BIND` (`src/cli/mcp.rs`) elsewhere in this codebase.
+    // `ROVER_CONFIG: ${ROVER_CONFIG:-}` is a common shell/CI/compose idiom
+    // for "unset unless overridden"; without this filter that idiom would
+    // hard-error on `Is a directory`/`No such file or directory` instead of
+    // falling through to the search-then-default behavior below.
+    if let Ok(rover_config) = std::env::var("ROVER_CONFIG")
+        && !rover_config.is_empty()
+    {
         let path = PathBuf::from(rover_config);
         tracing::debug!(path = %path.display(), "loading config from ROVER_CONFIG");
         return load(Some(&path));
@@ -2081,10 +2095,9 @@ level = true
         std::fs::create_dir_all(&dir_not_a_file).unwrap();
 
         // SAFETY: `_guard` serialises this against every other test in this
-        // module that touches `ROVER_CONFIG` (there are none today, but the
-        // lock exists so a future one is safe by construction), and this is
-        // the only file in the `--lib` test binary that reads or writes
-        // `ROVER_CONFIG`.
+        // module that touches `ROVER_CONFIG` — see the other test below —
+        // and this is the only *file* in the `--lib` test binary that reads
+        // or writes `ROVER_CONFIG`.
         unsafe { std::env::set_var("ROVER_CONFIG", &dir_not_a_file) };
         let result = load_resolved(None);
         unsafe { std::env::remove_var("ROVER_CONFIG") };
@@ -2093,6 +2106,38 @@ level = true
             matches!(result, Err(ConfigError::Read { .. })),
             "expected a loud Read error for a directory at the ROVER_CONFIG \
              path, got: {result:?}"
+        );
+    }
+
+    /// `ROVER_CONFIG: ${ROVER_CONFIG:-}` is a common shell/CI/compose idiom
+    /// for "unset unless overridden" — a compose file that writes
+    /// `ROVER_CONFIG: ${ROVER_CONFIG:-}` into the container environment
+    /// sets the variable to an empty string, not unset. This pins that
+    /// case: it must NOT take the "explicit redirect" branch (which would
+    /// try to read a config file at the empty path and hard-error with
+    /// `failed to read config at : No such file or directory`), regardless
+    /// of what the search-then-default fallback actually resolves to on
+    /// this machine — that part is already covered by
+    /// `load_resolved_loads_resolved_default_when_no_explicit` and
+    /// `load_resolved_falls_back_to_defaults_when_nothing_resolves` via the
+    /// environment-independent `load_resolved_from` core. The regression
+    /// this guards is specifically "empty must not error", so asserting
+    /// `Ok(_)` — not a specific resolved `Config` — is the correct,
+    /// environment-independent scope for this test.
+    #[test]
+    fn load_resolved_treats_empty_rover_config_as_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        // SAFETY: see `_guard` above.
+        unsafe { std::env::set_var("ROVER_CONFIG", "") };
+        let result = load_resolved(None);
+        unsafe { std::env::remove_var("ROVER_CONFIG") };
+
+        assert!(
+            result.is_ok(),
+            "an empty ROVER_CONFIG must be treated as unset and fall through \
+             to the search-then-default behaviour, not hard-error — got: \
+             {result:?}"
         );
     }
 

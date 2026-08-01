@@ -5,7 +5,7 @@ title: Configuration
 
 # Configuration
 
-Every subcommand resolves the same config file. Pass `--config <path>` to load a specific file (it must exist). Without `--config`, Rover loads the default config: the file named by `ROVER_CONFIG` if set, otherwise the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) or a project-local `./rover.toml`, whichever exists first. If none exists, built-in defaults apply.
+Every subcommand resolves the same config file. Pass `--config <path>` to load a specific file (it must exist). Without `--config`: a non-empty `ROVER_CONFIG` is treated the same way — that file must exist and parse, or Rover fails loudly rather than silently falling back. With `ROVER_CONFIG` unset or empty, Rover searches the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) then a project-local `./rover.toml`, loading the first that exists; if none exists, built-in defaults apply.
 
 This is uniform across `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — so a file written by `rover config set` is read back by `rover fetch` and `rover mcp` without `--config`. `rover config show` prints the effective settings; `rover config set <dotted.key> <value>` changes one. See the [CLI reference](/docs/cli).
 
