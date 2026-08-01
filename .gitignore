@@ -41,3 +41,10 @@ site/.docusaurus
 # macOS cruft
 .DS_Store
 **/.DS_Store
+
+# Local compose deployment config, copied from rover.toml.example — may
+# carry environment-specific [http]/[ssrf] settings, not for commit.
+/rover.toml
+
+# Compose secrets (ROVER_HTTP_TOKEN, ANTHROPIC_API_KEY).
+/.env

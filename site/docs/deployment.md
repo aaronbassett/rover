@@ -42,11 +42,19 @@ networks:
   agents:
 ```
 
-Generate the token before the first `up`, or compose refuses to start:
+Two required steps before the first `up` — compose does not do either for you, and skipping the first fails silently rather than loudly:
 
-```bash
-echo "ROVER_HTTP_TOKEN=$(openssl rand -hex 32)" >> .env
-```
+1. **Create `rover.toml` from the example.** `docker-compose.yml` bind-mounts `./rover.toml`, which the repository does not ship (it's your local, possibly environment-specific config). If that path doesn't exist on the host, Docker creates a *directory* there instead of failing, Rover finds an unreadable, non-file config path, and silently falls back to built-in defaults — your `[http]` and `[ssrf]` settings never apply and nothing tells you why.
+
+   ```bash
+   cp rover.toml.example rover.toml
+   ```
+
+2. **Generate the token**, or compose refuses to start:
+
+   ```bash
+   echo "ROVER_HTTP_TOKEN=$(openssl rand -hex 32)" >> .env
+   ```
 
 The image's own `CMD` already runs `rover mcp --http --bind 0.0.0.0:7683`, so the compose file doesn't repeat it — `build: .` plus the environment above is the whole setup.
 

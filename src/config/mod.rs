@@ -1080,9 +1080,18 @@ pub fn resolve_existing_config_path() -> Option<PathBuf> {
 /// - `Some(path)`: an explicitly requested file. It MUST exist and parse — a
 ///   typo in `--config` fails loudly rather than silently falling back to
 ///   defaults.
-/// - `None`: search the default candidates (`ROVER_CONFIG`, then the platform
-///   config dir, then `./rover.toml`) and load the first that exists; if none
-///   exists, fall back to built-in defaults (the config file is optional).
+/// - `None`, `ROVER_CONFIG` set: same contract as `--config` — an explicit
+///   redirect MUST exist and parse. It does not fall through to the platform
+///   config dir, `./rover.toml`, or built-in defaults. This matters in
+///   practice: a container that bind-mounts a config file from a host path
+///   which doesn't exist gets a *directory* at that mount point instead of a
+///   missing file (Docker's behaviour, not Rover's), and treating that the
+///   same as "no config configured" would silently apply built-in defaults
+///   while the operator's `[http]`/`[ssrf]` settings never take effect.
+/// - `None`, `ROVER_CONFIG` unset: search the remaining default candidates
+///   (the platform config dir, then `./rover.toml`) and load the first that
+///   exists; if none exists, fall back to built-in defaults (the config file
+///   is optional).
 ///
 /// Runtime subcommands call this instead of [`load`] so a saved config file is
 /// honored without requiring `--config` on every invocation.
@@ -1090,6 +1099,11 @@ pub fn load_resolved(explicit: Option<&Path>) -> Result<Config, ConfigError> {
     if let Some(path) = explicit {
         tracing::debug!(path = %path.display(), "loading config from --config");
         return load(Some(path));
+    }
+    if let Ok(rover_config) = std::env::var("ROVER_CONFIG") {
+        let path = PathBuf::from(rover_config);
+        tracing::debug!(path = %path.display(), "loading config from ROVER_CONFIG");
+        return load(Some(&path));
     }
     match resolve_existing_config_path() {
         Some(path) => {
@@ -1194,6 +1208,10 @@ fn validate(cfg: &mut Config) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    // Serialises `ROVER_CONFIG` env mutation across tests within this file —
+    // same convention as `src/paths.rs`'s `ENV_LOCK` for `ROVER_DATA_DIR`.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn apply_overrides_clamps_concurrency_minimum() {
@@ -2045,6 +2063,37 @@ level = true
     fn load_resolved_falls_back_to_defaults_when_nothing_resolves() {
         let cfg = load_resolved_from(None, None).unwrap();
         assert_eq!(cfg.fetch.timeout_secs, default_timeout_secs());
+    }
+
+    /// `ROVER_CONFIG` is an explicit redirect exactly like `--config`:
+    /// pointing it at a path that isn't a readable file must fail loudly,
+    /// never silently fall back to built-in defaults. A directory at that
+    /// path is the specific shape this guards — it's what Docker leaves
+    /// behind when a bind-mount source doesn't exist on the host (see
+    /// `docker-compose.yml` / `rover.toml.example`), and before this fix
+    /// `resolve_existing_config_path`'s `.is_file()` filter silently
+    /// treated that identically to "no config configured".
+    #[test]
+    fn load_resolved_fails_loudly_when_rover_config_env_is_unreadable() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_not_a_file = tmp.path().join("rover.toml");
+        std::fs::create_dir_all(&dir_not_a_file).unwrap();
+
+        // SAFETY: `_guard` serialises this against every other test in this
+        // module that touches `ROVER_CONFIG` (there are none today, but the
+        // lock exists so a future one is safe by construction), and this is
+        // the only file in the `--lib` test binary that reads or writes
+        // `ROVER_CONFIG`.
+        unsafe { std::env::set_var("ROVER_CONFIG", &dir_not_a_file) };
+        let result = load_resolved(None);
+        unsafe { std::env::remove_var("ROVER_CONFIG") };
+
+        assert!(
+            matches!(result, Err(ConfigError::Read { .. })),
+            "expected a loud Read error for a directory at the ROVER_CONFIG \
+             path, got: {result:?}"
+        );
     }
 
     #[test]
