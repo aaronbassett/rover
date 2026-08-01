@@ -142,4 +142,25 @@ jobs:
           done
           curl -fsS localhost:7683/healthz
           curl -fsS localhost:7683/readyz
-          docker rm -f rover-ci
+      - name: Smoke-test /mcp requires the configured token
+        # Guards against exactly the gap `tests/mcp_http_parity.rs`'s
+        # `spawned_server_enforces_the_configured_token` covers for a
+        # subprocess-spawned binary: this job builds and runs the actual
+        # container image with ROVER_HTTP_TOKEN set, but previously only
+        # ever probed the deliberately-unauthenticated /healthz and
+        # /readyz — so a real container shipping with auth broken wide
+        # open would have passed this job identically.
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST localhost:7683/mcp \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"ping"}')
+          echo "status: $status"
+          if [ "$status" != "401" ]; then
+            echo "::error::expected 401 for /mcp with no Authorization header against a container built with ROVER_HTTP_TOKEN set, got $status"
+            exit 1
+          fi
+      - name: Stop the container
+        if: always()
+        run: docker rm -f rover-ci

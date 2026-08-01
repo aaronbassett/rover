@@ -378,3 +378,111 @@ async fn disallowed_host_header_is_refused_with_403() {
     );
     child.kill().await.ok();
 }
+
+/// `mcp_http_transport.rs`'s `csv_file_tables_mode_is_refused_over_http`
+/// proves the refusal logic itself, but it builds its `HttpState` via
+/// `common::build_http_state`, which hardcodes `rover::mcp::TransportKind::Http`
+/// directly — bypassing `src/mcp/http.rs`'s real `serve_http`, which is the
+/// only place that ACTUALLY passes `TransportKind::Http` into
+/// `build_runtime` in production. Flip that one argument to `Stdio` by
+/// mistake and the entire router-level suite stays green, because none of
+/// it goes through `serve_http` at all. This test does: spawn the real
+/// `rover mcp --http` binary and drive the refusal over a real socket, so a
+/// regression in that wiring actually fails something.
+#[tokio::test]
+async fn csv_file_tables_mode_is_refused_over_a_real_http_socket() {
+    common::init_crypto();
+    use rmcp::ServiceExt as _;
+    use rmcp::model::CallToolRequestParams;
+    use rmcp::transport::StreamableHttpClientTransport;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let origin = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "text/html; charset=utf-8")
+                .set_body_string(
+                    "<html><body><article><p>server-side path guard</p></article></body></html>",
+                ),
+        )
+        .mount(&origin)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut child, base) = common::spawn_http_server(tmp.path(), CFG, None).await;
+
+    let transport = StreamableHttpClientTransport::from_uri(format!("{base}/mcp"));
+    let client = ().serve(transport).await.expect("handshake");
+
+    let args = serde_json::json!({ "url": origin.uri(), "tables": { "mode": "csv_file" } })
+        .as_object()
+        .cloned()
+        .unwrap();
+    let result = client
+        .call_tool(CallToolRequestParams::new("fetch_tool".to_string()).with_arguments(args))
+        .await;
+
+    // The server-path guard rejects with a JSON-RPC-level `invalid_args`
+    // error (not a tool-level `isError: true` result), so this surfaces as
+    // `Err`, not `Ok`.
+    let err = result.expect_err("csv_file over HTTP must be refused, not silently succeed");
+    let text = format!("{err:?}");
+    assert!(
+        text.contains("csv_file") && text.contains("allow_server_paths"),
+        "expected the server-path refusal naming the mode and the escape hatch, got: {text}"
+    );
+
+    client.cancel().await.ok();
+    child.kill().await.ok();
+}
+
+/// `spawn_http_server` has taken a `token` parameter since it was written,
+/// but every call site in this file — until this test — passed `None`. That
+/// meant nothing ever proved a real, subprocess-spawned server actually
+/// enforces `ROVER_HTTP_TOKEN` over a real socket: the docker CI job builds
+/// and runs the image with a token set but only ever probes `/healthz` and
+/// `/readyz`, which are deliberately unauthenticated, so it would pass
+/// identically with auth broken wide open. This test spawns WITH a token
+/// and checks both halves over a real connection: no `Authorization` header
+/// is refused, and the correct one is accepted.
+#[tokio::test]
+async fn spawned_server_enforces_the_configured_token() {
+    common::init_crypto();
+    let tmp = tempfile::tempdir().unwrap();
+    let token = "parity-test-token-with-enough-entropy";
+    let (mut child, base) = common::spawn_http_server(tmp.path(), CFG, Some(token)).await;
+
+    let no_header = reqwest::Client::new()
+        .post(format!("{base}/mcp"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(
+        no_header.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "a real spawned server with ROVER_HTTP_TOKEN set must reject a request with no \
+         Authorization header"
+    );
+
+    let with_header = reqwest::Client::new()
+        .post(format!("{base}/mcp"))
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+        .send()
+        .await
+        .expect("request");
+    assert_ne!(
+        with_header.status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "the correct bearer token must be accepted by a real spawned server"
+    );
+
+    child.kill().await.ok();
+}
