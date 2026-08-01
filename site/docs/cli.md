@@ -108,6 +108,21 @@ Bind resolution: `--bind` → `ROVER_HTTP_BIND` → `[http] bind` → `127.0.0.1
 
 Neither health endpoint sits behind `ROVER_HTTP_TOKEN`. See [`[http]`](/docs/configuration#http) for the config block and [Deployment](/docs/deployment) for the container setup, request-size limits, and the security posture of running this exposed on a network.
 
+`POST /mcp` requires `Content-Type: application/json` and an `Accept` header listing **both** `application/json` and `text/event-stream` — send `Accept: application/json, text/event-stream` even though only JSON ever comes back; rmcp 406s a request that advertises only one.
+
+Status codes, beyond the `200`/`503` above, are all transport-level — a tool-call failure is a JSON-RPC error inside a `200`, never one of these:
+
+| Status | Cause |
+| --- | --- |
+| `401` | Missing or wrong bearer token. |
+| `403` | `Host` or `Origin` failed validation. |
+| `405` | `GET` or `DELETE /mcp` — only `POST` is served. |
+| `406` | `Accept` doesn't list both `application/json` and `text/event-stream`. |
+| `413` | Body over 16 MiB with a `Content-Length` header present. See [Deployment](/docs/deployment#request-limits) for the no-`Content-Length` case, which isn't `413`. |
+| `415` | `Content-Type` isn't `application/json`, or the body fails to deserialise. |
+
+With `ROVER_HTTP_TOKEN` set, every unrouted path — including `/healthz/` or `/readyz/` with a trailing slash, which are different, unrouted paths, not the same endpoint with looser matching — returns `401`, not `404`: the auth layer wraps the fallback too. Without a token, unrouted paths `404` normally.
+
 ## `rover cache`
 
 ```text
