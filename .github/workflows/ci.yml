@@ -259,11 +259,11 @@ jobs:
           out=$(docker run --rm rover:ci-headless doctor 2>&1)
           set -e
           echo "$out"
-          if ! echo "$out" | grep -q "chrome.json"; then
-            echo "::error::doctor did not surface the sandbox remediation"
-            exit 1
-          fi
           if echo "$out" | grep -qi "browser launched"; then
             echo "::error::browser launched with no seccomp profile — the sandbox is disabled"
+            exit 1
+          fi
+          if ! echo "$out" | grep -q "chrome.json"; then
+            echo "::error::doctor did not surface the sandbox remediation"
             exit 1
           fi
