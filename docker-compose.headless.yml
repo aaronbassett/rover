@@ -1,0 +1,38 @@
+# Rover with SPA rendering. Same internal-network posture as
+# docker-compose.yml, plus the three things Chrome needs in a container.
+services:
+  rover:
+    build:
+      context: .
+      target: runtime-headless
+    environment:
+      # Fails the whole `up` if unset, rather than starting an open instance.
+      ROVER_HTTP_TOKEN: "${ROVER_HTTP_TOKEN:?set ROVER_HTTP_TOKEN in .env — generate with: openssl rand -hex 32}"
+      ROVER_CONFIG: /config/rover.toml
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      RUST_LOG: info
+    volumes:
+      - rover-data:/data
+      - ./rover.toml:/config/rover.toml:ro
+    networks: [agents]
+    # Without this, Chrome's sandbox cannot start and Rover refuses to
+    # render. Do not replace with --no-sandbox: see docs/deployment.
+    security_opt:
+      - seccomp=./chrome.json
+    # Docker's 64MB default crashes Chrome on non-trivial pages.
+    shm_size: 1gb
+    # Bounded, not the Docker default (unbounded json-file): an
+    # unauthenticated caller on this network can drive hundreds of rejected
+    # requests/sec against /mcp (no rate limiting on failed auth — see
+    # src/mcp/http.rs's RejectionThrottle for the per-process half of this
+    # mitigation), and without a cap that fills the host disk before anyone
+    # holds a valid token.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  rover-data:
+
+networks:
+  agents:

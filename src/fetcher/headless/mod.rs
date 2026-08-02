@@ -50,6 +50,20 @@ pub enum HeadlessError {
     #[error("browser launch failed: {0}")]
     LaunchFailed(String),
 
+    #[error(
+        "chrome could not start a sandbox, and rover will not run a browser without one.\n\
+         \n\
+         Docker's default seccomp profile blocks the user namespaces chrome's sandbox \
+         needs. Run the container with the profile shipped alongside \
+         docker-compose.headless.yml:\n\
+         \n\
+             --security-opt seccomp=chrome.json\n\
+         \n\
+         Do not add --no-sandbox. Chrome's own error output suggests it; it removes the \
+         boundary that keeps a hostile page inside the renderer process."
+    )]
+    SandboxUnavailable,
+
     #[error("browser config invalid: {0}")]
     ConfigInvalid(String),
 

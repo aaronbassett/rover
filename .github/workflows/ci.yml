@@ -130,6 +130,98 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: chrome.json diverges from upstream by exactly {clone, setns, unshare}
+        # chrome.json (repo root) is a seccomp profile hand-derived from
+        # Docker's maintained default (github.com/moby/profiles,
+        # seccomp/default.json) by two edits: clone's namespace-flag mask
+        # removed, and unshare/setns pulled out of the CAP_SYS_ADMIN gate.
+        # A name-count comparison is blind to argument-level rules — that's
+        # exactly how a prior round of this file silently widened `socket`.
+        # This expands both profiles to (name, action, errnoRet, args,
+        # includes, excludes) tuples per syscall name and asserts the
+        # symmetric difference touches only {clone, setns, unshare}.
+        #
+        # raw.githubusercontent.com is an external dependency outside this
+        # repo's control, and the two fetch-failure modes mean opposite
+        # things, so they are handled differently:
+        #
+        #   - Connection failure (curl exit non-zero; DNS, TLS, timeout,
+        #     reset) — a transient blip unrelated to this change. Warn and
+        #     pass; an outage should not block merges.
+        #   - Non-2xx HTTP response — the resource is gone or moved, so
+        #     chrome.json's stated provenance is now unverifiable and this
+        #     check would otherwise go dark permanently. moby moving this
+        #     file is the exact event that produced the Critical this check
+        #     exists to prevent, so it fails the job.
+        #
+        # `curl -f` cannot make that distinction (a 404 becomes a generic
+        # non-zero exit) and `--retry-all-errors` would retry it, so the
+        # status is captured explicitly with `-w` and `-f` is dropped.
+        # `--retry 3` still covers transient 5xx before the non-2xx rule
+        # bites; a 5xx that survives three retries is treated as a moved
+        # resource, which is the conservative direction for a security claim.
+        run: |
+          set -euo pipefail
+          upstream_url='https://raw.githubusercontent.com/moby/profiles/main/seccomp/default.json'
+          curl_rc=0
+          http_status=$(curl -sSL --retry 3 --retry-delay 2 \
+            -o /tmp/upstream-seccomp.json -w '%{http_code}' "$upstream_url") || curl_rc=$?
+          if [ "$curl_rc" -ne 0 ]; then
+            echo "::warning::could not reach $upstream_url after retries (curl exit $curl_rc, http status ${http_status:-none}) — skipping the chrome.json drift check for this run"
+            exit 0
+          fi
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "::error::$upstream_url returned HTTP $http_status — the upstream profile moved or was removed, so chrome.json's documented provenance can no longer be verified. Re-derive chrome.json from the profile's new location and update this URL."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          import sys
+
+          EXPECTED = {"clone", "setns", "unshare"}
+
+          def load(path):
+              with open(path) as f:
+                  return json.load(f)
+
+          def explode(profile):
+              tuples = set()
+              for entry in profile["syscalls"]:
+                  action = entry.get("action")
+                  errno_ret = entry.get("errnoRet")
+                  args = json.dumps(entry.get("args", []), sort_keys=True)
+                  includes = json.dumps(entry.get("includes", {}), sort_keys=True)
+                  excludes = json.dumps(entry.get("excludes", {}), sort_keys=True)
+                  for name in entry["names"]:
+                      tuples.add((name, action, errno_ret, args, includes, excludes))
+              return tuples
+
+          local = load("chrome.json")
+          upstream = load("/tmp/upstream-seccomp.json")
+
+          # The two documented edits are scoped to individual syscall rules;
+          # a profile-wide default action/errno swap (e.g. ERRNO -> ALLOW)
+          # would not show up in the per-name tuple diff below at all.
+          if (local.get("defaultAction"), local.get("defaultErrnoRet")) != (
+              upstream.get("defaultAction"),
+              upstream.get("defaultErrnoRet"),
+          ):
+              print("::error::chrome.json's defaultAction/defaultErrnoRet diverge from upstream — the two documented edits never touch these")
+              sys.exit(1)
+
+          diff = explode(local) ^ explode(upstream)
+          changed = {t[0] for t in diff}
+
+          if changed != EXPECTED:
+              print(f"::error::chrome.json diverges from upstream by {sorted(changed)}, expected exactly {sorted(EXPECTED)}")
+              for t in sorted(diff):
+                  print(f"  {t}")
+              sys.exit(1)
+
+          print(f"chrome.json diverges from upstream by exactly {sorted(EXPECTED)} — OK")
+          PY
+
       - name: Build the server image
         run: docker build -t rover:ci .
       - name: Smoke-test the health probes
@@ -164,3 +256,70 @@ jobs:
       - name: Stop the container
         if: always()
         run: docker rm -f rover-ci
+
+      - name: Build the headless image
+        run: docker build --target runtime-headless -t rover:ci-headless .
+
+      # Rover itself under the profile. Without this the gate is asymmetric:
+      # the raw-Chromium probe below bypasses Rover via `--entrypoint`, and
+      # the negative probe asserts Rover *refuses*, so "Rover can never
+      # launch, on any input" satisfies both.
+      #
+      # What this proves: Rover's own launch arguments start a sandboxed
+      # Chromium under the profile — `--headless=new` and an explicit
+      # `user_data_dir` (browser.rs:42-44), neither of which the raw probe's
+      # `--dump-dom about:blank` uses.
+      #
+      # What it does NOT prove: that Rover can *render* under the profile.
+      # `HeadlessBrowserLaunches` calls `browser::launch()` and drops the
+      # browser immediately — no navigation, so no CDP request interception
+      # and no renderer/GPU/utility processes spawned by a real page load.
+      # Rendering a real page under the profile is still uncovered.
+      #
+      # `set +e` around the run is load-bearing twice over. Under `set -e` the
+      # assignment itself aborts on a non-zero exit, so `echo "$out"` never
+      # runs and the failure this step exists to catch would surface as a bare
+      # "Process completed with exit code 1" with no diagnostic. It also
+      # decouples the gate from `doctor`'s aggregate exit code: `doctor` exits
+      # non-zero if *any* check fails, and `NetworkReachable` does a live
+      # `HEAD https://example.com` (checks.rs:167), so a transient blip would
+      # otherwise red this job. The grep carries the assertion alone.
+      - name: Headless image renders WITH the profile
+        run: |
+          set -euo pipefail
+          set +e
+          out=$(docker run --rm --security-opt seccomp=./chrome.json --shm-size=1g \
+            rover:ci-headless doctor 2>&1)
+          set -e
+          echo "$out"
+          echo "$out" | grep -qi "browser launched"
+
+      # Kept alongside the Rover run: it isolates Chromium from Rover, so
+      # when the pair disagrees you know which side broke.
+      - name: Headless image renders with the sandbox enabled
+        run: |
+          set -euo pipefail
+          docker run --rm --security-opt seccomp=./chrome.json --shm-size=1g \
+            --entrypoint /usr/bin/chromium rover:ci-headless \
+            --headless=new --dump-dom about:blank | tee /tmp/dom.txt
+          grep -q '<html>' /tmp/dom.txt
+
+      # The probe that carries the weight. A render-succeeds check passes
+      # whether or not the sandbox is on, so it would stay green if someone
+      # "fixed" a launch failure by adding --no-sandbox. This one goes red in
+      # exactly that case: with no seccomp profile the sandbox cannot start,
+      # and Rover must refuse rather than render.
+      - name: Headless image refuses to run unsandboxed
+        run: |
+          set +e
+          out=$(docker run --rm rover:ci-headless doctor 2>&1)
+          set -e
+          echo "$out"
+          if echo "$out" | grep -qi "browser launched"; then
+            echo "::error::browser launched with no seccomp profile — the sandbox is disabled"
+            exit 1
+          fi
+          if ! echo "$out" | grep -q "chrome.json"; then
+            echo "::error::doctor did not surface the sandbox remediation"
+            exit 1
+          fi
