@@ -641,10 +641,83 @@ impl Check for HeadlessBrowserLaunches {
             Err(e) => CheckReport {
                 check: self.name(),
                 status: CheckStatus::Fail,
-                detail: Some(format!(
-                    "{e}. See docs/features.md for install instructions."
-                )),
+                detail: Some(headless_failure_detail(&e)),
             },
+        }
+    }
+}
+
+#[cfg(feature = "headless")]
+fn headless_failure_detail(e: &crate::fetcher::headless::HeadlessError) -> String {
+    use crate::fetcher::headless::HeadlessError;
+    match e {
+        // Already carries its own remediation; the install hint would misdirect.
+        HeadlessError::SandboxUnavailable => e.to_string(),
+        // Point at the published page, not a repo path: there is no root
+        // `docs/` directory, and the file lives at `site/docs/features.md`.
+        // Wording is also kept clear of `redact_authorization`'s
+        // `(?i)\b(Bearer|Basic)\s+\S+` — it matches ordinary prose and would
+        // silently rewrite this hint in log output (pinned by a test below).
+        _ => format!("{e}. See https://rover-fetch.com/docs/features for install instructions."),
+    }
+}
+
+#[cfg(all(test, feature = "headless"))]
+mod tests {
+    use super::*;
+
+    /// A sandbox failure already carries its own remediation. Appending
+    /// "see features.md for install instructions" points at a page about
+    /// installing a browser that is, in this case, installed and working.
+    #[test]
+    fn sandbox_failure_detail_omits_the_install_hint() {
+        let detail =
+            headless_failure_detail(&crate::fetcher::headless::HeadlessError::SandboxUnavailable);
+        assert!(
+            !detail.contains("install instructions"),
+            "install hint wrongly appended to a sandbox failure: {detail}"
+        );
+        assert!(
+            detail.contains("chrome.json"),
+            "lost the remediation: {detail}"
+        );
+    }
+
+    #[test]
+    fn other_failures_keep_the_install_hint() {
+        let detail = headless_failure_detail(
+            &crate::fetcher::headless::HeadlessError::LaunchFailed("no such file".into()),
+        );
+        assert!(
+            detail.contains("install instructions"),
+            "install hint should still appear for a genuine launch failure: {detail}"
+        );
+        assert!(
+            detail.contains("https://rover-fetch.com/docs/features"),
+            "hint must point at the published page — there is no root docs/ \
+             directory and the source lives at site/docs/features.md: {detail}"
+        );
+    }
+
+    /// `redact_authorization`'s `(?i)\b(Bearer|Basic)\s+\S+` matches ordinary
+    /// prose, not just header values, and rewrites what it matches. A hint
+    /// containing e.g. "the basic install" would reach the log as "the
+    /// basic <redacted>", mangling the remediation exactly when someone is
+    /// reading logs to fix a broken browser.
+    #[test]
+    fn failure_details_survive_authorization_redaction_unchanged() {
+        use crate::fetcher::headless::HeadlessError;
+        use crate::telemetry::redact::redact_authorization;
+        for e in [
+            HeadlessError::SandboxUnavailable,
+            HeadlessError::LaunchFailed("no such file".into()),
+        ] {
+            let detail = headless_failure_detail(&e);
+            assert_eq!(
+                redact_authorization(&detail),
+                detail,
+                "redaction rewrote a doctor hint: {detail}"
+            );
         }
     }
 }

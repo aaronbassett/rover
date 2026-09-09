@@ -47,6 +47,31 @@ pub fn build_browser_config(
         .map_err(|e| HeadlessError::ConfigInvalid(e.to_string()))
 }
 
+/// Chrome's stderr marker when it cannot bring up any sandbox layer.
+const NO_SANDBOX_MARKER: &str = "No usable sandbox!";
+
+/// Turn a chromiumoxide launch error into a `HeadlessError`, promoting the
+/// unavailable-sandbox case to its own variant.
+///
+/// chromiumoxide captures the child's stderr and carries it in all three
+/// launch-failure variants (`browser/mod.rs:547-551`). Matching the variant
+/// rather than `e.to_string()` keeps this independent of chromiumoxide's
+/// Display format; the substring match against Chrome's own output is the
+/// one fragile point and is pinned by a test.
+pub(crate) fn classify_launch_error(e: chromiumoxide::error::CdpError) -> HeadlessError {
+    use chromiumoxide::error::CdpError;
+    let stderr = match &e {
+        CdpError::LaunchExit(_, s) | CdpError::LaunchIo(_, s) | CdpError::LaunchTimeout(s) => {
+            String::from_utf8_lossy(s.as_slice()).into_owned()
+        }
+        _ => String::new(),
+    };
+    if stderr.contains(NO_SANDBOX_MARKER) {
+        return HeadlessError::SandboxUnavailable;
+    }
+    HeadlessError::LaunchFailed(e.to_string())
+}
+
 /// Launch the browser and spawn the background handler task. The handler
 /// task drives `chromiumoxide::Browser`'s event loop for the browser's
 /// lifetime. Returns `(Browser, JoinHandle, TempDir)` — callers must
@@ -63,9 +88,7 @@ pub async fn launch(
             HeadlessError::LaunchFailed(format!("could not create browser profile dir: {e}"))
         })?;
     let bc = build_browser_config(cfg, profile_dir.path())?;
-    let (browser, mut handler) = Browser::launch(bc)
-        .await
-        .map_err(|e| HeadlessError::LaunchFailed(e.to_string()))?;
+    let (browser, mut handler) = Browser::launch(bc).await.map_err(classify_launch_error)?;
     let task = tokio::spawn(async move {
         while let Some(_event) = handler.next().await {
             // The handler returns Result<(), ...> events; we drop them.
@@ -91,5 +114,58 @@ mod tests {
             bc.is_ok(),
             "config builds even without chrome installed; launch is the failing step"
         );
+    }
+
+    use chromiumoxide::error::{BrowserStderr, CdpError};
+    use std::os::unix::process::ExitStatusExt as _;
+
+    fn exited(code: i32) -> std::process::ExitStatus {
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+
+    #[test]
+    fn no_usable_sandbox_stderr_classifies_as_sandbox_unavailable() {
+        let stderr = BrowserStderr::new(
+            b"[0801/144355:ERROR:zygote_host_impl_linux.cc:128] No usable sandbox! \
+              If you want to live dangerously and need an immediate workaround, \
+              you can try using --no-sandbox.\n"
+                .to_vec(),
+        );
+        let err = classify_launch_error(CdpError::LaunchExit(exited(1), stderr));
+        assert!(
+            matches!(err, HeadlessError::SandboxUnavailable),
+            "expected SandboxUnavailable, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn unrelated_launch_failure_stays_launch_failed() {
+        let stderr = BrowserStderr::new(b"error while loading shared libraries\n".to_vec());
+        let err = classify_launch_error(CdpError::LaunchExit(exited(127), stderr));
+        assert!(
+            matches!(err, HeadlessError::LaunchFailed(_)),
+            "expected LaunchFailed, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn sandbox_message_names_the_profile_and_warns_off_no_sandbox() {
+        let msg = HeadlessError::SandboxUnavailable.to_string();
+        assert!(msg.contains("chrome.json"), "must name the profile: {msg}");
+        assert!(msg.contains("--no-sandbox"), "must mention the flag: {msg}");
+        assert!(
+            msg.to_lowercase().contains("do not add --no-sandbox"),
+            "must warn against the flag, not merely mention it: {msg}"
+        );
+    }
+
+    /// `src/telemetry/redact.rs:28` matches `(?i)\b(Bearer|Basic)\s+\S+` against
+    /// prose, not just credentials. A message tripping it gets silently rewritten
+    /// in logs. This caught a real regression in the HTTP transport work.
+    #[test]
+    fn sandbox_message_survives_log_redaction() {
+        let msg = HeadlessError::SandboxUnavailable.to_string();
+        let redacted = crate::telemetry::redact::redact_authorization(&msg);
+        assert_eq!(redacted, msg, "redaction rewrote the message: {redacted}");
     }
 }

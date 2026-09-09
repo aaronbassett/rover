@@ -419,14 +419,45 @@ where
                     crate::fetcher::headless::detect::detect_spa(&fetched.body, &extracted.body_md);
                 if hits.total >= 2 {
                     auto_render_delay(h, url, "spa_rerender").await;
-                    let r = h.get().await?;
-                    render_reason = Some("spa");
-                    let rendered = r
-                        .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
-                        .await?;
-                    let f2 = rendered_to_fetched(rendered);
-                    let e2 = extract_fn(&f2.body, &f2.final_url)?;
-                    (f2, e2)
+                    // `auto` only ever promised to render if it could. The
+                    // plain-HTTP fetch above already succeeded and already
+                    // extracted, so a renderer that won't launch (no seccomp
+                    // profile in a container, no browser on the host) must
+                    // degrade to that result rather than discard it — the same
+                    // shape as the bot-challenge path above, which returns its
+                    // pre-render outcome on both a launch and a render failure.
+                    //
+                    // No browser ran, so this is not a security compromise:
+                    // refusing to *render* without a sandbox is the property,
+                    // and it stays intact. The failure is not memoised — every
+                    // subsequent Auto fetch retries the launch.
+                    match h.get().await {
+                        Ok(r) => {
+                            match r
+                                .render(url, opts.ssrf_level, opts.ssrf_project_root.as_deref())
+                                .await
+                            {
+                                Ok(rendered) => {
+                                    let f2 = rendered_to_fetched(rendered);
+                                    let e2 = extract_fn(&f2.body, &f2.final_url)?;
+                                    render_reason = Some("spa");
+                                    (f2, e2)
+                                }
+                                Err(render_err) => {
+                                    tracing::warn!(target: "rover::fetcher::cached",
+                                        error = %render_err, url = url.as_str(),
+                                        "headless re-render of a suspected SPA failed; returning the plain HTTP extraction");
+                                    (fetched, extracted)
+                                }
+                            }
+                        }
+                        Err(launch_err) => {
+                            tracing::warn!(target: "rover::fetcher::cached",
+                                error = %launch_err, url = url.as_str(),
+                                "could not launch headless renderer to re-render a suspected SPA; returning the plain HTTP extraction");
+                            (fetched, extracted)
+                        }
+                    }
                 } else {
                     (fetched, extracted)
                 }

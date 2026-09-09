@@ -101,6 +101,10 @@ The HAR recorder records only the top-level navigation. Sub-resources (CSS, JS, 
 
 A malicious page can't use Rover's headless renderer to scan internal networks. Embedded `<iframe>`, `<img>`, or `fetch()` calls can't reach destinations the SSRF policy forbids. The always-floor address set (link-local, multicast, `0.0.0.0`, broadcast) plus the `block_third_party = true` default cover the common attack paths. Operators who set `ssrf.level = "none"` opt out of these checks, and the WARN line at startup documents that choice. See [JavaScript & dynamic pages](/docs/dynamic-pages) for when the renderer runs at all.
 
+## The browser sandbox in a container
+
+The `runtime-headless` image runs Chromium with its sandbox enabled, which requires the operator to supply `--security-opt seccomp=chrome.json`. Rover refuses to render if the sandbox cannot start rather than falling back to `--no-sandbox`, but it cannot force the profile to be present. Chromium is installed unpinned from `bookworm-security`, so the image's patch level depends on how often it is rebuilt. See [Deployment](/docs/deployment#spa-rendering).
+
 ## Local model files
 
 A model file on disk is part of Rover's trust boundary: a tampered weight or tokenizer loads with whatever privileges the agent has. The `local-inference` feature downloads model weights from HuggingFace on first use, or ahead of time via `rover model download`.

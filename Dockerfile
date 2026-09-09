@@ -31,6 +31,53 @@ RUN cargo build --release --bin rover
 # and the uid-10001 process fails with EACCES opening rover.db.
 RUN mkdir -p /data && chown -R 10001:10001 /data
 
+# ----- builder (headless) -----
+# Separate from `builder` so a default `docker build .` never compiles
+# chromiumoxide. `cargo chef cook` is re-run with the feature because the
+# default recipe does not cover chromiumoxide's dependency tree.
+FROM chef AS builder-headless
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --features headless --recipe-path recipe.json
+COPY . .
+RUN cargo build --release --features headless --bin rover
+RUN mkdir -p /data && chown -R 10001:10001 /data
+
+# ----- runtime (headless) -----
+# NOT distroless: distroless has no package manager, and this stage needs
+# Chromium. Must appear BEFORE `runtime` so the final stage — and therefore
+# the default build target — stays the small image.
+FROM debian:bookworm-slim AS runtime-headless
+
+# Deliberately unpinned. Resolves against bookworm-security at build time, so
+# each rebuild picks up Debian's current Chromium backport; pinning would
+# freeze a known-vulnerable browser. `chromium-sandbox` is deliberately NOT
+# installed: it does not make the sandbox work under Docker's default seccomp
+# profile, and it adds a setuid-root binary. See the design doc.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# distroless ships uid 10001 implicitly; bookworm-slim does not.
+RUN useradd -u 10001 -m -d /home/rover rover
+
+COPY --from=builder-headless /app/target/release/rover /usr/local/bin/rover
+COPY --from=builder-headless --chown=10001:10001 /data /data
+
+ENV ROVER_DATA_DIR=/data
+# See the note on the `runtime` stage: HOME, not HF_HOME. Same panic applies.
+ENV HOME=/data
+
+# chrome_executable is left unset: chromiumoxide's PATH lookup includes
+# "chromium" (detection.rs:69), which resolves Debian's /usr/bin/chromium.
+# Step 4 verifies this rather than assuming it.
+
+VOLUME /data
+EXPOSE 7683
+USER 10001:10001
+
+ENTRYPOINT ["/usr/local/bin/rover"]
+CMD ["mcp", "--http", "--bind", "0.0.0.0:7683"]
+
 # ----- runtime -----
 FROM gcr.io/distroless/cc-debian12 AS runtime
 

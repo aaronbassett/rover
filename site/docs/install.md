@@ -5,7 +5,7 @@ title: Installation
 
 # Installation
 
-Three channels: Homebrew, a prebuilt binary, or Cargo. All of them install a binary named `rover`. Current release: `v0.1.0`.
+Four channels: Homebrew, a prebuilt binary, Cargo, or a container. The first three install a binary named `rover`; the container builds an image instead.
 
 ## Homebrew (macOS)
 
@@ -42,6 +42,16 @@ cargo install --git https://github.com/aaronbassett/rover --locked
 ```
 
 Requires Rust 1.96+.
+
+## Container
+
+The repository's `Dockerfile` builds an image instead of a binary on `PATH`. The default target ships without Chromium, matching the default Cargo build; a separate `runtime-headless` target adds it:
+
+```sh
+docker build --target runtime-headless -t rover:headless .
+```
+
+See [Deployment](/docs/deployment#spa-rendering) for the run flags Chrome's sandbox needs and for running Rover as a shared container on the network.
 
 ## Verify
 

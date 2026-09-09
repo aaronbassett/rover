@@ -19,17 +19,17 @@ cargo install rover-fetch --features headless,local-inference   # combine featur
 
 | Feature | Adds | Needs on first use |
 | --- | --- | --- |
-| `headless` | JavaScript / SPA rendering via `chromiumoxide` over the Chrome DevTools Protocol | A system Chrome/Chromium browser (not bundled) |
+| `headless` | JavaScript / SPA rendering via `chromiumoxide` over the Chrome DevTools Protocol | A system Chrome/Chromium browser (not bundled, except in the `runtime-headless` container target) |
 | `local-inference` | Local LLM summarisation via `mistral.rs`: the `local` backend kind and the `rover model` subcommand | Model download (~1.6 GB) |
 | `injection-model` | The ONNX DeBERTa prompt-injection classifier, the optional model layer of the guard | A native ONNX runtime; model download (~200 MB) |
 
-The prebuilt binary and the Homebrew formula already include `headless`. See [Installation](/docs/install) for the packaged channels.
+The prebuilt binary and the Homebrew formula already include `headless`; so does the container's `runtime-headless` build target, described in [Deployment](/docs/deployment#spa-rendering). See [Installation](/docs/install) for the packaged channels.
 
 ## `headless`: JavaScript and SPAs
 
 Compile in `headless` when the pages you fetch render their content in JavaScript. Rover drives a system Chrome/Chromium over the DevTools Protocol (via `chromiumoxide`), grabs the rendered DOM, then runs it through the same extraction pipeline a static fetch uses.
 
-The browser is not bundled. Rover expects one already on the host and auto-detects the standard install paths. Override the executable when yours lives somewhere non-standard:
+The browser is not bundled, except in the `runtime-headless` container target (see [Deployment](/docs/deployment#spa-rendering)). Elsewhere, Rover expects one already on the host and auto-detects the standard install paths. Override the executable when yours lives somewhere non-standard:
 
 ```toml
 [headless]
