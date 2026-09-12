@@ -433,6 +433,61 @@ impl Check for CaptionersAuthenticate {
     }
 }
 
+/// Reports whether web search can run, without spending a search request.
+///
+/// Three outcomes, and none of them is a failure of an otherwise healthy
+/// install:
+///
+/// * `skip` — the `web-search` feature is not compiled in, or it is but no
+///   credential is configured. Rover fetches perfectly well without search,
+///   so neither state makes the install unhealthy.
+/// * `ok` — compiled and credentialed.
+///
+/// Deliberately does NOT call the search API. `doctor` is run casually and
+/// repeatedly (it is in the container health story), and every search
+/// request is billed; a connectivity probe that quietly costs money on each
+/// invocation is the wrong default. `rover search "test" -n 1` is the
+/// explicit, one-request way to verify the credential end to end, and the
+/// detail below says so.
+pub struct WebSearchAvailable;
+
+#[async_trait]
+impl Check for WebSearchAvailable {
+    fn name(&self) -> &'static str {
+        "web_search"
+    }
+    async fn run(&self, ctx: &CheckCtx) -> CheckReport {
+        use crate::search::SearchAvailability;
+        let cfg = &ctx.config.search;
+        match SearchAvailability::detect(cfg) {
+            SearchAvailability::NotCompiled => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Skip,
+                detail: Some(
+                    "feature not compiled (build with `--features web-search`, or use a prebuilt binary)"
+                        .to_string(),
+                ),
+            },
+            SearchAvailability::NotConfigured => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Skip,
+                detail: Some(format!(
+                    "compiled but not configured (no API key in ${}); fetching is unaffected",
+                    cfg.api_key_env
+                )),
+            },
+            SearchAvailability::Ready => CheckReport {
+                check: self.name(),
+                status: CheckStatus::Ok,
+                detail: Some(format!(
+                    "configured via ${} (not probed — a live check is a billable request; run `rover search \"rover mcp\" -n 1` to verify)",
+                    cfg.api_key_env
+                )),
+            },
+        }
+    }
+}
+
 #[cfg(feature = "local-inference")]
 pub struct LocalInferenceModelCached;
 

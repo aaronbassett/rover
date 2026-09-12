@@ -39,3 +39,43 @@ allow_server_paths = false
 # "lan" or "none" turns Rover into an unauthenticated internal-network fetch
 # proxy (Rover logs a startup warning naming this exact condition).
 level = "strict"
+
+[search]
+# Web search (Brave Search API). Requires the `web-search` cargo feature,
+# which every official prebuilt binary — including this container image —
+# already has. Leave this whole block out and Rover behaves exactly as it
+# always did: `search` reports `search_not_configured` and fetching is
+# unaffected.
+#
+# The API key is NEVER stored here. This names the environment variable
+# Rover reads it from; docker-compose.yml passes BRAVE_SEARCH_API_KEY
+# through from your `.env`. Get a key at
+# https://api-dashboard.search.brave.com/.
+# api_key_env = "BRAVE_SEARCH_API_KEY"
+
+# Defaults for every search; each is overridable per call.
+# count = 10                 # results per page, 1-20
+# country = "US"             # 2-letter code, or "ALL"
+# language = "en"            # content language (Brave's search_lang)
+# ui_language = "en-US"      # language of provider-generated metadata
+# safe_search = "moderate"   # off | moderate | strict
+
+# Off by default because both multiply response size. Nothing is lost by
+# turning them on — see https://rover-fetch.com/docs/web-search.
+# extra_snippets = false     # up to 5 extra excerpts per result
+# enrichment = false         # Brave's structured per-result extras, verbatim
+
+# include_fetch_metadata = false   # Brave's crawl timestamps per result
+# spellcheck = true                # let Brave correct the query
+
+# Custom re-ranking rules applied to every search (max 3). Each entry is a
+# URL hosting a Goggle, or an inline Goggle definition.
+# goggles = ["https://raw.githubusercontent.com/brave/goggles-quickstart/main/goggles/tech_blogs.goggle"]
+
+# Cost controls. Every attempt is a billable request, so the retry budget is
+# deliberately small and only covers 429/5xx/network — never a bad key or a
+# bad argument. `requests_per_minute` defaults to Brave's free-tier ceiling.
+# timeout_secs = 10
+# max_retries = 2
+# requests_per_minute = 60
+# retry_after_ceiling = "30s"

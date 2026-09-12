@@ -98,6 +98,12 @@ libc = "0.2"
 default = []
 test-loopback = []
 headless = ["dep:chromiumoxide", "dep:tempfile"]
+# Web search (Brave Search API). Adds no third-party dependencies — reqwest,
+# serde, schemars and url are already in the base build — so the flag exists
+# to gate the *surface* (the `search` MCP tool, `rover search`, the Brave
+# client) rather than a dependency tree. Included in the official prebuilt
+# binaries; see `[package.metadata.dist]`.
+web-search = []
 local-inference = ["dep:mistralrs"]
 injection-model = ["dep:ort"]
 
@@ -141,7 +147,7 @@ install-path = "CARGO_HOME"
 install-updater = false
 
 [package.metadata.dist]
-features = ["headless"]
+features = ["headless", "web-search"]
 default-features = false
 
 # No Homebrew browser dependency. `chromium` is a (deprecated) Homebrew *cask*,

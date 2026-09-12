@@ -5,25 +5,76 @@ title: Optional features
 
 # Optional features
 
-The default build does fetch-and-extract: no Cargo features, no model weights. Three opt-in features add capability. `headless` renders JavaScript pages, `local-inference` summarises on-device, and `injection-model` adds the ONNX prompt-injection classifier. Each one pulls in extra dependencies, and two of them download a model the first time you use them.
+The default build does fetch-and-extract: no Cargo features, no model weights. Four opt-in features add capability. `web-search` adds web search, `headless` renders JavaScript pages, `local-inference` summarises on-device, and `injection-model` adds the ONNX prompt-injection classifier.
+
+`web-search` is the odd one out: it pulls in no new dependency at all (Rover already has an HTTP client and a JSON parser) and needs nothing at runtime beyond an API key. The flag exists to gate the *surface* — the `search` MCP tool, `rover search`, the Brave client — so a build can deliberately opt out. The other three pull in extra dependencies, and two of them download a model the first time you use them.
 
 ## Enabling features
 
 Pass `--features` at install time. The crate is `rover-fetch` (the name `rover` was taken on crates.io); the installed binary is still `rover`.
 
 ```sh
-cargo install rover-fetch                                       # default build
-cargo install rover-fetch --features headless                   # one feature
-cargo install rover-fetch --features headless,local-inference   # combine features
+cargo install rover-fetch                                     # default build
+cargo install rover-fetch --features web-search                # add search
+cargo install rover-fetch --features headless,web-search       # the release set
+cargo install rover-fetch --features headless,local-inference  # combine any features
 ```
 
 | Feature | Adds | Needs on first use |
 | --- | --- | --- |
+| `web-search` | Web search: the `search` MCP tool and the `rover search` subcommand, backed by the Brave Search API | An API key in `BRAVE_SEARCH_API_KEY`. No new dependency, no download, no runtime binary |
 | `headless` | JavaScript / SPA rendering via `chromiumoxide` over the Chrome DevTools Protocol | A system Chrome/Chromium browser (not bundled, except in the `runtime-headless` container target) |
 | `local-inference` | Local LLM summarisation via `mistral.rs`: the `local` backend kind and the `rover model` subcommand | Model download (~1.6 GB) |
 | `injection-model` | The ONNX DeBERTa prompt-injection classifier, the optional model layer of the guard | A native ONNX runtime; model download (~200 MB) |
 
-The prebuilt binary and the Homebrew formula already include `headless`; so does the container's `runtime-headless` build target, described in [Deployment](/docs/deployment#spa-rendering). See [Installation](/docs/install) for the packaged channels.
+### Distributions
+
+| Distribution | `web-search` | `headless` |
+| --- | --- | --- |
+| Prebuilt binary (install script) | ✅ | ✅ |
+| Homebrew formula | ✅ | ✅ |
+| Container, default target | ✅ | ❌ — no Chromium in the distroless image |
+| Container, `runtime-headless` target | ✅ | ✅ |
+| `cargo install rover-fetch` | opt in | opt in |
+
+`web-search` is in **every** official distribution, including the default
+container target that deliberately omits `headless`. The two are excluded
+for different reasons: `headless` needs a Chromium binary the distroless
+image cannot carry, while `web-search` needs nothing at runtime, so leaving
+it out of the container would mean a deployment silently missing a
+capability every other channel has. See
+[Deployment](/docs/deployment#spa-rendering) for the headless container
+target and [Installation](/docs/install) for the packaged channels.
+
+## `web-search`: finding URLs, not just reading them
+
+Compile in `web-search` to add the `search` MCP tool and the `rover search`
+subcommand. Rover then does both halves of the job: `search` discovers
+candidate URLs, `fetch` reads the ones you pick. It never fetches a result
+on your behalf.
+
+Brave Search is the provider. The API key lives in an environment variable,
+never in the config file:
+
+```sh
+export BRAVE_SEARCH_API_KEY=...
+```
+
+```toml
+[search]
+count = 5
+country = "GB"
+safe_search = "strict"
+```
+
+`rover doctor` reports one of three states — not compiled, compiled but not
+configured, or configured — and neither unavailable state makes an install
+unhealthy: Rover fetches perfectly well without search. Nothing pretends to
+succeed either: without the feature or without a key, `search` returns
+`search_feature_not_compiled` or `search_not_configured`, and the agent
+steering `rover meta use` installs never mentions the tool at all. Full
+usage, filters, result metadata, trust model and billing implications:
+[Web search](/docs/web-search).
 
 ## `headless`: JavaScript and SPAs
 

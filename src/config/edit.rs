@@ -264,6 +264,85 @@ fn settable() -> &'static [SettableSpec] {
             parser: parse_bool,
             expected: "bool",
         },
+        // `[search]`. Note the absence of any key holding the API token
+        // itself: `api_key_env` names the environment variable Rover reads
+        // it from, so `rover config set` can never write a credential into
+        // a file on disk.
+        SettableSpec {
+            key: "search.api_key_env",
+            parser: parse_string,
+            expected: "environment variable name (e.g. BRAVE_SEARCH_API_KEY)",
+        },
+        SettableSpec {
+            key: "search.base_url",
+            parser: parse_string,
+            expected: "http(s) URL",
+        },
+        SettableSpec {
+            key: "search.count",
+            parser: parse_search_count,
+            expected: "integer 1-20",
+        },
+        SettableSpec {
+            key: "search.country",
+            parser: parse_string,
+            expected: "2-letter country code or ALL",
+        },
+        SettableSpec {
+            key: "search.language",
+            parser: parse_string,
+            expected: "language code (e.g. en, pt-br)",
+        },
+        SettableSpec {
+            key: "search.ui_language",
+            parser: parse_string,
+            expected: "UI language code (e.g. en-US)",
+        },
+        SettableSpec {
+            key: "search.safe_search",
+            parser: parse_safe_search,
+            expected: "one of: off, moderate, strict",
+        },
+        SettableSpec {
+            key: "search.extra_snippets",
+            parser: parse_bool,
+            expected: "bool",
+        },
+        SettableSpec {
+            key: "search.spellcheck",
+            parser: parse_bool,
+            expected: "bool",
+        },
+        SettableSpec {
+            key: "search.include_fetch_metadata",
+            parser: parse_bool,
+            expected: "bool",
+        },
+        SettableSpec {
+            key: "search.enrichment",
+            parser: parse_bool,
+            expected: "bool",
+        },
+        SettableSpec {
+            key: "search.timeout_secs",
+            parser: parse_int,
+            expected: "integer (seconds)",
+        },
+        SettableSpec {
+            key: "search.max_retries",
+            parser: parse_search_max_retries,
+            expected: "integer 0-5",
+        },
+        SettableSpec {
+            key: "search.requests_per_minute",
+            parser: parse_u32,
+            expected: "integer",
+        },
+        SettableSpec {
+            key: "search.retry_after_ceiling",
+            parser: parse_string,
+            expected: "humantime string (e.g. \"30s\")",
+        },
     ]
 }
 
@@ -340,6 +419,44 @@ fn parse_log_level(s: &str) -> Result<toml_edit::Item, String> {
     match s {
         "trace" | "debug" | "info" | "warn" | "error" => Ok(toml_edit::value(s.to_string())),
         _ => Err(format!("not a valid log level: {s}")),
+    }
+}
+
+/// Both search bounds are enforced here as well as in
+/// [`crate::search::request::validate_config`]. The load-time check is the
+/// load-bearing one — a hand-edited file must still be rejected — but a
+/// `config set` that silently writes a value the next `rover search` will
+/// refuse is a worse experience than failing at the keystroke that caused
+/// it. The limits are read from the same constants either way, so the two
+/// can never disagree.
+fn parse_search_count(s: &str) -> Result<toml_edit::Item, String> {
+    let n: u8 = s
+        .parse()
+        .map_err(|_| format!("not a non-negative 8-bit integer: {s}"))?;
+    let max = crate::search::request::MAX_COUNT;
+    if !(1..=max).contains(&n) {
+        return Err(format!("must be between 1 and {max}: {s}"));
+    }
+    Ok(toml_edit::value(i64::from(n)))
+}
+
+fn parse_search_max_retries(s: &str) -> Result<toml_edit::Item, String> {
+    let n: u8 = s
+        .parse()
+        .map_err(|_| format!("not a non-negative 8-bit integer: {s}"))?;
+    let max = crate::search::request::MAX_RETRIES;
+    if n > max {
+        return Err(format!(
+            "must be between 0 and {max} — every retry is a billable search request: {s}"
+        ));
+    }
+    Ok(toml_edit::value(i64::from(n)))
+}
+
+fn parse_safe_search(s: &str) -> Result<toml_edit::Item, String> {
+    match s {
+        "off" | "moderate" | "strict" => Ok(toml_edit::value(s.to_string())),
+        _ => Err(format!("not a valid safe_search level: {s}")),
     }
 }
 
@@ -429,6 +546,66 @@ mod tests {
     fn unknown_key_is_rejected() {
         let r = apply_set(std::path::Path::new("/dev/null"), "bogus.key", "x");
         assert!(matches!(r, Err(SetError::Unsettable { .. })));
+    }
+
+    /// No settable key can put a credential on disk. The only
+    /// credential-adjacent key in the whole table is `search.api_key_env`,
+    /// which names the *environment variable* to read the token from — the
+    /// same convention the cloud backends and captioners already use. A new
+    /// key like `search.api_key` would fail here.
+    #[test]
+    fn no_settable_key_can_hold_a_credential() {
+        let credentialish: Vec<&str> = settable_keys()
+            .into_iter()
+            .filter(|k| {
+                // Only the leaf, so `*_tokens` (a budget) is not mistaken
+                // for `token` (a credential).
+                let leaf = k.rsplit('.').next().unwrap_or(k).to_ascii_lowercase();
+                leaf.contains("api_key")
+                    || leaf.contains("secret")
+                    || leaf.contains("password")
+                    || leaf == "key"
+                    || leaf == "token"
+                    || leaf == "credential"
+            })
+            .collect();
+        assert_eq!(
+            credentialish,
+            vec!["search.api_key_env"],
+            "a settable key would write a credential into rover.toml"
+        );
+    }
+
+    /// The two bounded `[search]` numbers are rejected at the keystroke, not
+    /// only at the next load, so `config set` never writes a value the next
+    /// search would refuse.
+    #[test]
+    fn out_of_range_search_numbers_are_rejected_at_set_time() {
+        let tmp = tempdir().unwrap();
+        let p = tmp.path().join("rover.toml");
+        std::fs::write(&p, "").unwrap();
+
+        for (key, bad) in [
+            ("search.count", "0"),
+            ("search.count", "21"),
+            ("search.max_retries", "6"),
+        ] {
+            let r = apply_set(&p, key, bad);
+            assert!(
+                matches!(r, Err(SetError::Parse { .. })),
+                "{key} = {bad} should not be settable, got {r:?}"
+            );
+        }
+
+        // The file is untouched by a rejected set.
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "");
+
+        // In-range values still write.
+        apply_set(&p, "search.count", "20").unwrap();
+        apply_set(&p, "search.max_retries", "0").unwrap();
+        let after = std::fs::read_to_string(&p).unwrap();
+        assert!(after.contains("count = 20"), "{after}");
+        assert!(after.contains("max_retries = 0"), "{after}");
     }
 
     #[test]

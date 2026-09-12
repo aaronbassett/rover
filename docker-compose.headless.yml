@@ -10,6 +10,11 @@ services:
       ROVER_HTTP_TOKEN: "${ROVER_HTTP_TOKEN:?set ROVER_HTTP_TOKEN in .env — generate with: openssl rand -hex 32}"
       ROVER_CONFIG: /config/rover.toml
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Web search credential. Optional: unset simply leaves `search`
+      # unconfigured — everything else, fetching included, works as before.
+      # Never put the key in rover.toml; `[search] api_key_env` names this
+      # variable, and only the name is ever written to a file.
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
       RUST_LOG: info
     volumes:
       - rover-data:/data

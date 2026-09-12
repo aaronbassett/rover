@@ -111,8 +111,41 @@ jobs:
       # tasks_lifecycle, plus the `#[ignore]`'d feature-gated smokes)
       # still run nightly via `smoketest.yml`.
 
+      # The `web-search` feature must be exercised on the blocking path, not
+      # only nightly: it is compiled into every official prebuilt binary
+      # (`[package.metadata.dist] features`), so a break here ships. All of
+      # these tests are wiremock-backed — nothing calls the real Brave API.
+      - name: cargo test --features web-search (search suites)
+        run: |
+          cargo test --features test-loopback,web-search \
+            --test search_brave \
+            --test mcp_search \
+            --test cli_search \
+            --test meta_hook \
+            --test meta_use
+
+      # The project must keep compiling without `web-search`, and the
+      # feature-disabled UX (which those suites also assert) must keep
+      # working. `--lib` covers the unit tests that are cfg-aware.
+      - name: cargo test without web-search (feature-disabled behaviour)
+        run: |
+          cargo test --features test-loopback --lib search
+          cargo test --features test-loopback \
+            --test cli_search \
+            --test meta_hook \
+            --test meta_use
+
+      # The exact feature set the release binaries are built with. Guards
+      # against a combination that compiles alone but not together.
+      - name: cargo clippy --features headless,web-search
+        run: cargo clippy --all-targets --features headless,web-search,test-loopback -- -D warnings
+
       - name: cargo build --release
         run: cargo build --release
+
+      # The release feature set, built the way `dist` builds it.
+      - name: cargo build --release --features headless,web-search
+        run: cargo build --release --no-default-features --features headless,web-search
 
   msrv:
     name: MSRV (1.96.0)
@@ -253,6 +286,22 @@ jobs:
             echo "::error::expected 401 for /mcp with no Authorization header against a container built with ROVER_HTTP_TOKEN set, got $status"
             exit 1
           fi
+      # Proves `web-search` is actually compiled into the shipped image.
+      # With no credential set, a compiled build says "not configured" and an
+      # uncompiled one says "not available in this build" — so this
+      # distinguishes the two rather than just asserting a non-zero exit.
+      - name: Web search is compiled into the image
+        run: |
+          set +e
+          out=$(docker run --rm -e BRAVE_SEARCH_API_KEY= rover:ci search "rover mcp" 2>&1)
+          set -e
+          echo "$out"
+          if echo "$out" | grep -q "not available in this build"; then
+            echo "::error::the image was built without the web-search feature"
+            exit 1
+          fi
+          echo "$out" | grep -q "not configured"
+
       - name: Stop the container
         if: always()
         run: docker rm -f rover-ci

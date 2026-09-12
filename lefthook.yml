@@ -36,6 +36,13 @@ pre-push:
     clippy:
       run: cargo clippy --all-targets --features test-loopback -- -D warnings
 
+    # Also lint the exact feature set the release binaries are built with
+    # (`[package.metadata.dist] features` in Cargo.toml). A combination that
+    # compiles alone but not together would otherwise only surface in CI —
+    # or, worse, in the release job.
+    clippy-release-features:
+      run: cargo clippy --all-targets --no-default-features --features headless,web-search,test-loopback -- -D warnings
+
     # Fast feedback only on the blocking path: lib unit tests (the
     # `#[cfg(test)] mod tests` blocks inside `src/`). The integration
     # suite under `tests/*.rs` runs in the nightly `smoketest` workflow
@@ -44,6 +51,12 @@ pre-push:
     # intervals, so it's deliberately kept off the push/merge path.
     test:
       run: cargo test --lib --features test-loopback
+
+    # The unit tests are cfg-aware: several assert the *feature-disabled*
+    # behaviour (`search::` in particular). Run them both ways so a change
+    # that only holds in one build shape is caught before the push.
+    test-web-search:
+      run: cargo test --lib --features test-loopback,web-search
 
     build:
       run: cargo build --release

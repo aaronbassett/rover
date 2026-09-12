@@ -52,6 +52,9 @@ enum Command {
     /// One-shot fetch, prints markdown to stdout.
     Fetch(FetchArgs),
 
+    /// Search the web for candidate URLs (then read them with `rover fetch`).
+    Search(SearchArgs),
+
     /// Inspect or monitor a batch_fetch task (alias for `rover task` with a kind check).
     Batch {
         id: String,
@@ -145,6 +148,100 @@ struct FetchArgs {
     /// --max-tokens; the body is replaced with the summary.
     #[arg(long, value_name = "JSON")]
     summarize: Option<String>,
+}
+
+/// `rover search` arguments.
+///
+/// The subcommand exists in every build, including one compiled without
+/// `web-search`: a clear "not available in this build, here is how to get
+/// it" beats clap's "unrecognized subcommand", and it keeps `rover --help`
+/// the same everywhere.
+#[derive(Debug, clap::Args)]
+struct SearchArgs {
+    /// The search query. Provider search operators work here: "exact
+    /// phrase", -excluded, site:, filetype:, intitle:, inbody:, lang:,
+    /// loc:, and AND/OR/NOT (uppercase).
+    query: String,
+
+    /// Number of results (1-20). Default: [search] count.
+    #[arg(short = 'n', long)]
+    count: Option<u8>,
+
+    /// Zero-based page index (0-9). Each page is a separate billable
+    /// request; the human output says when more are available.
+    #[arg(long)]
+    offset: Option<u8>,
+
+    /// Two-letter country code results are drawn from, or ALL.
+    #[arg(long)]
+    country: Option<String>,
+
+    /// Content language (e.g. en, pt-br). Overrides [search] language.
+    #[arg(long)]
+    language: Option<String>,
+
+    /// Language for provider response metadata (e.g. en-GB).
+    #[arg(long)]
+    ui_language: Option<String>,
+
+    /// Adult-content filter.
+    #[arg(long, value_parser = ["off", "moderate", "strict"])]
+    safe_search: Option<String>,
+
+    /// Restrict by page age: day, week, month, year, or a range like
+    /// 2024-01-01..2024-06-30.
+    #[arg(long)]
+    freshness: Option<String>,
+
+    /// Ask for up to 5 extra excerpts per result.
+    #[arg(long)]
+    extra_snippets: bool,
+
+    /// Search the query verbatim, without provider spell-correction.
+    #[arg(long)]
+    no_spellcheck: bool,
+
+    /// Include the provider's crawl timestamps on each result.
+    #[arg(long)]
+    fetch_metadata: bool,
+
+    /// Include the provider's structured per-result extras (article,
+    /// product, rating, schema.org, ...) verbatim. Verbose.
+    #[arg(long)]
+    enrichment: bool,
+
+    /// Restrict results to a domain. Repeatable; composed as `site:`.
+    #[arg(long, value_name = "DOMAIN")]
+    site: Vec<String>,
+
+    /// Exclude a domain. Repeatable; composed as `NOT site:`.
+    #[arg(long, value_name = "DOMAIN")]
+    exclude_site: Vec<String>,
+
+    /// Custom ranking rule (Goggle): a URL hosting one, or an inline
+    /// definition. Repeatable, max 3. Replaces [search] goggles.
+    #[arg(long, value_name = "URL_OR_DEFINITION")]
+    goggle: Vec<String>,
+
+    /// `human` (default) prints a ranked list; `json` prints the same
+    /// envelope the MCP `search` tool returns.
+    #[arg(long, value_enum, default_value_t = SearchFormat::Human)]
+    format: SearchFormat,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum SearchFormat {
+    Human,
+    Json,
+}
+
+impl From<SearchFormat> for rover::cli::search::OutputFormat {
+    fn from(v: SearchFormat) -> Self {
+        match v {
+            SearchFormat::Human => rover::cli::search::OutputFormat::Human,
+            SearchFormat::Json => rover::cli::search::OutputFormat::Json,
+        }
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -326,6 +423,9 @@ async fn dispatch(cli: Cli) -> ExitCode {
         Command::Fetch(args) => {
             rover::cli::fetch::run(args.into_runtime_args(), cli.config.as_deref()).await
         }
+        Command::Search(args) => {
+            rover::cli::search::run(args.into_runtime_args(), cli.config.as_deref()).await
+        }
         Command::Cache(sub) => {
             let args = sub.into_runtime_args();
             rover::cli::cache::run(args, cli.config.as_deref()).await
@@ -374,7 +474,7 @@ async fn dispatch(cli: Cli) -> ExitCode {
             .await
         }
         Command::Meta(cmd) => {
-            return match rover::cli::meta::run(cmd) {
+            return match rover::cli::meta::run(cmd, cli.config.as_deref()) {
                 Ok(code) => ExitCode::from(code as u8),
                 Err(e) => {
                     eprintln!("rover: {e:#}");
@@ -460,6 +560,29 @@ impl FetchArgs {
             max_retries: self.max_retries,
             max_tokens: self.max_tokens,
             summarize: self.summarize,
+        }
+    }
+}
+
+impl SearchArgs {
+    fn into_runtime_args(self) -> rover::cli::search::Args {
+        rover::cli::search::Args {
+            query: self.query,
+            count: self.count,
+            offset: self.offset,
+            country: self.country,
+            language: self.language,
+            ui_language: self.ui_language,
+            safe_search: self.safe_search,
+            freshness: self.freshness,
+            extra_snippets: self.extra_snippets,
+            no_spellcheck: self.no_spellcheck,
+            fetch_metadata: self.fetch_metadata,
+            enrichment: self.enrichment,
+            site: self.site,
+            exclude_site: self.exclude_site,
+            goggle: self.goggle,
+            format: self.format.into(),
         }
     }
 }

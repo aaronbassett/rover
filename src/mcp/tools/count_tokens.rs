@@ -338,6 +338,10 @@ mod tests {
                     )
                     .unwrap(),
                 ),
+                std::sync::Arc::new(crate::search::SearchService::new(
+                    &crate::config::SearchConfig::default(),
+                    "rover-test/0",
+                )),
                 crate::mcp::TransportKind::Stdio,
                 #[cfg(feature = "headless")]
                 std::sync::Arc::new(tokio::sync::OnceCell::new()),

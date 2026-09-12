@@ -84,6 +84,34 @@ jobs:
       # `chrome_executable`, so it needs no working browser and always runs.
       - run: cargo test --features headless,test-loopback --test headless_auto_degrade
 
+  feature-web-search:
+    name: feature web-search (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The whole suite with search compiled in — the same feature set the
+      # prebuilt binaries ship. Every search test is wiremock-backed; no
+      # credential is configured, so nothing can reach the real Brave API
+      # even by accident.
+      - run: cargo test --features test-loopback,web-search
+        env:
+          # Belt and braces: even if a test forgot its own env var, there is
+          # no credential in the environment for it to pick up.
+          BRAVE_SEARCH_API_KEY: ""
+
+  feature-release-set:
+    name: feature headless,web-search (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The exact combination `[package.metadata.dist]` builds for release.
+      - run: cargo check --all-targets --no-default-features --features headless,web-search
+      - run: cargo test --features headless,web-search,test-loopback --test mcp_search --test search_brave
+
   binary-size:
     name: Binary size (default features < 75 MiB)
     runs-on: ubuntu-latest

@@ -10,6 +10,7 @@ const WALLS: [string, ReactNode][] = [
 ];
 
 const TOOLS: [string, ReactNode][] = [
+  ['search', <>Find candidate URLs with snippets, dates and source metadata, filtered by site, region, language and freshness. Discovery only &mdash; Rover never fetches a result for you.</>],
   ['fetch', <>Turn a single URL into cleaned Markdown, with caching, headless rendering, image modes, token budgeting, and inline summarisation.</>],
   ['batch_fetch', <>Fetch N URLs concurrently with per-domain rate limiting, streaming NDJSON progress as each one lands.</>],
   ['summarize', <>Compact a page through an extractive offline backend or a cloud one, steered by <code>focus</code>, <code>preserve</code>, and <code>target_tokens</code>.</>],
@@ -87,7 +88,7 @@ export default function HomeSections(): ReactNode {
 
       <section className={styles.section}>
         <p className="rover-kicker">The tools</p>
-        <h2 className={styles.h2}>Five tools your agent gets on day one.</h2>
+        <h2 className={styles.h2}>Six tools your agent gets on day one.</h2>
         <div className={styles.tools}>
           {TOOLS.map(([n, d]) => (
             <div key={n} className={styles.tool}><code>{n}</code><p>{d}</p></div>

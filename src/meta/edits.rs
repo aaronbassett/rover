@@ -76,8 +76,21 @@ pub fn merge_mcp_server(json_text: &str) -> anyhow::Result<String> {
     Ok(out)
 }
 
-/// Add Rover's `SessionStart` and `PreToolUse(WebFetch)` hooks to a
-/// `settings.json` document, idempotently (keyed on `hook_command`).
+/// The `PreToolUse` matcher Rover registers.
+///
+/// Both built-in web tools, one hook command: the handler dispatches on
+/// `tool_name` and stays silent when it has nothing useful to say (Rover
+/// search unavailable → no WebSearch nudge). Registering the matcher
+/// unconditionally keeps `settings.json` stable across capability changes,
+/// so exporting an API key later needs no re-install.
+pub const PRETOOL_MATCHER: &str = "WebFetch|WebSearch";
+
+/// Add Rover's `SessionStart` and `PreToolUse` hooks to a `settings.json`
+/// document, idempotently (keyed on `hook_command`).
+///
+/// Re-running upgrades an existing Rover hook group's matcher in place, so
+/// an install predating the `WebSearch` matcher picks it up from
+/// `rover meta use` rather than needing the file hand-edited.
 pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String> {
     let mut root: serde_json::Value = if json_text.trim().is_empty() {
         serde_json::json!({})
@@ -100,7 +113,7 @@ pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String
         Some("startup|clear|compact"),
         hook_command,
     )?;
-    add_event_hook(hooks, "PreToolUse", Some("WebFetch"), hook_command)?;
+    add_event_hook(hooks, "PreToolUse", Some(PRETOOL_MATCHER), hook_command)?;
 
     let mut out = serde_json::to_string_pretty(&root)?;
     out.push('\n');
@@ -118,7 +131,8 @@ fn add_event_hook(
         .as_array_mut()
         .with_context(|| format!("settings.json `hooks.{event}` is not a JSON array"))?;
 
-    let already = arr.iter().any(|group| {
+    // Find an existing group carrying our command, if any.
+    let existing = arr.iter_mut().find(|group| {
         group
             .get("hooks")
             .and_then(|h| h.as_array())
@@ -127,7 +141,14 @@ fn add_event_hook(
                     .any(|hk| hk.get("command").and_then(|c| c.as_str()) == Some(command))
             })
     });
-    if already {
+    if let Some(group) = existing {
+        // Already installed. Refresh the matcher so a re-run upgrades an
+        // older install (e.g. `WebFetch` → `WebFetch|WebSearch`) instead of
+        // leaving it on a stale value forever. Anything else in the group is
+        // left alone: it may be the user's.
+        if let (Some(m), Some(obj)) = (matcher, group.as_object_mut()) {
+            obj.insert("matcher".to_string(), serde_json::json!(m));
+        }
         return Ok(());
     }
 
@@ -160,7 +181,8 @@ mod tests {
         assert_eq!(ss["type"], "command");
         assert_eq!(ss["command"], HOOK_CMD);
         let pt = &v["hooks"]["PreToolUse"][0];
-        assert_eq!(pt["matcher"], "WebFetch");
+        // Both built-in web tools are nudged from one hook command.
+        assert_eq!(pt["matcher"], "WebFetch|WebSearch");
         assert_eq!(pt["hooks"][0]["command"], HOOK_CMD);
     }
 
@@ -172,12 +194,41 @@ mod tests {
         // Unrelated Bash hook preserved.
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert!(pre.iter().any(|g| g["matcher"] == "Bash"));
-        assert!(pre.iter().any(|g| g["matcher"] == "WebFetch"));
+        assert!(pre.iter().any(|g| g["matcher"] == "WebFetch|WebSearch"));
         // Re-running adds nothing.
         let twice = merge_hooks(&once, HOOK_CMD).unwrap();
         assert_eq!(twice, once);
         let v2: serde_json::Value = serde_json::from_str(&twice).unwrap();
         assert_eq!(v2["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    }
+
+    /// An install predating the WebSearch matcher must be upgraded in place
+    /// by a re-run, not left behind — and the user's own hooks must survive.
+    #[test]
+    fn rerunning_upgrades_a_stale_matcher_in_place() {
+        let legacy = r#"{"hooks":{"PreToolUse":[
+            {"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]},
+            {"matcher":"WebFetch","hooks":[{"type":"command","command":"rover meta hook claude"}]}
+        ]}}"#;
+        let out = merge_hooks(legacy, HOOK_CMD).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        // Upgraded, not duplicated.
+        assert_eq!(pre.len(), 2, "{v}");
+        assert!(
+            pre.iter()
+                .any(|g| g["matcher"] == "WebFetch|WebSearch"
+                    && g["hooks"][0]["command"] == HOOK_CMD),
+            "{v}"
+        );
+        // The user's unrelated hook is untouched.
+        assert!(
+            pre.iter()
+                .any(|g| g["matcher"] == "Bash" && g["hooks"][0]["command"] == "echo hi"),
+            "{v}"
+        );
+        // And it is now a fixed point.
+        assert_eq!(merge_hooks(&out, HOOK_CMD).unwrap(), out);
     }
 
     #[test]

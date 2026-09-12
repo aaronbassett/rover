@@ -122,6 +122,22 @@ pub fn known_leaves() -> &'static [&'static str] {
         "image_captions.cache.ttl",
         "image_captions.cache.restrict_to",
         "image_captions.cache.store_raw_image",
+        "search.api_key_env",
+        "search.base_url",
+        "search.count",
+        "search.country",
+        "search.language",
+        "search.ui_language",
+        "search.safe_search",
+        "search.extra_snippets",
+        "search.spellcheck",
+        "search.include_fetch_metadata",
+        "search.enrichment",
+        "search.goggles",
+        "search.timeout_secs",
+        "search.max_retries",
+        "search.requests_per_minute",
+        "search.retry_after_ceiling",
     ]
 }
 

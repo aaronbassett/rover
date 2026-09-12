@@ -282,6 +282,61 @@ A free-form section: repeat it for each named backend. See [Summarisation backen
 
 When the `[backends]` map is empty, Rover installs an implicit `default` extractive backend, so a fresh install works offline without any configuration. Add any explicit `[backends.*]` block and that implicit injection is disabled.
 
+## `[search]`
+
+Web search defaults. Needs the `web-search` Cargo feature — every official
+prebuilt binary has it — plus an API key. Omit the block entirely and Rover
+behaves exactly as before: `search` reports `search_not_configured`, and
+fetching is unaffected. Full guide: [Web search](/docs/web-search).
+
+Every key here is a *default*; the `search` MCP tool and `rover search` can
+override each one per call.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `api_key_env` | string | `"BRAVE_SEARCH_API_KEY"` | Name of the environment variable holding the Brave subscription token. The token itself is never stored in config and never logged. |
+| `base_url` | string | Brave's web-search endpoint | Override to front the API with a proxy. Must be `http`/`https`. |
+| `count` | integer | `10` | Results per page, 1–20. |
+| `country` | string | `"US"` | Two-letter country code results are drawn from, or `ALL`. |
+| `language` | string | `"en"` | Content language (Brave's `search_lang`), e.g. `pt-br`. |
+| `ui_language` | string | `"en-US"` | Language for provider-generated response metadata (Brave's `ui_lang`). |
+| `safe_search` | string | `"moderate"` | `off`, `moderate`, or `strict`. |
+| `extra_snippets` | bool | `false` | Ask for up to 5 additional excerpts per result. |
+| `spellcheck` | bool | `true` | Let the provider correct the query. When it does, the corrected query is what was searched and comes back as `query.altered`. |
+| `include_fetch_metadata` | bool | `false` | Include the provider's crawl timestamps per result. |
+| `enrichment` | bool | `false` | Keep the provider's structured per-result extras (article, product, rating, schema.org, …) verbatim. Off by default because it can dwarf the result itself. |
+| `goggles` | string[] | `[]` | Default re-ranking rules applied to every search. Each entry is a URL hosting a Goggle or an inline definition; at most 3. |
+| `timeout_secs` | integer | `10` | Per-request timeout. |
+| `max_retries` | integer | `2` | Retries for a *retryable* failure (429, 5xx, network) only. Capped at 5 — every attempt is billable. |
+| `requests_per_minute` | integer | `60` | Client-side pacing of the search endpoint. The default matches Brave's free-tier limit. |
+| `retry_after_ceiling` | humantime | `"30s"` | Ceiling applied to a provider `Retry-After`, so a hostile value cannot park a request. |
+
+The enum-valued keys (`country`, `language`, `ui_language`, `safe_search`)
+are validated against the provider's documented value lists at config-load
+time and normalised to their canonical casing — so a typo fails when the
+file loads rather than when it costs a paid request. That validation runs in
+**every** build, including one compiled without `web-search`, so a single
+`rover.toml` stays portable across machines.
+
+:::info The API key is never in the file
+`api_key_env` names an environment variable — the same convention
+`[backends.<name>]` and `[captioners.<name>]` use. `rover config set` has no
+key that could write a token to disk, and `rover config show` prints the
+variable name, never its value.
+:::
+
+```toml
+[search]
+# api_key_env = "BRAVE_SEARCH_API_KEY"   # the default; only change the name
+count = 5
+country = "GB"
+language = "en-gb"
+ui_language = "en-GB"
+safe_search = "strict"
+extra_snippets = true
+goggles = ["https://raw.githubusercontent.com/brave/goggles-quickstart/main/goggles/tech_blogs.goggle"]
+```
+
 ## `[debug]`
 
 | Key | Type | Default | Description |
@@ -301,7 +356,12 @@ When the `[backends]` map is empty, Rover installs an implicit `default` extract
 | `ROVER_LOG_LEVEL` | `debug.log_level` | |
 | `RUST_LOG` | tracing filter | Takes precedence over `debug.log_level`. |
 
-`rover config show` annotates every leaf with its effective source: `defaults`, `file`, or `env`. Only the 45 leaves listed by `provenance::known_leaves()` are tracked, and coverage varies by section rather than being all-or-nothing. Two dynamic sections — the free-form `[backends.<name>]` and `[captioners.<name>]` maps — are entirely untracked, and so is all of `[prompt_injection]`. A few other sections track their primary knobs but omit some secondary ones: `cache` omits `stale_while_revalidate_window` and `override_no_store_domains`; `rate_limit` omits `initial_backoff`, `max_backoff`, `retry_after_ceiling`, `jitter_seed`, and `deferred_retry_threshold_secs`; `robots` omits `ignore_domains`. `headless` is the sparsest: it tracks only 2 of its 12 keys (`max_concurrent`, `chrome_executable`) and omits the other 10 — `auto_detect_spa`, `default_wait`, `timeout_secs`, `launch_delay_secs`, and all six `block_*` toggles (`block_images`, `block_fonts`, `block_media`, `block_css`, `block_third_party`, `block_service_workers`). Every other section above — `fetch`, `ssrf`, `tokenizer`, `mcp`, `http`, `output`, `summarization` (including `summarization.tables`), `image_captions` (including `image_captions.cache`), and `debug` — is tracked in full.
+Credentials are read from the environment by *name*, not overridden by it:
+`[search] api_key_env` (default `BRAVE_SEARCH_API_KEY`), and the
+`api_key_env` of each `[backends.<name>]` / `[captioners.<name>]` block. Only
+the variable name ever appears in a config file or in `rover config show`.
+
+`rover config show` annotates every leaf with its effective source: `defaults`, `file`, or `env`. Only the leaves listed by `provenance::known_leaves()` are tracked, and coverage varies by section rather than being all-or-nothing. Two dynamic sections — the free-form `[backends.<name>]` and `[captioners.<name>]` maps — are entirely untracked, and so is all of `[prompt_injection]`. A few other sections track their primary knobs but omit some secondary ones: `cache` omits `stale_while_revalidate_window` and `override_no_store_domains`; `rate_limit` omits `initial_backoff`, `max_backoff`, `retry_after_ceiling`, `jitter_seed`, and `deferred_retry_threshold_secs`; `robots` omits `ignore_domains`. `headless` is the sparsest: it tracks only 2 of its 12 keys (`max_concurrent`, `chrome_executable`) and omits the other 10 — `auto_detect_spa`, `default_wait`, `timeout_secs`, `launch_delay_secs`, and all six `block_*` toggles (`block_images`, `block_fonts`, `block_media`, `block_css`, `block_third_party`, `block_service_workers`). Every other section above — `fetch`, `ssrf`, `tokenizer`, `mcp`, `http`, `output`, `summarization` (including `summarization.tables`), `image_captions` (including `image_captions.cache`), `search`, and `debug` — is tracked in full.
 
 ## Worked example
 
