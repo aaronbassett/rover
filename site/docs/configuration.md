@@ -295,7 +295,7 @@ override each one per call.
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `api_key_env` | string | `"BRAVE_SEARCH_API_KEY"` | Name of the environment variable holding the Brave subscription token. The token itself is never stored in config and never logged. |
-| `base_url` | string | Brave's web-search endpoint | Override to front the API with a proxy. Must be `http`/`https`. |
+| `base_url` | string | Brave's web-search endpoint | Override to front the API with a proxy. Must be `http`/`https`. Plain `http` to a non-loopback host warns at load: the subscription token rides on every request as a header, so it would go out in the clear. |
 | `count` | integer | `10` | Results per page, 1–20. |
 | `country` | string | `"US"` | Two-letter country code results are drawn from, or `ALL`. |
 | `language` | string | `"en"` | Content language (Brave's `search_lang`), e.g. `pt-br`. |
@@ -308,7 +308,7 @@ override each one per call.
 | `goggles` | string[] | `[]` | Default re-ranking rules applied to every search. Each entry is a URL hosting a Goggle or an inline definition; at most 3. |
 | `timeout_secs` | integer | `10` | Per-request timeout. |
 | `max_retries` | integer | `2` | Retries for a *retryable* failure (429, 5xx, network) only. Capped at 5 — every attempt is billable. |
-| `requests_per_minute` | integer | `60` | Client-side pacing of the search endpoint. The default matches Brave's free-tier limit. |
+| `requests_per_minute` | integer | `60` | Client-side pacing of the search endpoint, 1–6000. The default matches Brave's free-tier limit; the ceiling is a sanity cap, well above any published tier. |
 | `retry_after_ceiling` | humantime | `"30s"` | Ceiling applied to a provider `Retry-After`, so a hostile value cannot park a request. |
 
 The enum-valued keys (`country`, `language`, `ui_language`, `safe_search`)

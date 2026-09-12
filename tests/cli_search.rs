@@ -355,6 +355,58 @@ mod searching {
         );
     }
 
+    /// The human renderer's other job: no provider-controlled string may
+    /// forge a ranked entry in the terminal. The guard deliberately leaves
+    /// hostnames alone (and the echoed query is prose it *does* rewrite, but
+    /// rewriting does not remove newlines), so this is the renderer's own
+    /// guarantee, checked end to end through the real binary.
+    #[tokio::test]
+    async fn no_provider_string_can_forge_a_ranked_entry_in_the_human_view() {
+        let server = server_with(serde_json::json!({
+            "query": {
+                "original": "q\n98. Forged by the echoed query\n   https://evil.example/",
+                "altered": "q2"
+            },
+            "web": {"results": [{
+                "title": "Normal",
+                "url": "https://a.example/",
+                "meta_url": {
+                    "hostname": "a.example\n97. Forged by hostname\n   https://evil.example/"
+                },
+                "language": "en\n96. Forged by language",
+                "schemas": [{"@type": "Article\n95. Forged by schema"}]
+            }]}
+        }))
+        .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = config_for(&server, tmp.path());
+
+        let assert = rover()
+            .env("ROVER_DATA_DIR", tmp.path())
+            .env(ENV_VAR, KEY)
+            .args(["--config", cfg.to_str().unwrap(), "search", "q"])
+            .assert()
+            .success();
+        let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+        // Exactly one ranked entry, and it is Rover's.
+        assert_eq!(
+            out.lines().filter(|l| l.starts_with("1. ")).count(),
+            1,
+            "{out}"
+        );
+        for forged in ["98. ", "97. ", "96. ", "95. "] {
+            assert!(
+                !out.lines().any(|l| l.starts_with(forged)),
+                "forged entry {forged:?} survived:\n{out}"
+            );
+        }
+        // The text is still shown — flattened onto the line it belongs to,
+        // not suppressed.
+        assert!(out.contains("97. Forged by hostname"), "{out}");
+        assert!(out.contains("1 result(s) via brave"), "{out}");
+    }
+
     /// An argument Rover can reject locally must not cost a request.
     #[tokio::test]
     async fn locally_invalid_arguments_never_reach_the_provider() {

@@ -85,12 +85,21 @@ pub fn merge_mcp_server(json_text: &str) -> anyhow::Result<String> {
 /// so exporting an API key later needs no re-install.
 pub const PRETOOL_MATCHER: &str = "WebFetch|WebSearch";
 
+/// `PreToolUse` matchers Rover itself shipped in an earlier release, and may
+/// therefore replace with [`PRETOOL_MATCHER`] on a re-run.
+///
+/// The list is exhaustive on purpose: a matcher not on it is one Rover never
+/// wrote, which means the user did, and their edit must survive.
+const STALE_PRETOOL_MATCHERS: &[&str] = &["WebFetch"];
+
 /// Add Rover's `SessionStart` and `PreToolUse` hooks to a `settings.json`
 /// document, idempotently (keyed on `hook_command`).
 ///
-/// Re-running upgrades an existing Rover hook group's matcher in place, so
-/// an install predating the `WebSearch` matcher picks it up from
-/// `rover meta use` rather than needing the file hand-edited.
+/// Re-running upgrades an existing Rover hook group's matcher in place *when
+/// it still holds a value Rover shipped*, so an install predating the
+/// `WebSearch` matcher picks it up from `rover meta use` rather than needing
+/// the file hand-edited. A matcher the user has since changed is left as
+/// found.
 pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String> {
     let mut root: serde_json::Value = if json_text.trim().is_empty() {
         serde_json::json!({})
@@ -107,23 +116,37 @@ pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String
 
     // `startup|clear|compact` re-runs the SessionStart steering on every session
     // entry (fresh start, `/clear`, and post-compaction), not just cold start.
+    // No stale matchers to upgrade: this one has never changed, so a value
+    // that differs from it is one the user chose.
     add_event_hook(
         hooks,
         "SessionStart",
         Some("startup|clear|compact"),
+        &[],
         hook_command,
     )?;
-    add_event_hook(hooks, "PreToolUse", Some(PRETOOL_MATCHER), hook_command)?;
+    add_event_hook(
+        hooks,
+        "PreToolUse",
+        Some(PRETOOL_MATCHER),
+        STALE_PRETOOL_MATCHERS,
+        hook_command,
+    )?;
 
     let mut out = serde_json::to_string_pretty(&root)?;
     out.push('\n');
     Ok(out)
 }
 
+/// `upgrade_from` lists the matcher values Rover shipped in earlier releases
+/// for this event. An existing group whose matcher is one of them is
+/// rewritten to `matcher`; every other value — including one the user
+/// widened by hand — is left exactly as found.
 fn add_event_hook(
     hooks: &mut serde_json::Map<String, serde_json::Value>,
     event: &str,
     matcher: Option<&str>,
+    upgrade_from: &[&str],
     command: &str,
 ) -> anyhow::Result<()> {
     let arr = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
@@ -142,11 +165,17 @@ fn add_event_hook(
             })
     });
     if let Some(group) = existing {
-        // Already installed. Refresh the matcher so a re-run upgrades an
-        // older install (e.g. `WebFetch` → `WebFetch|WebSearch`) instead of
-        // leaving it on a stale value forever. Anything else in the group is
-        // left alone: it may be the user's.
-        if let (Some(m), Some(obj)) = (matcher, group.as_object_mut()) {
+        // Already installed. Rewrite the matcher only when it still holds a
+        // value Rover itself wrote in an earlier release, so a re-run
+        // upgrades its own stale wiring (`WebFetch` → `WebFetch|WebSearch`)
+        // without touching a matcher the user widened — a `SessionStart`
+        // extended with `resume`, say, which an unconditional refresh would
+        // silently delete. Everything else in the group is left alone for
+        // the same reason: it may be the user's.
+        if let (Some(m), Some(obj)) = (matcher, group.as_object_mut())
+            && let Some(current) = obj.get("matcher").and_then(|v| v.as_str())
+            && upgrade_from.contains(&current)
+        {
             obj.insert("matcher".to_string(), serde_json::json!(m));
         }
         return Ok(());
@@ -228,6 +257,35 @@ mod tests {
             "{v}"
         );
         // And it is now a fixed point.
+        assert_eq!(merge_hooks(&out, HOOK_CMD).unwrap(), out);
+    }
+
+    /// The migration above must not generalise into "Rover rewrites the
+    /// matcher every run". A user who added `resume` to the SessionStart
+    /// matcher keeps it: re-running `rover meta use` is wiring, not a reset.
+    #[test]
+    fn a_user_customised_matcher_survives_a_rerun() {
+        let customised = r#"{"hooks":{
+            "SessionStart":[{"matcher":"startup|clear|compact|resume",
+                             "hooks":[{"type":"command","command":"rover meta hook claude"}]}],
+            "PreToolUse":[{"matcher":"WebFetch|WebSearch|Task",
+                           "hooks":[{"type":"command","command":"rover meta hook claude"}]}]
+        }}"#;
+        let out = merge_hooks(customised, HOOK_CMD).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["hooks"]["SessionStart"][0]["matcher"], "startup|clear|compact|resume",
+            "{v}"
+        );
+        // The same rule applies to a widened PreToolUse matcher: it is not
+        // one Rover ever wrote, so it is not Rover's to replace.
+        assert_eq!(
+            v["hooks"]["PreToolUse"][0]["matcher"], "WebFetch|WebSearch|Task",
+            "{v}"
+        );
+        // No group was duplicated in the process.
+        assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+        assert_eq!(v["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
         assert_eq!(merge_hooks(&out, HOOK_CMD).unwrap(), out);
     }
 

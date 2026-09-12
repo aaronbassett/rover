@@ -5,7 +5,7 @@ the automated quality checks every change runs through.
 
 ## Prerequisites
 
-- Rust stable (MSRV 1.85, edition 2024). Install via [rustup](https://rustup.rs).
+- Rust stable (MSRV 1.96, edition 2024). Install via [rustup](https://rustup.rs).
 - [Lefthook](https://lefthook.dev) for git hooks. The simplest install is:
   - macOS: `brew install lefthook`
   - Linux/macOS via curl: `curl -1sLf 'https://lefthook.dev/install.sh' | sudo sh`

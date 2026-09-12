@@ -172,6 +172,23 @@ Brave's operators work inside `query` directly:
 smuggle a second clause into the query. Anything more elaborate goes
 straight into `query`.
 
+Several `site` entries compose an alternation, and Rover parenthesises
+it. `OR` binds tighter than the implicit `AND` between terms, so an
+unparenthesised `site:a OR site:b` would split the whole query in two
+and leave the second domain unconstrained by anything you searched for.
+The group keeps the alternation to the domains: `site: ["docs.rs",
+"doc.rust-lang.org"]` and `exclude_sites: ["pinterest.com"]` on the
+query `async trait` go out as
+
+```text
+async trait (site:docs.rs OR site:doc.rust-lang.org) NOT site:pinterest.com
+```
+
+A single `site` has nothing to alternate with and gets no parentheses.
+Exclusions sit outside the group — each `NOT` is its own conjunct — so
+an exclusion applies to the whole query rather than to one branch of
+the alternation.
+
 Brave documents operators as experimental: very restrictive combinations may
 return nothing. `query.operators` in the response reports which ones the
 provider actually recognised and applied.
@@ -242,17 +259,25 @@ and cannot vouch for. Rover treats them accordingly:
   something is detected. Search has no document to fence, so this sentence
   is the structural equivalent of the `<untrusted-content-…>` wrapper a
   fetched document gets.
-- **The prompt-injection guard runs over every prose field**: titles,
-  descriptions, extra snippets, source names, thumbnail alt text, the
-  spell-corrected and cleaned queries, related queries, and every string
-  inside `enrichment`. It is the same guard, at the same configured level,
-  that `get_metadata` applies to its fields. At the default `moderate`
-  level, a matched span is fenced in `<DANGER>…</DANGER>`; at `high` it is
-  removed; at `strict` the offending value is dropped.
+- **The guard runs over every string except the ones a consumer has to read
+  back byte-exact**: titles, descriptions, extra snippets, `age`, per-result
+  `language`, `subtype`, `content_type`, `schema_types`, source names,
+  thumbnail alt text, the icon descriptors, the echoed, spell-corrected and
+  cleaned queries, the response `language` and `country`, related queries,
+  and every string inside `enrichment`. It is the same guard, at the same
+  configured level, that `get_metadata` applies to its fields. At the
+  default `moderate` level, a matched span is fenced in
+  `<DANGER>…</DANGER>`; at `high` it is removed; at `strict` the offending
+  value is dropped.
 - **`prompt_injection` telemetry ships on every response**, with the same
   shape `fetch` and `get_metadata` carry.
-- **URLs are never rewritten.** Mangling a result URL would break the
-  handoff to `fetch`, and a URL cannot carry an injection the way prose can.
+- **URLs and timestamps are never rewritten, and nothing else is exempt.**
+  Mangling a result URL would break the handoff to `fetch`, and a URL cannot
+  carry an injection the way prose can; a rewritten date no longer parses.
+  That covers `url`, Brave's breakdown of it (`scheme`, `netloc`,
+  `hostname`, `path`, `favicon`, `image`), the thumbnail and icon sources,
+  the bare domains echoed under `query.operators.sites`, and the crawl
+  timestamps. The full rule is in [Trust & prompt injection](/docs/trust).
 - **A result is not an endorsement.** `search` returning a URL says nothing
   about whether fetching it is safe; the fetch path applies SSRF policy,
   robots, and the full guard independently.
@@ -280,11 +305,15 @@ Rover is built to keep that count honest:
   argument, an exhausted quota and a malformed response are terminal,
   because asking again gets the same answer for the same money. Backoff is
   exponential from 1s, capped at 8s.
-- **`Retry-After` is honoured and clamped** to `[search] retry_after_ceiling`
-  (default 30s), so a hostile or misconfigured value cannot park a request.
-  Unlike the fetch path, a long `Retry-After` is never deferred into a
-  background task — deferral against a metered API turns one agent call into
-  an open-ended stream of billable requests.
+- **`Retry-After` is honoured, clamped and floored.** It is clamped to
+  `[search] retry_after_ceiling` (default 30s), so a hostile or
+  misconfigured value cannot park a request, and floored at Rover's own
+  backoff, so a `Retry-After: 0` — or an HTTP-date already in the past —
+  cannot spend the whole retry budget in a burst against an endpoint that
+  has just said it is overloaded. Unlike the fetch path, a long
+  `Retry-After` is never deferred into a background task — deferral
+  against a metered API turns one agent call into an open-ended stream of
+  billable requests.
 - **Client-side pacing.** `[search] requests_per_minute` defaults to 60
   (1/s), matching Brave's free-tier limit.
 - **Local validation first.** Bad arguments never reach the network.

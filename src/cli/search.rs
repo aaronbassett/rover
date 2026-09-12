@@ -127,8 +127,9 @@ pub(crate) fn render_human(r: &SearchResponse) -> String {
         && altered != &r.query.original
     {
         out.push_str(&format!(
-            "note: searched \"{altered}\" instead of \"{}\" (spell-corrected)\n",
-            r.query.original
+            "note: searched \"{}\" instead of \"{}\" (spell-corrected)\n",
+            oneline(altered),
+            oneline(&r.query.original)
         ));
     }
     if r.query.strict_filter_warning.unwrap_or(false) {
@@ -144,7 +145,7 @@ pub(crate) fn render_human(r: &SearchResponse) -> String {
 
     for item in &r.results {
         out.push_str(&format!("\n{}. {}\n", item.rank, oneline(&item.title)));
-        out.push_str(&format!("   {}\n", item.url));
+        out.push_str(&format!("   {}\n", oneline(&item.url)));
         if let Some(d) = &item.description {
             out.push_str(&format!("   {}\n", oneline(d)));
         }
@@ -158,13 +159,19 @@ pub(crate) fn render_human(r: &SearchResponse) -> String {
         if let Some(src) = &item.source
             && let Some(h) = &src.hostname
         {
-            facts.push(h.clone());
+            facts.push(oneline(h));
         }
         if let Some(l) = &item.language {
-            facts.push(l.clone());
+            facts.push(oneline(l));
         }
         if !item.schema_types.is_empty() {
-            facts.push(item.schema_types.join("/"));
+            facts.push(
+                item.schema_types
+                    .iter()
+                    .map(|t| oneline(t))
+                    .collect::<Vec<_>>()
+                    .join("/"),
+            );
         }
         if !facts.is_empty() {
             out.push_str(&format!("   [{}]\n", facts.join(" · ")));
@@ -204,6 +211,15 @@ pub(crate) fn render_human(r: &SearchResponse) -> String {
 /// a hostile snippet from forging extra list entries in the terminal
 /// output — the injection equivalent of the nonce wrapper's forged-tag
 /// stripping, for a format that has no tags.
+///
+/// Every provider-controlled string this renderer puts on a line goes
+/// through it, **including the ones the guard deliberately does not touch**
+/// — the result URL, the hostname, the echoed query. Those are exempt from
+/// the guard because `search` → `fetch` needs them byte-exact (see
+/// `SearchResponse::guardable_fields`), which makes this function the only
+/// thing standing between a URL of `"https://a/\n99. Fake entry\n   …"` and
+/// a second, entirely attacker-authored ranked entry printed below the trust
+/// banner. Anything added to a line here needs the same treatment.
 fn oneline(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -298,6 +314,80 @@ mod tests {
             "forged entry survived:\n{out}"
         );
         assert!(out.contains("line one line two"), "{out}");
+    }
+
+    /// The URL is the field an attacker actually reaches for: the guard
+    /// never rewrites it (the `search` → `fetch` handoff needs it intact),
+    /// so the renderer is the only thing that can stop it forging a rank.
+    #[test]
+    fn a_multiline_url_cannot_forge_an_extra_entry() {
+        let mut r = result(1, "Real title");
+        r.url = "https://a.example/\n99. Fake entry\n   https://evil.example/".into();
+        let out = render_human(&response(vec![r]));
+        assert!(
+            !out.lines().any(|l| l.starts_with("99. ")),
+            "forged entry survived:\n{out}"
+        );
+        assert_eq!(
+            out.lines().filter(|l| l.starts_with("1. ")).count(),
+            1,
+            "{out}"
+        );
+        // The whole hostile URL is still printed — on one line, as one value.
+        assert!(
+            out.contains("   https://a.example/ 99. Fake entry https://evil.example/\n"),
+            "{out}"
+        );
+    }
+
+    /// The facts line carries three more provider-controlled strings:
+    /// hostname, language and the page's own schema.org `@type` values.
+    #[test]
+    fn multiline_facts_cannot_forge_extra_entries() {
+        let mut r = result(1, "Real title");
+        r.source = Some(SearchSource {
+            hostname: Some("a.example\n98. Forged by hostname\n   https://evil.example/".into()),
+            ..Default::default()
+        });
+        r.language = Some("en\n97. Forged by language".into());
+        r.schema_types = vec!["Article\n96. Forged by schema".into()];
+        let out = render_human(&response(vec![r]));
+        for forged in ["98. ", "97. ", "96. "] {
+            assert!(
+                !out.lines().any(|l| l.starts_with(forged)),
+                "forged entry {forged:?} survived:\n{out}"
+            );
+        }
+        // One facts line, all of it inside the brackets.
+        assert_eq!(
+            out.lines().filter(|l| l.starts_with("   [")).count(),
+            1,
+            "{out}"
+        );
+        assert!(out.contains("98. Forged by hostname"), "{out}");
+    }
+
+    /// A spell-correction note quotes two provider-controlled strings back
+    /// at the user, above the ranked list.
+    #[test]
+    fn a_multiline_spell_correction_note_cannot_forge_entries() {
+        let mut resp = response(vec![result(1, "Real title")]);
+        resp.query.original = "rust\n95. Forged by original".into();
+        resp.query.altered = Some("rust async\n94. Forged by altered".into());
+        let out = render_human(&resp);
+        for forged in ["95. ", "94. "] {
+            assert!(
+                !out.lines().any(|l| l.starts_with(forged)),
+                "forged entry {forged:?} survived:\n{out}"
+            );
+        }
+        assert!(
+            out.contains(
+                "note: searched \"rust async 94. Forged by altered\" instead of \
+                 \"rust 95. Forged by original\" (spell-corrected)\n"
+            ),
+            "{out}"
+        );
     }
 
     #[test]

@@ -26,6 +26,11 @@ pub const MAX_OFFSET: u8 = 9;
 /// provider blip into a bill.
 pub const MAX_RETRIES: u8 = 5;
 
+/// Sanity cap on `[search] requests_per_minute`. Client-side pacing exists
+/// to stay under the provider's limit; a value this far above any published
+/// tier is a typo, not a plan.
+pub const MAX_REQUESTS_PER_MINUTE: u32 = 6000;
+
 /// Brave's documented ceiling on simultaneously applied Goggles.
 pub const MAX_GOGGLES: usize = 3;
 
@@ -112,7 +117,8 @@ pub enum Freshness {
 impl Freshness {
     pub fn parse(s: &str) -> Result<Self, SearchError> {
         let raw = s.trim();
-        match raw.to_ascii_lowercase().as_str() {
+        let lower = raw.to_ascii_lowercase();
+        match lower.as_str() {
             "day" | "pd" | "24h" => return Ok(Self::Day),
             "week" | "pw" => return Ok(Self::Week),
             "month" | "pm" => return Ok(Self::Month),
@@ -121,15 +127,12 @@ impl Freshness {
         }
 
         // A range: `START..END` or `STARTtoEND`.
-        let split = raw
-            .split_once("..")
-            .or_else(|| raw.split_once("to"))
-            .ok_or_else(|| {
-                SearchError::InvalidRequest(format!(
-                    "unknown freshness `{raw}` (expected day, week, month, year, or a date range \
-                     like 2024-01-01..2024-06-30)"
-                ))
-            })?;
+        let split = split_range(raw, &lower).ok_or_else(|| {
+            SearchError::InvalidRequest(format!(
+                "unknown freshness `{raw}` (expected day, week, month, year, or a date range \
+                 like 2024-01-01..2024-06-30)"
+            ))
+        })?;
         let (start, end) = (split.0.trim(), split.1.trim());
         let start_d = parse_date(start)?;
         let end_d = parse_date(end)?;
@@ -154,6 +157,35 @@ impl Freshness {
             Self::Range { start, end } => format!("{start}to{end}"),
         }
     }
+}
+
+/// Split a freshness range into its two halves.
+///
+/// `..` is unambiguous: whatever follows it is meant as a date, so a bad
+/// half should be reported as a bad *date*. `to` is not — it is a common
+/// substring of ordinary words ("october", "tomorrow"), and splitting on it
+/// unconditionally answered "invalid date `oc`" to someone who simply
+/// mistyped a shorthand. So the `to` form is only taken when both halves
+/// actually parse as dates; anything else falls through to the "unknown
+/// freshness" diagnostic, which is the one that helps.
+///
+/// `lower` is `raw` lowercased with [`str::to_ascii_lowercase`], so byte
+/// offsets into it index `raw` identically — which is what lets `TO` work
+/// while the returned halves keep the caller's original casing.
+fn split_range<'a>(raw: &'a str, lower: &str) -> Option<(&'a str, &'a str)> {
+    if let Some(i) = lower.find("..") {
+        return Some((&raw[..i], &raw[i + 2..]));
+    }
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find("to") {
+        let i = from + rel;
+        let (a, b) = (&raw[..i], &raw[i + 2..]);
+        if parse_date(a.trim()).is_ok() && parse_date(b.trim()).is_ok() {
+            return Some((a, b));
+        }
+        from = i + 2;
+    }
+    None
 }
 
 fn parse_date(s: &str) -> Result<jiff::civil::Date, SearchError> {
@@ -305,9 +337,26 @@ fn compose_query(
             .iter()
             .map(|d| validate_domain(d).map(|d| format!("site:{d}")))
             .collect::<Result<_, _>>()?;
+        // `OR` binds tighter than the implicit `AND` between terms, so an
+        // unparenthesised alternation splits the whole query in two:
+        // `rust async site:a.com OR site:b.com` asks for (rust AND async AND
+        // site:a.com) OR (site:b.com) — the second domain comes back
+        // unfiltered by the query. The parens keep the alternation to the
+        // domains, which is the only thing the caller meant to alternate.
+        // Grouping is safe because `validate_domain` rejects parentheses, so
+        // a domain can never close the one opened here.
         q.push(' ');
-        q.push_str(&terms.join(" OR "));
+        if terms.len() == 1 {
+            q.push_str(&terms[0]);
+        } else {
+            q.push_str(&format!("({})", terms.join(" OR ")));
+        }
     }
+    // Exclusions need no grouping: each `NOT site:x` negates the single term
+    // it prefixes and joins the rest by the implicit `AND`, with no `OR` in
+    // the chain to reassociate it. They follow the group rather than sit
+    // inside it, so an exclusion applies to the whole query and not to one
+    // branch of the alternation.
     for d in exclude_sites {
         let d = validate_domain(d)?;
         q.push_str(&format!(" NOT site:{d}"));
@@ -410,6 +459,27 @@ fn unknown_value(field: &str, value: &str, allowed: &[&str]) -> SearchError {
     ))
 }
 
+/// Whether sending the subscription token to `url` would put it on the wire
+/// in the clear.
+///
+/// `http` cannot simply be rejected: pointing `base_url` at a local mock is
+/// how the whole search test suite runs, and fronting the API with a
+/// loopback proxy is a legitimate deployment. Neither leaves the machine, so
+/// neither is warned about — only `http` to a host that is somewhere else.
+fn sends_credential_in_cleartext(url: &url::Url) -> bool {
+    if url.scheme() != "http" {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(d)) => !d.eq_ignore_ascii_case("localhost"),
+        // `is_loopback` rather than an equality test: the whole 127.0.0.0/8
+        // block is local, and a mock server is not obliged to bind .0.1.
+        Some(url::Host::Ipv4(ip)) => !ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => !ip.is_loopback(),
+        None => true,
+    }
+}
+
 /// Validate a `[search]` block. Called from `config::validate` so a typo in
 /// `rover.toml` fails at load time in every build — including one compiled
 /// without `web-search`, so a single config file stays portable.
@@ -424,6 +494,14 @@ pub fn validate_config(cfg: &mut SearchConfig) -> Result<(), String> {
             "search.base_url `{}` must be http or https",
             cfg.base_url
         ));
+    }
+    if sends_credential_in_cleartext(&url) {
+        tracing::warn!(
+            target: "rover::search",
+            base_url = %cfg.base_url,
+            "search.base_url is http:// to a non-local host; the subscription token is sent in \
+             cleartext on every search. Use https, or front the API on loopback.",
+        );
     }
     if !(1..=MAX_COUNT).contains(&cfg.count) {
         return Err(format!(
@@ -452,9 +530,9 @@ pub fn validate_config(cfg: &mut SearchConfig) -> Result<(), String> {
     if cfg.requests_per_minute == 0 {
         return Err("search.requests_per_minute must be > 0".to_string());
     }
-    if cfg.requests_per_minute > 6000 {
+    if cfg.requests_per_minute > MAX_REQUESTS_PER_MINUTE {
         return Err(format!(
-            "search.requests_per_minute ({}) exceeds sanity cap 6000",
+            "search.requests_per_minute ({}) exceeds sanity cap {MAX_REQUESTS_PER_MINUTE}",
             cfg.requests_per_minute
         ));
     }
@@ -626,6 +704,40 @@ mod tests {
         assert!(e.to_string().contains("after end"), "{e}");
     }
 
+    /// `to` is a substring of ordinary words. Splitting on it unconditionally
+    /// answered a mistyped shorthand with a date-format complaint about a
+    /// date the user never wrote.
+    #[test]
+    fn a_word_containing_to_is_not_read_as_a_date_range() {
+        for word in ["october", "tomorrow", "notice", "stop"] {
+            let e = Freshness::parse(word).unwrap_err();
+            assert!(e.to_string().contains("unknown freshness"), "{word}: {e}");
+        }
+    }
+
+    /// The shorthands match case-insensitively, so the range separator must
+    /// too — it is the same string the user typed.
+    #[test]
+    fn an_uppercase_to_separator_is_accepted() {
+        let f = Freshness::parse("2024-01-01TO2024-06-30").unwrap();
+        assert_eq!(f.to_wire(), "2024-01-01to2024-06-30");
+    }
+
+    /// A single domain needs no alternation, so it gets no parentheses.
+    #[test]
+    fn one_site_composes_a_bare_operator() {
+        let o = SearchOverrides {
+            site: vec!["Docs.RS".into()],
+            ..Default::default()
+        };
+        let r = SearchRequest::build("async trait", &cfg(), o).unwrap();
+        assert_eq!(r.query, "async trait site:docs.rs");
+    }
+
+    /// The alternation must be parenthesised. Unparenthesised, `OR` binds
+    /// tighter than the implicit `AND`, so everything after the first `OR`
+    /// becomes a separate branch that the user's terms never constrain —
+    /// silently wrong results rather than an error.
     #[test]
     fn site_and_exclude_sites_compose_documented_operators() {
         let o = SearchOverrides {
@@ -636,7 +748,23 @@ mod tests {
         let r = SearchRequest::build("async trait", &cfg(), o).unwrap();
         assert_eq!(
             r.query,
-            "async trait site:docs.rs OR site:doc.rust-lang.org NOT site:pinterest.com"
+            "async trait (site:docs.rs OR site:doc.rust-lang.org) NOT site:pinterest.com"
+        );
+    }
+
+    #[test]
+    fn three_sites_stay_inside_one_group() {
+        let o = SearchOverrides {
+            site: vec!["a.com".into(), "b.com".into(), "c.com".into()],
+            exclude_sites: vec!["x.com".into(), "y.com".into()],
+            ..Default::default()
+        };
+        let r = SearchRequest::build("rust async", &cfg(), o).unwrap();
+        // Each `NOT` is its own conjunct alongside the group, so an
+        // exclusion applies to the whole query, not to one branch of it.
+        assert_eq!(
+            r.query,
+            "rust async (site:a.com OR site:b.com OR site:c.com) NOT site:x.com NOT site:y.com"
         );
     }
 
@@ -776,5 +904,28 @@ mod tests {
     fn default_config_validates() {
         let mut c = SearchConfig::default();
         validate_config(&mut c).unwrap();
+    }
+
+    /// The predicate behind the cleartext-credential warning. Asserted here
+    /// rather than by capturing log output: nothing in the test suite
+    /// installs a subscriber, and the decision — not the formatting — is
+    /// what must not regress. A false positive on loopback would make every
+    /// wiremock-backed test noisy.
+    #[test]
+    fn http_to_a_remote_host_is_flagged_but_loopback_is_not() {
+        let flagged = |u: &str| sends_credential_in_cleartext(&url::Url::parse(u).unwrap());
+
+        assert!(flagged("http://search-proxy.internal/v1/web/search"));
+        assert!(flagged("http://api.search.brave.com/res/v1/web/search"));
+        // A private address is still off-machine.
+        assert!(flagged("http://10.0.0.5:8080/search"));
+
+        assert!(!flagged("http://127.0.0.1:1234/search"));
+        assert!(!flagged("http://127.0.0.2:1234/search"));
+        assert!(!flagged("http://localhost:1234/search"));
+        assert!(!flagged("http://LocalHost:1234/search"));
+        assert!(!flagged("http://[::1]:1234/search"));
+        // https never sends the token in the clear, wherever it points.
+        assert!(!flagged("https://search-proxy.internal/v1/web/search"));
     }
 }

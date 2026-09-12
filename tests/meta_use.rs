@@ -257,3 +257,65 @@ fn claude_hooks_cover_webfetch_and_websearch() {
         std::fs::read_to_string(tmp.path().join(".claude").join("settings.json")).unwrap();
     assert_eq!(settings, settings2);
 }
+
+/// Wiring an existing install must not reset it. `rover meta use` refreshes
+/// only the matchers Rover itself shipped in an earlier release; a matcher
+/// the user widened is configuration, and re-running the installer is not a
+/// reason to lose it.
+#[cfg(unix)]
+#[test]
+fn a_user_customised_session_start_matcher_survives_meta_use() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempdir().unwrap();
+    let stub = tmp.path().join("claude-stub.sh");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\ncase \"$1 $2\" in\n  '--version ') exit 0 ;;\n  'mcp get') exit 1 ;;\n  \
+         'mcp add') exit 0 ;;\nesac\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // An install from a Rover old enough to predate the WebSearch matcher,
+    // whose owner has since added `resume` to the SessionStart one.
+    let dir = tmp.path().join(".claude");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("settings.json"),
+        r#"{"hooks":{
+            "SessionStart":[{"matcher":"startup|clear|compact|resume",
+                             "hooks":[{"type":"command","command":"rover meta hook claude"}]}],
+            "PreToolUse":[{"matcher":"WebFetch",
+                           "hooks":[{"type":"command","command":"rover meta hook claude"}]}]
+        }}"#,
+    )
+    .unwrap();
+
+    let out = Command::new(rover_bin())
+        .current_dir(tmp.path())
+        .env("ROVER_CLAUDE_BIN", &stub)
+        .args(["meta", "use", "claude", "-s", "project"])
+        .output()
+        .expect("rover meta use claude");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let settings = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&settings).unwrap();
+    // The user's addition is still there.
+    assert_eq!(
+        v["hooks"]["SessionStart"][0]["matcher"], "startup|clear|compact|resume",
+        "{settings}"
+    );
+    // And Rover's own stale matcher was still migrated.
+    assert_eq!(
+        v["hooks"]["PreToolUse"][0]["matcher"], "WebFetch|WebSearch",
+        "{settings}"
+    );
+    assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    assert_eq!(v["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+}

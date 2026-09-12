@@ -290,7 +290,7 @@ Edits the config file in place, creating the parent directory and the file itsel
 
 Settable keys:
 
-- `fetch.timeout_secs`
+- `fetch.user_agent`, `fetch.timeout_secs`
 - `cache.default_ttl`, `cache.min_ttl`, `cache.max_ttl`, `cache.override_no_store`, `cache.store_raw_html`
 - `ssrf.level`, `ssrf.project_root`
 - `rate_limit.requests_per_minute_per_domain`, `rate_limit.per_domain_concurrency`, `rate_limit.global_concurrency`, `rate_limit.max_retries`
@@ -298,6 +298,7 @@ Settable keys:
 - `summarization.default_backend`, `summarization.default_mode`, `summarization.default_style`, `summarization.fallback_to_extractive`
 - `summarization.tables.target_tokens`, `summarization.tables.focus`
 - `tokenizer.default`
+- `output.dir`
 - `mcp.heartbeat_interval`, `mcp.reap_threshold`
 - `debug.log_level`, `debug.har_path`, `debug.har_body_cap`
 - `headless.max_concurrent`, `headless.chrome_executable`

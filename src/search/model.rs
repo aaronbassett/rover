@@ -15,7 +15,10 @@
 //! page Rover did not fetch. It is DATA, never instructions. The
 //! prompt-injection guard scans and acts on all of it before the response
 //! leaves Rover, and [`SearchResponse::security_notice`] always carries the
-//! trust statement. See `site/docs/trust.md`.
+//! trust statement. The provider's own query-level strings are no different:
+//! `query.original` is the provider's echo, not Rover's copy of what it
+//! sent. `SearchResponse::guardable_fields` states exactly which fields are
+//! scanned and which are exempt, and why. See `site/docs/trust.md`.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -203,7 +206,9 @@ pub struct SearchResult {
     pub icons: Vec<SearchIcon>,
 
     /// schema.org `@type` values the provider extracted from the page —
-    /// the same vocabulary `get_metadata` reports in `schema_types`.
+    /// the same vocabulary `get_metadata` reports in `schema_types`. The
+    /// page publishes these itself, so they are untrusted like any other
+    /// text it wrote.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub schema_types: Vec<String>,
 
@@ -309,58 +314,212 @@ impl SearchResponse {
     /// Every guardable string in the response, in a single mutable slice.
     ///
     /// The guard acts on these values in place, exactly as `get_metadata`
-    /// does for its prose fields. Structured, non-prose values (URLs,
-    /// timestamps, booleans, numbers) are deliberately left alone: rewriting
-    /// a URL would break the `search` → `fetch` handoff, and a boolean
-    /// cannot carry an injection.
+    /// does for its prose fields.
+    ///
+    /// # The rule
+    ///
+    /// **Every string in the response is guarded except the ones a consumer
+    /// has to read back byte-exact: URLs, the pieces Brave splits a URL into
+    /// (scheme, netloc, hostname, path, favicon, image, thumbnail sources),
+    /// and timestamps.** Rewriting a URL would break the `search` → `fetch`
+    /// handoff — the whole point of the tool — and a date that has been
+    /// rewritten no longer parses. Nothing else is exempt: none of these
+    /// fields is validated against an enum on the way in (every `wire` field
+    /// in `brave.rs` is `deserialize_with = "lenient"`), so "it is only ever
+    /// `"generic"` in practice" is a statement about the provider's habits,
+    /// not about what can arrive. Numbers and booleans cannot carry an
+    /// injection and are exempt for free.
+    ///
+    /// The only strings Rover *authors* — [`SearchResponse::provider`] and
+    /// [`SearchResponse::security_notice`] — are also left alone; they are
+    /// not third-party data.
+    ///
+    /// # Why the destructuring is exhaustive
+    ///
+    /// Every struct below is taken apart field by field, with each name
+    /// bound and then either pushed or explicitly discarded. This is
+    /// deliberate: it makes adding a field to [`SearchResult`],
+    /// [`SearchQueryInfo`] or any of their friends a **compile error** until
+    /// someone classifies it. Two fields (`query.original` and
+    /// `schema_types`) had already slipped past the hand-maintained list
+    /// this replaces, each reaching an agent's context unscanned while the
+    /// telemetry alongside them said `scanned: true`. Do not introduce a
+    /// `..` rest pattern anywhere in here — it would silently restore
+    /// exactly that failure mode.
     pub(crate) fn guardable_fields(&mut self) -> Vec<&mut String> {
         let mut fields: Vec<&mut String> = Vec::new();
 
-        if let Some(s) = self.query.altered.as_mut() {
-            fields.push(s);
-        }
-        if let Some(s) = self.query.cleaned.as_mut() {
-            fields.push(s);
-        }
-        for s in self.query.related_queries.iter_mut() {
-            fields.push(s);
-        }
-        if let Some(ops) = self.query.operators.as_mut()
-            && let Some(s) = ops.cleaned_query.as_mut()
-        {
-            fields.push(s);
+        let SearchResponse {
+            provider,
+            query,
+            results,
+            prompt_injection,
+            security_notice,
+        } = self;
+        // Rover's own words, not the provider's: `provider` is a literal in
+        // this crate, `security_notice` is written by the guard itself once
+        // this scan is done, and the telemetry is not prose at all.
+        let _ = (provider, prompt_injection, security_notice);
+
+        let SearchQueryInfo {
+            original,
+            altered,
+            cleaned,
+            language,
+            country,
+            safe_search_active,
+            strict_filter_warning,
+            is_navigational,
+            is_geolocal,
+            is_trending,
+            is_news_breaking,
+            more_results_available,
+            related_queries,
+            operators,
+            count,
+            offset,
+        } = query;
+        // Flags, and the page window Rover itself asked for. No text.
+        let _ = (
+            safe_search_active,
+            strict_filter_warning,
+            is_navigational,
+            is_geolocal,
+            is_trending,
+            is_news_breaking,
+            more_results_available,
+            count,
+            offset,
+        );
+        // `original` is the provider's *echo* of the query, not Rover's copy
+        // of it — `brave.rs` only falls back to the query Rover sent when the
+        // provider omits the key — so it is as attacker-reachable as any
+        // title. In the case where it really is Rover's own query, scanning
+        // it costs nothing: the agent wrote that text, and a detection in a
+        // query the agent composed is worth surfacing anyway.
+        fields.push(original);
+        push_opt(&mut fields, altered);
+        push_opt(&mut fields, cleaned);
+        push_opt(&mut fields, language);
+        push_opt(&mut fields, country);
+        fields.extend(related_queries.iter_mut());
+        if let Some(ops) = operators {
+            let SearchOperatorsInfo {
+                applied,
+                cleaned_query,
+                sites,
+            } = ops;
+            // `sites` are the bare domains from `site:` operators —
+            // hostnames, exempt by the rule above.
+            let _ = (applied, sites);
+            push_opt(&mut fields, cleaned_query);
         }
 
-        for r in self.results.iter_mut() {
-            fields.push(&mut r.title);
-            if let Some(s) = r.description.as_mut() {
-                fields.push(s);
+        for r in results.iter_mut() {
+            let SearchResult {
+                rank,
+                title,
+                url,
+                description,
+                extra_snippets,
+                age,
+                page_age,
+                page_fetched,
+                fetched_content_timestamp,
+                language,
+                family_friendly,
+                subtype,
+                is_live,
+                content_type,
+                source,
+                thumbnail,
+                icons,
+                schema_types,
+                enrichment,
+            } = r;
+            // `url` is the handoff to `fetch`; `page_age` and `page_fetched`
+            // are dates. The rest are numbers and booleans.
+            let _ = (
+                rank,
+                url,
+                page_age,
+                page_fetched,
+                fetched_content_timestamp,
+                family_friendly,
+                is_live,
+            );
+            fields.push(title);
+            push_opt(&mut fields, description);
+            fields.extend(extra_snippets.iter_mut());
+            push_opt(&mut fields, age);
+            push_opt(&mut fields, language);
+            push_opt(&mut fields, subtype);
+            push_opt(&mut fields, content_type);
+            // `schema_types` is lifted verbatim out of the JSON-LD the
+            // *result page itself* publishes, so its author picks the bytes.
+            // When `enrichment` is on, the same blob is walked string by
+            // string below and guarded; leaving these unguarded meant the
+            // identical text was scanned in one field and not the other.
+            fields.extend(schema_types.iter_mut());
+            if let Some(src) = source {
+                let SearchSource {
+                    name,
+                    long_name,
+                    url,
+                    image,
+                    scheme,
+                    netloc,
+                    hostname,
+                    path,
+                    favicon,
+                } = src;
+                // The provider's breakdown of the result URL, plus two more
+                // URLs. All exempt by the rule above.
+                let _ = (url, image, scheme, netloc, hostname, path, favicon);
+                push_opt(&mut fields, name);
+                push_opt(&mut fields, long_name);
             }
-            for s in r.extra_snippets.iter_mut() {
-                fields.push(s);
+            if let Some(t) = thumbnail {
+                let SearchThumbnail {
+                    src,
+                    original,
+                    alt,
+                    width,
+                    height,
+                    logo,
+                } = t;
+                let _ = (src, original, width, height, logo);
+                push_opt(&mut fields, alt);
             }
-            if let Some(s) = r.age.as_mut() {
-                fields.push(s);
+            for icon in icons.iter_mut() {
+                let SearchIcon {
+                    href,
+                    sizes,
+                    rel,
+                    icon_type,
+                    ext,
+                } = icon;
+                // `href` is a URL; the descriptors around it are whatever the
+                // page put in its `<link>` tag, which is to say arbitrary.
+                let _ = href;
+                push_opt(&mut fields, sizes);
+                push_opt(&mut fields, rel);
+                push_opt(&mut fields, icon_type);
+                push_opt(&mut fields, ext);
             }
-            if let Some(src) = r.source.as_mut() {
-                if let Some(s) = src.name.as_mut() {
-                    fields.push(s);
-                }
-                if let Some(s) = src.long_name.as_mut() {
-                    fields.push(s);
-                }
-            }
-            if let Some(t) = r.thumbnail.as_mut()
-                && let Some(s) = t.alt.as_mut()
-            {
-                fields.push(s);
-            }
-            if let Some(e) = r.enrichment.as_mut() {
+            if let Some(e) = enrichment {
                 collect_json_strings(e, &mut fields);
             }
         }
 
         fields
+    }
+}
+
+/// Push the contents of an optional string, when there is one.
+fn push_opt<'a>(out: &mut Vec<&'a mut String>, v: &'a mut Option<String>) {
+    if let Some(s) = v.as_mut() {
+        out.push(s);
     }
 }
 
@@ -466,6 +625,144 @@ mod tests {
         // URLs and hostnames are never handed to the guard.
         assert!(!collected.iter().any(|c| c.contains("https://")));
         assert!(!collected.iter().any(|c| c == "example.com"));
+    }
+
+    /// The classification, pinned field by field. Every string a provider or
+    /// a page author can choose is filled with a value naming its own field,
+    /// so a field that stops being guarded — or starts being guarded when it
+    /// is a URL or a date — shows up here by name.
+    #[test]
+    fn every_provider_controlled_string_is_classified() {
+        let r = SearchResult {
+            rank: 1,
+            title: "f:title".into(),
+            url: "https://example.com/f:url".into(),
+            description: Some("f:description".into()),
+            extra_snippets: vec!["f:extra_snippets".into()],
+            age: Some("f:age".into()),
+            page_age: Some("2026-09-01T00:00:00".into()),
+            page_fetched: Some("2026-09-02T00:00:00".into()),
+            fetched_content_timestamp: Some(1_757_000_000),
+            language: Some("f:language".into()),
+            family_friendly: Some(true),
+            subtype: Some("f:subtype".into()),
+            is_live: Some(false),
+            content_type: Some("f:content_type".into()),
+            source: Some(SearchSource {
+                name: Some("f:source.name".into()),
+                long_name: Some("f:source.long_name".into()),
+                url: Some("https://example.com/f:source.url".into()),
+                image: Some("https://example.com/f:source.image".into()),
+                scheme: Some("https".into()),
+                netloc: Some("example.com".into()),
+                hostname: Some("example.com".into()),
+                path: Some("/f:source.path".into()),
+                favicon: Some("https://example.com/f:source.favicon".into()),
+            }),
+            thumbnail: Some(SearchThumbnail {
+                src: Some("https://example.com/f:thumbnail.src".into()),
+                original: Some("https://example.com/f:thumbnail.original".into()),
+                alt: Some("f:thumbnail.alt".into()),
+                width: Some(1),
+                height: Some(2),
+                logo: Some(false),
+            }),
+            icons: vec![SearchIcon {
+                href: "https://example.com/f:icons.href".into(),
+                sizes: Some("f:icons.sizes".into()),
+                rel: Some("f:icons.rel".into()),
+                icon_type: Some("f:icons.type".into()),
+                ext: Some("f:icons.ext".into()),
+            }],
+            schema_types: vec!["f:schema_types".into()],
+            enrichment: Some(serde_json::json!({ "deep": ["f:enrichment"] })),
+        };
+        let mut resp = SearchResponse {
+            provider: "brave".into(),
+            query: SearchQueryInfo {
+                original: "f:query.original".into(),
+                altered: Some("f:query.altered".into()),
+                cleaned: Some("f:query.cleaned".into()),
+                language: Some("f:query.language".into()),
+                country: Some("f:query.country".into()),
+                safe_search_active: Some(true),
+                strict_filter_warning: Some(false),
+                is_navigational: Some(false),
+                is_geolocal: Some(false),
+                is_trending: Some(false),
+                is_news_breaking: Some(false),
+                more_results_available: Some(true),
+                related_queries: vec!["f:related_queries".into()],
+                operators: Some(SearchOperatorsInfo {
+                    applied: true,
+                    cleaned_query: Some("f:operators.cleaned_query".into()),
+                    sites: vec!["example.com".into()],
+                }),
+                count: 10,
+                offset: 0,
+            },
+            results: vec![r],
+            prompt_injection: Default::default(),
+            security_notice: "f:security_notice".into(),
+        };
+
+        let mut collected: Vec<String> = resp
+            .guardable_fields()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        collected.sort();
+
+        let mut expected = vec![
+            "f:query.original",
+            "f:query.altered",
+            "f:query.cleaned",
+            "f:query.language",
+            "f:query.country",
+            "f:related_queries",
+            "f:operators.cleaned_query",
+            "f:title",
+            "f:description",
+            "f:extra_snippets",
+            "f:age",
+            "f:language",
+            "f:subtype",
+            "f:content_type",
+            "f:schema_types",
+            "f:source.name",
+            "f:source.long_name",
+            "f:thumbnail.alt",
+            "f:icons.sizes",
+            "f:icons.rel",
+            "f:icons.type",
+            "f:icons.ext",
+            "f:enrichment",
+        ];
+        expected.sort_unstable();
+        assert_eq!(collected, expected);
+
+        // And the exempt half, by the rule: URLs, URL parts, hostnames,
+        // timestamps, and Rover's own strings.
+        for exempt in [
+            "https://",
+            "f:url",
+            "f:source.url",
+            "f:source.image",
+            "f:source.path",
+            "f:source.favicon",
+            "f:thumbnail.src",
+            "f:thumbnail.original",
+            "f:icons.href",
+            "2026-09-0",
+            "example.com",
+            "brave",
+            "f:security_notice",
+        ] {
+            assert!(
+                !collected.iter().any(|c| c.contains(exempt)),
+                "{exempt} must not be guarded, got {collected:?}"
+            );
+        }
     }
 
     #[test]

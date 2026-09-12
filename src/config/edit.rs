@@ -275,7 +275,7 @@ fn settable() -> &'static [SettableSpec] {
         },
         SettableSpec {
             key: "search.base_url",
-            parser: parse_string,
+            parser: parse_search_base_url,
             expected: "http(s) URL",
         },
         SettableSpec {
@@ -335,8 +335,8 @@ fn settable() -> &'static [SettableSpec] {
         },
         SettableSpec {
             key: "search.requests_per_minute",
-            parser: parse_u32,
-            expected: "integer",
+            parser: parse_search_rpm,
+            expected: "integer 1-6000",
         },
         SettableSpec {
             key: "search.retry_after_ceiling",
@@ -422,7 +422,7 @@ fn parse_log_level(s: &str) -> Result<toml_edit::Item, String> {
     }
 }
 
-/// Both search bounds are enforced here as well as in
+/// Every `[search]` bound is enforced here as well as in
 /// [`crate::search::request::validate_config`]. The load-time check is the
 /// load-bearing one — a hand-edited file must still be rejected — but a
 /// `config set` that silently writes a value the next `rover search` will
@@ -451,6 +451,27 @@ fn parse_search_max_retries(s: &str) -> Result<toml_edit::Item, String> {
         ));
     }
     Ok(toml_edit::value(i64::from(n)))
+}
+
+fn parse_search_rpm(s: &str) -> Result<toml_edit::Item, String> {
+    let n: u32 = s
+        .parse()
+        .map_err(|_| format!("not a non-negative 32-bit integer: {s}"))?;
+    let max = crate::search::request::MAX_REQUESTS_PER_MINUTE;
+    if n == 0 || n > max {
+        return Err(format!("must be between 1 and {max}: {s}"));
+    }
+    Ok(toml_edit::value(i64::from(n)))
+}
+
+/// `base_url` is not a bound but it is checked at load, and the same
+/// argument applies: a URL the next load will reject should not be written.
+fn parse_search_base_url(s: &str) -> Result<toml_edit::Item, String> {
+    let url = url::Url::parse(s).map_err(|e| format!("not a URL: {s} ({e})"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("must be an http or https URL: {s}"));
+    }
+    Ok(toml_edit::value(s.to_string()))
 }
 
 fn parse_safe_search(s: &str) -> Result<toml_edit::Item, String> {
@@ -576,9 +597,10 @@ mod tests {
         );
     }
 
-    /// The two bounded `[search]` numbers are rejected at the keystroke, not
-    /// only at the next load, so `config set` never writes a value the next
-    /// search would refuse.
+    /// Every `[search]` key the next load would reject is rejected at the
+    /// keystroke too, so `config set` never writes a value that bricks the
+    /// following `rover search` — or, for `requests_per_minute = 0`, every
+    /// subsequent config load.
     #[test]
     fn out_of_range_search_numbers_are_rejected_at_set_time() {
         let tmp = tempdir().unwrap();
@@ -589,6 +611,10 @@ mod tests {
             ("search.count", "0"),
             ("search.count", "21"),
             ("search.max_retries", "6"),
+            ("search.requests_per_minute", "0"),
+            ("search.requests_per_minute", "6001"),
+            ("search.base_url", "not a url"),
+            ("search.base_url", "ftp://example.com/"),
         ] {
             let r = apply_set(&p, key, bad);
             assert!(
@@ -603,9 +629,17 @@ mod tests {
         // In-range values still write.
         apply_set(&p, "search.count", "20").unwrap();
         apply_set(&p, "search.max_retries", "0").unwrap();
+        apply_set(&p, "search.requests_per_minute", "6000").unwrap();
+        apply_set(&p, "search.base_url", "http://127.0.0.1:8080/search").unwrap();
         let after = std::fs::read_to_string(&p).unwrap();
         assert!(after.contains("count = 20"), "{after}");
         assert!(after.contains("max_retries = 0"), "{after}");
+        assert!(after.contains("requests_per_minute = 6000"), "{after}");
+        // http is permitted — a loopback mock or proxy is a real deployment.
+        assert!(
+            after.contains("base_url = \"http://127.0.0.1:8080/search\""),
+            "{after}"
+        );
     }
 
     #[test]

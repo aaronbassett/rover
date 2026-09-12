@@ -954,10 +954,19 @@ impl SearchConfig {
     ///
     /// Returns `None` when the variable is unset or empty. The value is
     /// never stored on the config and never logged.
+    ///
+    /// Trimmed, because the ways a token usually reaches the environment
+    /// carry whitespace with it — a Docker `--env-file` line, a `.env`
+    /// loader, `read KEY < key.txt`. (Shell `$(…)` strips trailing newlines,
+    /// so that one route is safe.) Untrimmed, a trailing newline is rejected
+    /// when the request header is built and surfaces as "could not reach the
+    /// search API", while a trailing space reaches Brave and comes back
+    /// `401` — two diagnostics pointing anywhere but at the stray byte.
     pub fn api_key(&self) -> Option<String> {
         std::env::var(&self.api_key_env)
             .ok()
-            .filter(|v| !v.trim().is_empty())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
     }
 
     /// True when a credential is present in the environment.
@@ -2437,5 +2446,32 @@ ttl = "2h"
             cfg.image_captions.cache.ttl,
             Some(std::time::Duration::from_secs(7200))
         );
+    }
+
+    /// Whitespace around a credential is not the user's typo — it is what
+    /// `--env-file` and `$(cat key.txt)` leave behind. Untrimmed it fails
+    /// deep inside header construction, and the error blames the network.
+    #[test]
+    fn the_credential_is_trimmed_not_merely_tested_for_emptiness() {
+        // A variable unique to this test, so no lock is needed.
+        let var = "ROVER_TEST_SEARCH_KEY_WHITESPACE";
+        let cfg = SearchConfig {
+            api_key_env: var.to_string(),
+            ..Default::default()
+        };
+
+        for raw in ["token\n", " token", "token ", "\ttoken\r\n"] {
+            // SAFETY: this variable is unique to this test.
+            unsafe { std::env::set_var(var, raw) };
+            assert_eq!(cfg.api_key().as_deref(), Some("token"), "{raw:?}");
+        }
+
+        // Whitespace-only is still no credential at all.
+        unsafe { std::env::set_var(var, " \n\t ") };
+        assert_eq!(cfg.api_key(), None);
+        assert!(!cfg.is_configured());
+
+        unsafe { std::env::remove_var(var) };
+        assert_eq!(cfg.api_key(), None);
     }
 }
