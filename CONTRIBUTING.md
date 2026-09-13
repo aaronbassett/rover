@@ -5,7 +5,7 @@ the automated quality checks every change runs through.
 
 ## Prerequisites
 
-- Rust stable (MSRV 1.85, edition 2024). Install via [rustup](https://rustup.rs).
+- Rust stable (MSRV 1.96, edition 2024). Install via [rustup](https://rustup.rs).
 - [Lefthook](https://lefthook.dev) for git hooks. The simplest install is:
   - macOS: `brew install lefthook`
   - Linux/macOS via curl: `curl -1sLf 'https://lefthook.dev/install.sh' | sudo sh`
@@ -34,7 +34,14 @@ This activates the pre-commit, pre-push, and commit-msg hooks.
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --all-targets --features test-loopback -- -D warnings`
-- `cargo test --features test-loopback`
+- `cargo clippy --all-targets --no-default-features --features headless,web-search,test-loopback -- -D warnings`
+  — the exact feature set the release binaries are built with, so a
+  combination that compiles alone but not together is caught before the push
+  rather than in the release job.
+- `cargo test --lib --features test-loopback`
+- `cargo test --lib --features test-loopback,web-search` — several unit tests
+  are cfg-aware and assert the *feature-disabled* behaviour, so both shapes
+  have to run.
 - `cargo build --release`
 
 All warnings are treated as errors. The Cargo.toml `[lints]` table sets
@@ -58,6 +65,33 @@ cargo clippy --all-targets --features test-loopback -- -D warnings
 cargo test --features test-loopback
 cargo build --release
 ```
+
+### Feature combinations
+
+Optional features change what compiles, so a change that touches a
+feature-gated path needs checking in more than one shape. The combinations CI
+covers:
+
+```sh
+cargo test  --features test-loopback                              # default
+cargo test  --features test-loopback,web-search                   # + search
+cargo check --all-targets --no-default-features \
+            --features headless,web-search                        # the release set
+cargo check --all-targets --features test-loopback,headless,local-inference,injection-model
+```
+
+`web-search` in particular must be exercised **both ways**: the suites assert
+the working behaviour with it and the feature-disabled behaviour without it
+(`tests/cli_search.rs`, `tests/meta_hook.rs`, `tests/meta_use.rs`, and the
+`search::` unit tests all branch on `cfg!(feature = "web-search")`).
+
+### Search tests never call the real API
+
+Every search test drives a `wiremock` server via `[search] base_url`, with a
+throwaway credential in a test-specific environment variable. The live Brave
+API is metered and billed; nothing in the suite may touch it. If you add a
+search test, point it at a mock and give it its own env-var name so parallel
+tests do not fight over one.
 
 Or run the lefthook stages directly:
 

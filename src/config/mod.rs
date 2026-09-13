@@ -79,6 +79,9 @@ pub struct Config {
 
     #[serde(default)]
     pub prompt_injection: PromptInjectionConfig,
+
+    #[serde(default)]
+    pub search: SearchConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -816,6 +819,210 @@ where
     }
 }
 
+/// Top-level `[search]` section — web search (Brave Search API).
+///
+/// Brave is the only search provider Rover implements, so this block has no
+/// `provider` key: adding one before a second provider exists would be a
+/// hierarchy with one branch. Everything here is a *default* for the
+/// `search` MCP tool and `rover search`; every field except `api_key_env`
+/// and `base_url` can be overridden per call.
+///
+/// The API credential is NOT stored here. `api_key_env` names the
+/// environment variable Rover reads it from, matching the
+/// `[backends.<name>]` / `[captioners.<name>]` convention.
+///
+/// The enum-valued fields (`country`, `language`, `ui_language`,
+/// `safe_search`) are validated against Brave's documented value lists at
+/// config-load time so a typo surfaces before it costs a paid API call.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchConfig {
+    /// Name of the environment variable holding the Brave subscription
+    /// token. The token itself never appears in config or in logs.
+    #[serde(default = "default_search_api_key_env")]
+    pub api_key_env: String,
+
+    /// Full URL of the Brave web-search endpoint. Overridable so a
+    /// deployment can front the API with a proxy (and so the test suite can
+    /// point at a mock server); leave it alone otherwise.
+    #[serde(default = "default_search_base_url")]
+    pub base_url: String,
+
+    /// Default number of results per page. Brave's hard maximum is 20.
+    #[serde(default = "default_search_count")]
+    pub count: u8,
+
+    /// Default 2-character country code (or `ALL`) results are drawn from.
+    #[serde(default = "default_search_country")]
+    pub country: String,
+
+    /// Default content language (Brave's `search_lang`).
+    #[serde(default = "default_search_language")]
+    pub language: String,
+
+    /// Default UI language for response metadata (Brave's `ui_lang`).
+    #[serde(default = "default_search_ui_language")]
+    pub ui_language: String,
+
+    /// Default adult-content filter: `off`, `moderate`, or `strict`.
+    #[serde(default = "default_search_safe_search")]
+    pub safe_search: String,
+
+    /// Ask Brave for up to 5 additional excerpts per result by default.
+    /// Off by default: extra snippets multiply response size, and Rover's
+    /// job is to hand the agent enough to *choose* a URL, not to read it.
+    #[serde(default)]
+    pub extra_snippets: bool,
+
+    /// Whether Brave should spell-check the query. When it corrects one,
+    /// the corrected query is the one actually searched and is reported
+    /// back as `query.altered`.
+    #[serde(default = "default_true")]
+    pub spellcheck: bool,
+
+    /// Ask Brave for its crawl timestamps (`page_fetched`,
+    /// `fetched_content_timestamp`) on each result.
+    #[serde(default)]
+    pub include_fetch_metadata: bool,
+
+    /// Include Brave's structured per-result enrichment (article, product,
+    /// rating, video, FAQ, schema.org blobs, …) verbatim under each
+    /// result's `enrichment` key. Off by default because it can be far
+    /// larger than the result itself; nothing is lost by turning it on.
+    #[serde(default)]
+    pub enrichment: bool,
+
+    /// Default Goggles applied to every search: each entry is either a URL
+    /// hosting a Goggle or an inline Goggle definition. Brave accepts at
+    /// most 3.
+    #[serde(default)]
+    pub goggles: Vec<String>,
+
+    /// Per-request timeout in seconds.
+    #[serde(default = "default_search_timeout_secs")]
+    pub timeout_secs: u64,
+
+    /// Maximum retries for a *retryable* search failure (429 and 5xx/network
+    /// only). Deliberately small: every attempt is a billable Brave request.
+    #[serde(default = "default_search_max_retries")]
+    pub max_retries: u8,
+
+    /// Client-side pacing against the search endpoint, in requests per
+    /// minute. Defaults to 60 (1 req/s), which is Brave's free-tier limit.
+    #[serde(default = "default_search_rpm")]
+    pub requests_per_minute: u32,
+
+    /// Ceiling applied to a `Retry-After` from the search API, so a hostile
+    /// or misconfigured value cannot park a request indefinitely.
+    #[serde(
+        default = "default_search_retry_after_ceiling",
+        with = "humantime_serde"
+    )]
+    pub retry_after_ceiling: Duration,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            api_key_env: default_search_api_key_env(),
+            base_url: default_search_base_url(),
+            count: default_search_count(),
+            country: default_search_country(),
+            language: default_search_language(),
+            ui_language: default_search_ui_language(),
+            safe_search: default_search_safe_search(),
+            extra_snippets: false,
+            spellcheck: true,
+            include_fetch_metadata: false,
+            enrichment: false,
+            goggles: vec![],
+            timeout_secs: default_search_timeout_secs(),
+            max_retries: default_search_max_retries(),
+            requests_per_minute: default_search_rpm(),
+            retry_after_ceiling: default_search_retry_after_ceiling(),
+        }
+    }
+}
+
+impl SearchConfig {
+    /// Per-request timeout as a `Duration`.
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.timeout_secs)
+    }
+
+    /// The Brave subscription token, read from `api_key_env`.
+    ///
+    /// Returns `None` when the variable is unset or empty. The value is
+    /// never stored on the config and never logged.
+    ///
+    /// Trimmed, because the ways a token usually reaches the environment
+    /// carry whitespace with it — a Docker `--env-file` line, a `.env`
+    /// loader, `read KEY < key.txt`. (Shell `$(…)` strips trailing newlines,
+    /// so that one route is safe.) Untrimmed, a trailing newline is rejected
+    /// when the request header is built and surfaces as "could not reach the
+    /// search API", while a trailing space reaches Brave and comes back
+    /// `401` — two diagnostics pointing anywhere but at the stray byte.
+    pub fn api_key(&self) -> Option<String> {
+        std::env::var(&self.api_key_env)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+
+    /// True when a credential is present in the environment.
+    pub fn is_configured(&self) -> bool {
+        self.api_key().is_some()
+    }
+}
+
+fn default_search_api_key_env() -> String {
+    "BRAVE_SEARCH_API_KEY".to_string()
+}
+
+fn default_search_base_url() -> String {
+    "https://api.search.brave.com/res/v1/web/search".to_string()
+}
+
+fn default_search_count() -> u8 {
+    10
+}
+
+fn default_search_country() -> String {
+    "US".to_string()
+}
+
+fn default_search_language() -> String {
+    "en".to_string()
+}
+
+fn default_search_ui_language() -> String {
+    "en-US".to_string()
+}
+
+fn default_search_safe_search() -> String {
+    "moderate".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_search_timeout_secs() -> u64 {
+    10
+}
+
+fn default_search_max_retries() -> u8 {
+    2
+}
+
+fn default_search_rpm() -> u32 {
+    60
+}
+
+fn default_search_retry_after_ceiling() -> Duration {
+    Duration::from_secs(30)
+}
+
 /// Top-level `[ssrf]` section. M8 introduces this — earlier milestones
 /// hardcoded `SsrfLevel::Strict`. The `level` field is a free-form string
 /// here so the file accepts unknown levels with a typed error from the
@@ -1255,6 +1462,12 @@ fn validate(cfg: &mut Config) -> Result<(), String> {
             cfg.robots.failure_ttl, cfg.robots.default_ttl
         ));
     }
+
+    // SearchConfig. Validated (and case-normalised) in every build, not just
+    // one with `web-search` compiled in, so a single `rover.toml` stays
+    // portable across builds instead of silently carrying a typo that only
+    // surfaces on the machine that has the feature.
+    crate::search::request::validate_config(&mut cfg.search)?;
 
     Ok(())
 }
@@ -2233,5 +2446,32 @@ ttl = "2h"
             cfg.image_captions.cache.ttl,
             Some(std::time::Duration::from_secs(7200))
         );
+    }
+
+    /// Whitespace around a credential is not the user's typo — it is what
+    /// `--env-file` and `$(cat key.txt)` leave behind. Untrimmed it fails
+    /// deep inside header construction, and the error blames the network.
+    #[test]
+    fn the_credential_is_trimmed_not_merely_tested_for_emptiness() {
+        // A variable unique to this test, so no lock is needed.
+        let var = "ROVER_TEST_SEARCH_KEY_WHITESPACE";
+        let cfg = SearchConfig {
+            api_key_env: var.to_string(),
+            ..Default::default()
+        };
+
+        for raw in ["token\n", " token", "token ", "\ttoken\r\n"] {
+            // SAFETY: this variable is unique to this test.
+            unsafe { std::env::set_var(var, raw) };
+            assert_eq!(cfg.api_key().as_deref(), Some("token"), "{raw:?}");
+        }
+
+        // Whitespace-only is still no credential at all.
+        unsafe { std::env::set_var(var, " \n\t ") };
+        assert_eq!(cfg.api_key(), None);
+        assert!(!cfg.is_configured());
+
+        unsafe { std::env::remove_var(var) };
+        assert_eq!(cfg.api_key(), None);
     }
 }

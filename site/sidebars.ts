@@ -13,6 +13,7 @@ const sidebars: SidebarsConfig = {
       label: 'Guides',
       collapsed: false,
       items: [
+        'web-search',
         'output',
         'trust',
         'token-budgets',

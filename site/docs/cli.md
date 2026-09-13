@@ -5,7 +5,7 @@ title: CLI
 
 # Rover CLI
 
-`rover` runs as an MCP server over stdio, or as a one-shot CLI that fetches a URL and prints clean Markdown to stdout. The remaining subcommands inspect or maintain what those two produce: the cache, background tasks, config, and local models.
+`rover` runs as an MCP server over stdio, or as a one-shot CLI that searches the web for URLs and fetches them as clean Markdown on stdout. The remaining subcommands inspect or maintain what those produce: the cache, background tasks, config, and local models.
 
 Synopsis:
 
@@ -19,7 +19,7 @@ Global flags:
 | --- | --- |
 | `--config <path>` | Load this TOML file for the invocation. The file must exist. |
 
-Every subcommand — `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, and `config show` / `set` — resolves the same config file. With `--config <path>`, Rover loads that file and errors if it is missing. Without it: if `ROVER_CONFIG` is set to a non-empty value, Rover treats it exactly like `--config` — that file must exist and parse, or Rover fails loudly (an explicit redirect never silently falls back). With `ROVER_CONFIG` unset or empty, Rover searches the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) then a project-local `./rover.toml`, loading the first that exists; if none exists, built-in defaults apply. A file written by `rover config set` is therefore picked up by `rover fetch` and `rover mcp` without passing `--config`.
+Every subcommand — `search`, `fetch`, `mcp`, `cache`, `task`, `batch`, `doctor`, `meta`, and `config show` / `set` — resolves the same config file. With `--config <path>`, Rover loads that file and errors if it is missing. Without it: if `ROVER_CONFIG` is set to a non-empty value, Rover treats it exactly like `--config` — that file must exist and parse, or Rover fails loudly (an explicit redirect never silently falls back). With `ROVER_CONFIG` unset or empty, Rover searches the platform config file (`~/.config/rover/rover.toml` on Linux/macOS) then a project-local `./rover.toml`, loading the first that exists; if none exists, built-in defaults apply. A file written by `rover config set` is therefore picked up by `rover fetch` and `rover mcp` without passing `--config`.
 
 ```sh
 rover config set ssrf.level loopback   # writes ~/.config/rover/rover.toml
@@ -30,6 +30,7 @@ See [Configuration](/docs/configuration) for the full key reference.
 
 Subcommands:
 
+- `search <query>` finds candidate URLs. Discovery only — it never fetches them.
 - `fetch <url>` runs a one-shot fetch and prints Markdown plus frontmatter to stdout.
 - `mcp` starts the MCP server over stdio.
 - `cache <list|get|purge|stats>` runs cache operations.
@@ -41,6 +42,69 @@ Subcommands:
 - `model <download|list|remove|verify>` manages the local model cache (feature-gated).
 
 Exit code is `0` on success and `1` on any failure: config parse error, fetch error, doctor check failure, and so on. `doctor` is the one subcommand whose exit code is a verdict; see its section below.
+
+## `rover search`
+
+```text
+rover search <query> [-n|--count <N>] [--offset <N>]
+             [--country <CC>] [--language <LANG>] [--ui-language <LANG>]
+             [--safe-search <off|moderate|strict>]
+             [--freshness <day|week|month|year|YYYY-MM-DD..YYYY-MM-DD>]
+             [--extra-snippets] [--no-spellcheck] [--fetch-metadata] [--enrichment]
+             [--site <DOMAIN>]... [--exclude-site <DOMAIN>]... [--goggle <URL_OR_DEF>]...
+             [--format <human|json>]
+```
+
+Finds candidate URLs and prints them. **It does not fetch them** — pick the
+ones worth reading and pass those to `rover fetch`. Needs the `web-search`
+Cargo feature (in every prebuilt binary) and an API key; see
+[Web search](/docs/web-search).
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `-n`, `--count <N>` | `[search] count` (10) | Results, 1–20. |
+| `--offset <N>` | 0 | Page index, 0–9. Each page is a separate billable request. |
+| `--country <CC>` | `[search] country` | Two-letter code results are drawn from, or `ALL`. |
+| `--language <LANG>` | `[search] language` | Content language, e.g. `en`, `pt-br`. |
+| `--ui-language <LANG>` | `[search] ui_language` | Language of provider-generated metadata. |
+| `--safe-search` | `[search] safe_search` | `off`, `moderate`, or `strict`. |
+| `--freshness` | none | `day`, `week`, `month`, `year`, or `2024-01-01..2024-06-30`. |
+| `--extra-snippets` | off | Up to 5 additional excerpts per result. |
+| `--no-spellcheck` | off | Search the query verbatim. |
+| `--fetch-metadata` | off | Include the provider's crawl timestamps. |
+| `--enrichment` | off | Include the provider's structured extras verbatim. Verbose. |
+| `--site <DOMAIN>` | — | Restrict to a domain. Repeatable; composed as `site:`. |
+| `--exclude-site <DOMAIN>` | — | Drop a domain. Repeatable; composed as `NOT site:`. |
+| `--goggle <URL_OR_DEF>` | `[search] goggles` | Custom ranking rule. Repeatable, max 3. |
+| `--format` | `human` | `human` prints a ranked list; `json` prints the MCP envelope. |
+
+Search operators work inside the query itself: `"exact phrase"`, `-excluded`,
+`site:`, `filetype:`, `intitle:`, `inbody:`, `lang:`, `loc:`, and uppercase
+`AND`/`OR`/`NOT`.
+
+```sh
+rover search "rust async trait"
+rover search "async trait" --site docs.rs -n 5
+rover search "rust release notes" --freshness week
+rover search "python asyncio filetype:pdf"
+```
+
+`human` output leads with the trust banner — titles and snippets are
+third-party content and are guarded exactly as an MCP response is — then
+lists rank, title, URL, snippet, and a facts line (age · host · language ·
+schema types), and closes with the result count, whether more pages exist,
+related queries, and the `rover fetch` handoff.
+
+`--format json` emits the same envelope the MCP `search` tool returns, so a
+pipeline and an agent read one contract:
+
+```sh
+rover search "tokio runtime" --format json | jq -r '.results[].url'
+rover search "tokio runtime" --format json | jq -r '.results[0].url' | xargs rover fetch
+```
+
+Exit code is `0` for a successful search including one with no results, and
+`1` for a missing credential, a rejected argument, or a provider failure.
 
 ## `rover fetch`
 
@@ -184,6 +248,9 @@ Runs the diagnostic battery sequentially, cheap checks first. The always-run che
 6. `extractive_synthesis`: the extractive backend produces output on a fixed input.
 7. `backends_authenticate`: every cloud `[backends.*]` block authenticates.
 8. `captioners_authenticate`: every configured image captioner authenticates.
+9. `web_search`: whether web search is compiled in and credentialed.
+
+`web_search` is a status report, not a health check. It reports `skip` both when the `web-search` feature is absent and when it is present but no API key is configured — neither makes an otherwise healthy install unhealthy, because Rover fetches perfectly well without search. It deliberately makes **no** request to the search provider: `doctor` is run casually and repeatedly, and a connectivity probe that quietly costs money on every invocation is the wrong default. To verify a key end to end, spend one request on purpose with `rover search "rover mcp" -n 1`. See [Web search](/docs/web-search#availability).
 
 Feature-gated checks appear only when the matching feature is compiled in: the headless browser launch check (`headless`), and the local model cache and integrity checks (`local-inference` / `injection-model`). See [Optional features](/docs/features) for the feature matrix.
 
@@ -223,7 +290,7 @@ Edits the config file in place, creating the parent directory and the file itsel
 
 Settable keys:
 
-- `fetch.timeout_secs`
+- `fetch.user_agent`, `fetch.timeout_secs`
 - `cache.default_ttl`, `cache.min_ttl`, `cache.max_ttl`, `cache.override_no_store`, `cache.store_raw_html`
 - `ssrf.level`, `ssrf.project_root`
 - `rate_limit.requests_per_minute_per_domain`, `rate_limit.per_domain_concurrency`, `rate_limit.global_concurrency`, `rate_limit.max_retries`
@@ -231,12 +298,18 @@ Settable keys:
 - `summarization.default_backend`, `summarization.default_mode`, `summarization.default_style`, `summarization.fallback_to_extractive`
 - `summarization.tables.target_tokens`, `summarization.tables.focus`
 - `tokenizer.default`
+- `output.dir`
 - `mcp.heartbeat_interval`, `mcp.reap_threshold`
 - `debug.log_level`, `debug.har_path`, `debug.har_body_cap`
 - `headless.max_concurrent`, `headless.chrome_executable`
 - `image_captions.default`, `image_captions.max_tokens`, `image_captions.max_per_page`, `image_captions.min_width`, `image_captions.min_height`, `image_captions.max_bytes`
 - `image_captions.cache.enabled`, `image_captions.cache.ttl`, `image_captions.cache.restrict_to`, `image_captions.cache.store_raw_image`
 - `http.bind`, `http.allow_server_paths`
+- `search.api_key_env`, `search.base_url`, `search.count`, `search.country`, `search.language`, `search.ui_language`, `search.safe_search`
+- `search.extra_snippets`, `search.spellcheck`, `search.include_fetch_metadata`, `search.enrichment`
+- `search.timeout_secs`, `search.max_retries`, `search.requests_per_minute`, `search.retry_after_ceiling`
+
+There is deliberately no settable key holding an API token. `search.api_key_env` names the environment variable Rover reads the Brave key from, so `rover config set` cannot write a credential to disk. (`search.goggles` is a list, which `config set` does not handle — edit the file directly.)
 
 Examples:
 
@@ -247,6 +320,9 @@ rover config set ssrf.project_root /Users/me/code
 rover config set cache.store_raw_html true
 rover config set image_captions.default cloud
 rover config set headless.max_concurrent 8
+rover config set search.count 5
+rover config set search.country GB
+rover config set search.safe_search strict
 ```
 
 ## `rover meta`
@@ -256,7 +332,9 @@ rover meta use  <claude|general> [-s|--scope <local|user|project>]
 rover meta hook <claude|general>
 ```
 
-Wires Rover into an agent harness, or runs the hook handler that wiring installs. Unlike the other subcommands, `meta` does not read the Rover config file.
+Wires Rover into an agent harness, or runs the hook handler that wiring installs.
+
+`meta` reads the config file, because the steering it generates is capability-aware: it only teaches agents the `search` tool when this build has the `web-search` feature *and* an API key is present. Otherwise it writes the previous guidance — use your harness's built-in web search to find URLs, then read them with Rover — and prints a note saying why, and what would change it. The installed Claude Code hooks re-evaluate on every session, so exporting a key later is enough; only the on-disk `CLAUDE.md` / `AGENTS.md` block is frozen at install time and needs a re-run. See [Web search](/docs/web-search#availability).
 
 ### `rover meta use`
 

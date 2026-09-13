@@ -187,6 +187,20 @@ pub async fn build_runtime(
         .with_guard(guard.clone()),
     );
 
+    // Web search. Built unconditionally: `SearchService` is cheap, never
+    // touches the network at construction time, and reports its own
+    // availability, so an install with no Brave key still starts and still
+    // fetches exactly as before.
+    let search = Arc::new(crate::search::SearchService::new(
+        &config.search,
+        &config.fetch.user_agent,
+    ));
+    tracing::info!(
+        target: "rover::search",
+        status = search.availability().describe(),
+        "web search",
+    );
+
     // M9: build the captioner registry from `[captioners.*]` config. An
     // empty config yields an empty registry, which is fine: caption-mode
     // calls error at fetch time with `CaptionerNotConfigured`.
@@ -220,6 +234,7 @@ pub async fn build_runtime(
         summarizer,
         captioners,
         guard.clone(),
+        search,
         transport,
         #[cfg(feature = "headless")]
         headless_renderer,

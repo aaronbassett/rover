@@ -232,6 +232,24 @@ impl RoverError {
     pub const CAPTIONER_MODEL_ERROR: &'static str = "captioner_model_error";
     pub const CAPTIONER_IMAGE_DECODE_FAILED: &'static str = "captioner_image_decode_failed";
 
+    // Web search. `invalid_args` and `rate_limited` are deliberately reused
+    // where the semantics genuinely match (a bad `count`, a 429) rather than
+    // minted afresh; the codes below name conditions those two cannot
+    // express — a build without the feature, an install without a key, a
+    // credential the provider rejected, a subscription that does not cover
+    // the call, an exhausted quota (waiting does not help, unlike a 429), a
+    // response Rover could not parse, and the provider failing on its own
+    // side.
+    pub const SEARCH_FEATURE_NOT_COMPILED: &'static str = "search_feature_not_compiled";
+    pub const SEARCH_NOT_CONFIGURED: &'static str = "search_not_configured";
+    pub const SEARCH_AUTH_FAILED: &'static str = "search_auth_failed";
+    pub const SEARCH_SUBSCRIPTION_DENIED: &'static str = "search_subscription_denied";
+    pub const SEARCH_QUOTA_EXHAUSTED: &'static str = "search_quota_exhausted";
+    pub const SEARCH_MALFORMED_RESPONSE: &'static str = "search_malformed_response";
+    pub const SEARCH_PROVIDER_ERROR: &'static str = "search_provider_error";
+    pub const SEARCH_UNREACHABLE: &'static str = "search_unreachable";
+    pub const SEARCH_TIMEOUT: &'static str = "search_timeout";
+
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,

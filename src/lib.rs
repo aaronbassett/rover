@@ -15,6 +15,7 @@ pub mod meta;
 #[cfg(any(feature = "local-inference", feature = "injection-model"))]
 pub mod model_integrity;
 pub mod paths;
+pub mod search;
 pub mod storage;
 pub mod summarizer;
 pub mod tasks;

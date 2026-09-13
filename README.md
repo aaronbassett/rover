@@ -4,20 +4,22 @@
 
 # Rover
 
-**An MCP server that turns the web into clean, token-efficient Markdown your LLM agent can actually trust.**
+**An MCP server that finds web pages and turns them into clean, token-efficient Markdown your LLM agent can actually trust.**
 
 [![CI](https://github.com/aaronbassett/rover/actions/workflows/ci.yml/badge.svg)](https://github.com/aaronbassett/rover/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Rust 1.96+](https://img.shields.io/badge/rustc-1.96+-orange.svg)](#install)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-yellow.svg)](#install)
 
-[Quick start](#quick-start-wire-it-into-your-agent) · [Why Rover](#why-rover) · [How it compares](#how-your-agent-gets-the-web) · [MCP tools](#the-mcp-tools) · [Security](#security--trust) · [Features](#features) · [Docs](#documentation)
+[Quick start](#quick-start-wire-it-into-your-agent) · [Why Rover](#why-rover) · [How it compares](#how-your-agent-gets-the-web) · [MCP tools](#the-mcp-tools) · [Web search](#web-search) · [Security](#security--trust) · [Features](#features) · [Docs](#documentation)
 
 </div>
 
 ---
 
-Point your agent at a URL and Rover fetches it, strips the ads/nav/chrome, extracts the real content, normalises the markup, counts the tokens, optionally summarises to a budget, and hands back a YAML-frontmattered Markdown document — wrapped so the model knows it's **untrusted third-party data, not instructions**. The same binary runs as a long-lived **MCP server** for Claude Code and other agent harnesses, and as a one-shot **CLI**.
+Point your agent at a URL and Rover fetches it, strips the ads/nav/chrome, extracts the real content, normalises the markup, counts the tokens, optionally summarises to a budget, and hands back a YAML-frontmattered Markdown document — wrapped so the model knows it's **untrusted third-party data, not instructions**. Don't have a URL yet? `rover search` finds candidates first. The same binary runs as a long-lived **MCP server** for Claude Code and other agent harnesses, and as a one-shot **CLI**.
+
+**`search` finds. `fetch` reads.** Rover never fetches a search result on your behalf — the agent picks the few worth reading. That split keeps one search from turning into twenty origin hits and twenty pages of untrusted markdown in the context window.
 
 <div align="center">
 
@@ -39,7 +41,7 @@ Agents that browse the live web hit the same four walls every time:
 - **🔁 Repeated fetches waste tokens, time, and money** — and ignore politeness rules (rate limits, `robots.txt`, caching headers).
 - **🛡️ Fetched web content is untrusted.** A page can carry "ignore your instructions and…" straight into your agent's context. Most fetch tools hand it over raw.
 
-Rover fixes all four. Extraction is the battle-tested [`readabilityrs`](https://crates.io/crates/readabilityrs) crate (Prism/Shiki/rehype/WordPress/GitHub code blocks, MathJax/KaTeX, footnote dialects, lazy-loaded images, permalink anchors). On top of that Rover layers HTTP-aware caching, per-domain rate limiting + `robots.txt`, charset detection, configurable SSRF protection, a layered **prompt-injection guard**, optional headless rendering for SPAs, extractive *and* cloud-LLM summarisation, inline image captioning, and a long-running task model with NDJSON-streamed progress.
+Rover fixes all four, and finds the pages in the first place. Extraction is the battle-tested [`readabilityrs`](https://crates.io/crates/readabilityrs) crate (Prism/Shiki/rehype/WordPress/GitHub code blocks, MathJax/KaTeX, footnote dialects, lazy-loaded images, permalink anchors). On top of that Rover layers HTTP-aware caching, per-domain rate limiting + `robots.txt`, charset detection, configurable SSRF protection, a layered **prompt-injection guard**, optional headless rendering for SPAs, extractive *and* cloud-LLM summarisation, inline image captioning, and a long-running task model with NDJSON-streamed progress.
 
 ## How your agent gets the web
 
@@ -54,6 +56,7 @@ Rover fixes all four. Extraction is the battle-tested [`readabilityrs`](https://
 | Batch fetch + per-domain rate limiting | ✅ `batch_fetch`, token-bucket, streaming progress | ❌ one URL per call | ◻️ recursive, no per-domain limit |
 | SSRF / private-network protection | ✅ 5 levels + dial-time re-check (anti-DNS-rebinding) | ◻️ HTTP→HTTPS upgrade; private-IP stance undocumented | ❌ |
 | Prompt-injection guard | ✅ layered: nonce wrapper + detectors + optional model | ❌ content goes straight to the model | — |
+| Web search | ✅ `search` — ranked URLs, rich metadata, site/region/language/freshness filters, Goggles | ◻️ separate `WebSearch` tool, title + snippet | ❌ |
 | Structured metadata (schema.org / OG / Twitter) | ✅ `get_metadata` | ❌ (must ask in the prompt) | ❌ |
 | Inline image captioning | ✅ cloud VLMs (OpenAI / Anthropic / Gemini / compatible) | ❌ | ❌ |
 | Works offline / no per-fetch API cost | ✅ extractive backend, no API key | ❌ model call per fetch | ✅ |
@@ -68,7 +71,7 @@ Rover fixes all four. Extraction is the battle-tested [`readabilityrs`](https://
 `rover meta use` does the whole wiring in one command (MCP server, steering hooks for Claude Code, and a rules-file block):
 
 ```sh
-rover meta use claude     # Claude Code: claude mcp add + SessionStart (startup/clear/compact) + WebFetch hooks + CLAUDE.md block
+rover meta use claude     # Claude Code: claude mcp add + SessionStart (startup/clear/compact) + WebFetch|WebSearch hooks + CLAUDE.md block
 rover meta use general    # other harnesses: ./mcp.json + an AGENTS.md steering block
 ```
 
@@ -93,6 +96,7 @@ Your agent now has these tools:
 
 | Tool | What it does |
 | --- | --- |
+| `search` | Query → ranked candidate URLs with snippets, dates, and source metadata. Filters for site, region, language, freshness, SafeSearch, and Goggles. **Discovery only** — it never fetches what it returns. Needs the `web-search` feature (in every prebuilt binary) and a `BRAVE_SEARCH_API_KEY`. |
 | `fetch` | Single URL → cleaned Markdown. Caching, headless rendering, image modes, token budgeting, inline summarisation. |
 | `batch_fetch` | Fetch N URLs concurrently with per-domain rate limiting. Returns a `task_id`; stream progress with `rover batch <id> --monitor`. |
 | `summarize` | Compact a cached or fresh page via extractive (offline) or cloud backends. Steerable with `focus`, `preserve`, `target_tokens`. |
@@ -106,10 +110,18 @@ Full tool reference: [`rover-fetch.com/docs/mcp-tools`](https://rover-fetch.com/
 Every capability is also a one-shot CLI command — handy for scripts, CI, and trying things out:
 
 ```sh
+rover search "rust async trait"                    # ranked candidate URLs
+rover search "async trait" --site docs.rs -n 5     # one site, five results
 rover fetch https://example.com/article            # clean Markdown → stdout
 rover fetch --max-tokens 4000 https://example.com  # summarise to fit a budget
 rover cache stats                                  # entry count, size, expired
 rover doctor                                       # sanity-check the install
+```
+
+The two halves compose:
+
+```sh
+rover search "tokio runtime" --format json | jq -r '.results[0].url' | xargs rover fetch
 ```
 
 > [!TIP]
@@ -131,7 +143,7 @@ git clone https://github.com/aaronbassett/rover && cd rover
 cargo build --release          # binary at target/release/rover
 ```
 
-The default build (~20 MiB) needs no model downloads, no Chrome, and no extra runtime dependencies.
+The default build (~20 MiB) needs no model downloads, no Chrome, and no extra runtime dependencies — and, being the default, no web search either. Add `--features web-search` for that, or `--features headless,web-search` to match what every packaged channel ships.
 
 **Homebrew (macOS) — on release:**
 
@@ -139,7 +151,7 @@ The default build (~20 MiB) needs no model downloads, no Chrome, and no extra ru
 brew install aaronbassett/tap/rover
 ```
 
-The `rover` formula ships the JavaScript-rendering (`headless`) build. It does **not** pull in a browser — headless rendering is opt-in and Rover auto-detects a Chrome/Chromium install at runtime (`rover doctor` verifies it). If you want headless mode, install a browser yourself, e.g. `brew install --cask chromium`. Other optional features (e.g. `local-inference`) are available from source via `cargo install` — see crates.io below.
+The `rover` formula ships with both `headless` (JavaScript rendering) and `web-search` compiled in. It does **not** pull in a browser — headless rendering is opt-in and Rover auto-detects a Chrome/Chromium install at runtime (`rover doctor` verifies it). If you want headless mode, install a browser yourself, e.g. `brew install --cask chromium`. Web search needs no extra software, just a `BRAVE_SEARCH_API_KEY`. Other optional features (e.g. `local-inference`) are available from source via `cargo install` — see crates.io below.
 
 **Prebuilt binary (Linux & macOS) — on release:**
 
@@ -155,22 +167,46 @@ Or download a `.tar.xz` from the [latest release](https://github.com/aaronbasset
 tar xf rover-fetch-<target>.tar.xz   # then move the extracted `rover` onto your PATH
 ```
 
-Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. The prebuilt binary includes the `headless` feature (JavaScript-rendered pages).
+Targets: `x86_64`/`aarch64` Linux (gnu) and Intel/Apple-Silicon macOS. Every prebuilt binary includes the `headless` (JavaScript-rendered pages) and `web-search` features.
 
 **crates.io — on release:**
 
 ```sh
-cargo install rover-fetch --features headless   # crate is rover-fetch; binary is rover
+cargo install rover-fetch --features headless,web-search   # crate is rover-fetch; binary is rover
 ```
 
 > [!NOTE]
-> The crate publishes as `rover-fetch` because `rover` on crates.io is held by an unrelated project. The installed binary is still `rover`. `cargo install` builds with the crate's default (basic) features; add `--features headless` to match the prebuilt and Homebrew binary.
+> The crate publishes as `rover-fetch` because `rover` on crates.io is held by an unrelated project. The installed binary is still `rover`. `cargo install` builds with the crate's default (basic) features; add `--features headless,web-search` to match the prebuilt, Homebrew, and container binaries.
 
 **Requirements:** Rust 1.96+ (edition 2024). Rover is pre-1.0: minor releases may include breaking changes, and the minimum supported Rust version can rise in any release.
 
 ## The MCP tools
 
-Every tool returns structured JSON; the content-returning tools (`fetch`, `summarize`, `get_metadata`) additionally wrap their payload in Rover's trusted-preamble + nonce delimiter (see [Security & trust](#security--trust)).
+Every tool returns structured JSON; the content-returning tools (`fetch`, `summarize`, `get_metadata`) additionally wrap their payload in Rover's trusted-preamble + nonce delimiter (see [Security & trust](#security--trust)). `search` returns a structured envelope instead, carrying the same guard telemetry plus an always-present trust notice.
+
+```jsonc
+// search → ranked candidate URLs. Rover does NOT fetch these.
+{
+  "provider": "brave",
+  "query": { "original": "rust async trait", "more_results_available": true, "related_queries": ["tokio"] },
+  "results": [
+    {
+      "rank": 1,
+      "title": "async-trait",
+      "url": "https://docs.rs/async-trait/",
+      "description": "Type erasure for async trait methods.",
+      "age": "2 days ago",
+      "page_age": "2026-09-01T12:00:00",
+      "language": "en",
+      "source": { "name": "Docs.rs", "hostname": "docs.rs", "favicon": "…" },
+      "schema_types": ["SoftwareSourceCode"]
+    }
+  ],
+  "prompt_injection": { "scanned": true, "detected": false, "action": "moderate" },
+  "security_notice": "⚠ Titles, descriptions, snippets and metadata below are 3rd-party web content …"
+}
+```
+
 
 ```jsonc
 // fetch → cleaned, guarded Markdown document
@@ -309,6 +345,27 @@ api_key_env = "OPENAI_API_KEY"
 
 `openai_compat` works here too — point it at a local Ollama or LM Studio vision server (e.g. `llama3.2-vision`) for fully offline captioning with no API key.
 
+### Web search
+
+`rover search` and the `search` MCP tool find candidate URLs, so the agent doesn't have to already know where to look. Backed by Brave Search, with filters for site, region, language, freshness (`week`, or an explicit `2024-01-01..2024-06-30` range), SafeSearch, and Goggles for custom re-ranking. Brave's search operators (`"exact phrase"`, `-excluded`, `site:`, `filetype:`, `intitle:`, `AND`/`OR`/`NOT`) work inside the query.
+
+```sh
+rover search "rust async trait" --site docs.rs -n 5 --freshness month
+```
+
+```toml
+[search]
+count = 5
+country = "GB"
+safe_search = "strict"
+# The API key is NEVER in the file — this names the env var it's read from.
+# api_key_env = "BRAVE_SEARCH_API_KEY"
+```
+
+Results keep the metadata Brave actually returns — page dates and crawl timestamps, language, family-friendly and live classifications, content type, source profile and favicon, thumbnails, icons, schema.org types — plus query-level signals like spell-correction, navigational/trending/breaking-news intent, related queries, and `more_results_available`. Set `enrichment: true` and the provider's structured extras (article, product, rating, FAQ, raw schema.org) come through verbatim.
+
+Titles and snippets are third-party content from pages Rover never fetched, so they go through the same prompt-injection guard as a fetched document, and every response carries a trust notice. **A search never triggers a fetch** — and searches are not cached, since discovery is freshness-sensitive. Every call, and every `offset` page, is a billable Brave request; retries are bounded at 2 by default and only ever cover 429/5xx/network. Full detail: [`rover-fetch.com/docs/web-search`](https://rover-fetch.com/docs/web-search).
+
 ### Per-domain rate limiting & `robots.txt`
 
 A per-host token bucket and a global concurrency cap, always on and configurable. The `robots.txt` gate is **opt-in** (off by default — Rover is an agent's browser, not a crawler, and robots.txt governs crawling); set `robots.respect = true` to enable it. When enabled, a `Crawl-Delay` floor is respected and the robots cache fails closed (a cached `disallow_all` sentinel for the configured `failure_ttl`), so a flaky robots endpoint doesn't quietly let traffic through.
@@ -327,20 +384,26 @@ har_body_cap = "64KiB"
 
 | Feature | Adds | Notes |
 | --- | --- | --- |
+| `web-search` | Web search: the `search` MCP tool and `rover search`, via the [Brave Search API](https://api-dashboard.search.brave.com/) | **No new dependencies, nothing downloaded, nothing needed at runtime** — just a `BRAVE_SEARCH_API_KEY`. The flag gates the surface, not a dependency tree |
 | `headless` | JavaScript-rendered SPA support via [`chromiumoxide`](https://github.com/mattsse/chromiumoxide) | Uses system Chrome/Chromium (~32 MB) |
 | `local-inference` | Local LLM summarisation via [`mistral.rs`](https://github.com/EricLBuehler/mistral.rs) (default model: Qwen 3.5 0.8B) | ~80 MB; model downloaded on first use |
 | `injection-model` | ONNX DeBERTa prompt-injection classifier (guard method 3) | Native ONNX runtime; ~200 MB model downloaded on first use |
 
 ```sh
-cargo build --release --features headless
+cargo build --release --features web-search
+cargo build --release --features headless,web-search        # what every official binary ships
 cargo build --release --features local-inference,headless
 cargo build --release --features injection-model
 ```
+
+**Every official distribution — the prebuilt tarballs, the Homebrew formula, and both container targets — includes `headless` and `web-search`.** Only `cargo install` builds without them, and only there do you need to know the flag exists. `web-search` is in the container too, unlike `headless`: it needs nothing at runtime, so leaving it out would mean a container deployment silently missing a capability every other channel has.
 
 Local models download on first use (or ahead of time via `rover model download <repo_id>`) and live under `$HF_HOME/hub`; manage them with `rover model {list,download,remove}`.
 
 > [!IMPORTANT]
 > Cloud captioners (OpenAI, Anthropic, Gemini, OpenAI-compatible) are **always compiled in** — no feature flag. The `headless` feature needs a Chrome/Chromium browser on the host; Rover auto-detects standard install paths (override with `[headless] chrome_executable`), and `rover doctor` verifies the launch path.
+
+Without `web-search`, or without a key, nothing pretends to work: `search` returns `search_feature_not_compiled` / `search_not_configured`, `rover doctor` reports it as a non-failing skip, and the agent steering `rover meta use` installs never mentions the tool. `rover doctor` never spends a search request checking — run `rover search "rover mcp" -n 1` to verify a key end to end.
 
 Setup details, model recommendations, and memory profiles: [`rover-fetch.com/docs/features`](https://rover-fetch.com/docs/features).
 
@@ -352,6 +415,7 @@ Rover reads `rover.toml` from `$XDG_CONFIG_HOME/rover/rover.toml` (or `~/.config
 rover config show                          # merged effective config + per-key provenance
 rover config set ssrf.level loopback       # mutate in place (comments preserved, round-trip validated)
 rover config set summarization.default_backend fast
+rover config set search.count 5
 ```
 
 A minimal `rover.toml`:
@@ -363,6 +427,10 @@ timeout_secs = 30
 
 [ssrf]
 level = "strict"
+
+[search]
+count = 5                    # the Brave API key lives in $BRAVE_SEARCH_API_KEY,
+country = "GB"               # never in this file
 
 [cache]
 default_ttl = "15m"          # default; raise per-origin Cache-Control still wins
@@ -385,6 +453,7 @@ The full reference — every section, key, and default — lives at [`rover-fetc
 ## Subcommands at a glance
 
 ```text
+rover search <query>                 find candidate URLs (never fetches them)
 rover fetch <url>                    one-shot fetch → Markdown on stdout
 rover mcp                            long-running MCP server (stdio)
 rover cache list|get|purge|stats     inspect / manage the local cache
@@ -402,10 +471,11 @@ Full reference, exit codes, and NDJSON event shapes: [`rover-fetch.com/docs/cli`
 | Doc | What's in it |
 | --- | --- |
 | [CLI](https://rover-fetch.com/docs/cli) | Every subcommand, flag, exit code, and NDJSON event shape. |
-| [MCP tools](https://rover-fetch.com/docs/mcp-tools) | MCP tool schemas: `fetch`, `batch_fetch`, `summarize`, `get_metadata`, `count_tokens`, and the prompt-injection wire contract. |
+| [MCP tools](https://rover-fetch.com/docs/mcp-tools) | MCP tool schemas: `search`, `fetch`, `batch_fetch`, `summarize`, `get_metadata`, `count_tokens`, and the prompt-injection wire contract. |
+| [Web search](https://rover-fetch.com/docs/web-search) | Getting a Brave key, filters, operators, Goggles, result metadata, the search → fetch workflow, trust and billing. |
 | [Configuration](https://rover-fetch.com/docs/configuration) | Every config section and key, with defaults, types, and examples. |
 | [Backends](https://rover-fetch.com/docs/backends) | Summarisation backend reference: extractive (TextRank) and cloud providers. |
-| [Features](https://rover-fetch.com/docs/features) | Cargo feature flags: `headless`, `local-inference`, `injection-model` — setup, models, sizes. |
+| [Features](https://rover-fetch.com/docs/features) | Cargo feature flags: `web-search`, `headless`, `local-inference`, `injection-model` — setup, models, sizes, and which distributions include what. |
 | [Security](https://rover-fetch.com/docs/security) | SSRF levels, address floor, DNS-rebinding mitigation, secret redaction, prompt-injection guard, known limitations. |
 
 Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md) · Security policy: [`SECURITY.md`](SECURITY.md) · Changelog: [`CHANGELOG.md`](CHANGELOG.md).

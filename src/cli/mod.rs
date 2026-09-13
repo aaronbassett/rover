@@ -9,4 +9,5 @@ pub mod mcp;
 pub mod meta;
 #[cfg(feature = "local-inference")]
 pub mod model;
+pub mod search;
 pub mod task;

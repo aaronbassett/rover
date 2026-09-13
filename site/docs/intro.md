@@ -38,17 +38,20 @@ Every field is documented in [Anatomy of a Rover document](/docs/output).
 | Refetching the same URL wastes tokens and money | HTTP-aware caching, per-domain rate limiting, `robots.txt` |
 | A page can smuggle "ignore your instructions" into context | A layered [prompt-injection guard](/docs/trust) |
 
-It also does extractive and cloud summarisation, inline image captioning, and batch fetches with streamed progress.
+It also searches the web for candidate URLs, and does extractive and cloud summarisation, inline image captioning, and batch fetches with streamed progress.
 
 ## Tools
 
 | Tool | Returns |
 | --- | --- |
+| `search` | Ranked candidate URLs with snippets and metadata. Discovery only — it never fetches them. |
 | `fetch` | A URL as cleaned Markdown. |
 | `batch_fetch` | Many URLs concurrently; streams progress. |
 | `summarize` | A page compacted via an extractive or cloud backend. |
 | `get_metadata` | Schema.org / Open Graph / Twitter Card metadata, no body. |
 | `count_tokens` | A URL's token cost across five tokenisers. |
+
+`search` finds URLs; `fetch` reads the ones you pick. Rover never fetches a search result on your behalf. Search needs the `web-search` Cargo feature (in every prebuilt binary) and an API key — see [Web search](/docs/web-search).
 
 Full schemas live in [MCP tools](/docs/mcp-tools).
 

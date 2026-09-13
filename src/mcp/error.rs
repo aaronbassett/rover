@@ -51,6 +51,9 @@ pub enum McpError {
          same path in both containers and set `[http] allow_server_paths = true`."
     )]
     ServerPathModeUnavailable { mode: &'static str },
+
+    #[error("search error: {0}")]
+    Search(#[from] crate::search::SearchError),
 }
 
 impl McpError {
@@ -162,6 +165,7 @@ impl McpError {
                 }
             }
             Self::Storage(e) => RoverError::new(RoverError::STORAGE_ERROR, e.to_string()),
+            Self::Search(e) => search_error_to_rover_error(e),
             Self::Summarizer(e) => {
                 use crate::summarizer::SummarizerError as S;
                 match e {
@@ -222,6 +226,43 @@ impl McpError {
                 }
             }
         }
+    }
+}
+
+/// Map a [`crate::search::SearchError`] to the appropriate stable MCP wire
+/// code.
+///
+/// Two existing codes are reused where their semantics genuinely match:
+/// `invalid_args` for anything Rover (or the provider) rejected as a bad
+/// request, and `rate_limited` for a 429 — an agent already knows to back
+/// off on that one, and a `search_rate_limited` twin would just be a second
+/// name for the same instruction. The provider's own error text is folded
+/// into the human-readable message where it is useful and safe; the stable
+/// contract is the code.
+fn search_error_to_rover_error(e: &crate::search::SearchError) -> RoverError {
+    use crate::search::SearchError as S;
+    match e {
+        S::FeatureNotCompiled => {
+            RoverError::new(RoverError::SEARCH_FEATURE_NOT_COMPILED, e.to_string())
+        }
+        S::NotConfigured { .. } => {
+            RoverError::new(RoverError::SEARCH_NOT_CONFIGURED, e.to_string())
+        }
+        S::InvalidRequest(m) => RoverError::new(RoverError::INVALID_ARGS, m.clone()),
+        S::AuthFailed { .. } => RoverError::new(RoverError::SEARCH_AUTH_FAILED, e.to_string()),
+        S::SubscriptionDenied { .. } => {
+            RoverError::new(RoverError::SEARCH_SUBSCRIPTION_DENIED, e.to_string())
+        }
+        S::RateLimited { .. } => RoverError::new(RoverError::RATE_LIMITED, e.to_string()),
+        S::QuotaExhausted { .. } => {
+            RoverError::new(RoverError::SEARCH_QUOTA_EXHAUSTED, e.to_string())
+        }
+        S::MalformedResponse(_) => {
+            RoverError::new(RoverError::SEARCH_MALFORMED_RESPONSE, e.to_string())
+        }
+        S::Upstream { .. } => RoverError::new(RoverError::SEARCH_PROVIDER_ERROR, e.to_string()),
+        S::Network { .. } => RoverError::new(RoverError::SEARCH_UNREACHABLE, e.to_string()),
+        S::Timeout { .. } => RoverError::new(RoverError::SEARCH_TIMEOUT, e.to_string()),
     }
 }
 

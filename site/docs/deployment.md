@@ -91,6 +91,31 @@ Point an MCP client at the container's `/mcp` path with the token in an `Authori
 
 The first `count_tokens` call, or the first token-budgeted `fetch`, downloads a tokenizer from HuggingFace into `/data/.cache/huggingface/hub`. It happens once per volume — after that, the tokenizer is cached alongside everything else under `/data` and every later call is offline. If the container has no outbound network access, that first call fails.
 
+## Web search
+
+Both container targets include the `web-search` Cargo feature. Unlike `headless`, it needs nothing at runtime — no browser, no model weights, no extra layer — so leaving it out of the image would mean a container deployment silently lacking a capability every other official distribution has.
+
+It still needs a credential, which is an environment variable, never a file:
+
+```yaml
+services:
+  rover:
+    environment:
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+```
+
+Both shipped compose files already pass it through from your `.env`. Leave it unset and `search` reports `search_not_configured` while everything else works unchanged — the container starts, `/readyz` passes, and fetching is unaffected.
+
+Two operational notes. Every search is a billable request to Brave, and so is every `offset` page; `[search] requests_per_minute` (default 60) paces the endpoint per process, so N replicas mean N times that ceiling — the same per-process caveat that applies to fetch rate limiting. And search results are never cached, so a shared container gives you no request-count savings on search the way it does on fetches.
+
+`rover doctor` inside the container reports search status without spending a request:
+
+```bash
+docker compose exec rover doctor
+```
+
+See [Web search](/docs/web-search) for the full picture.
+
 ## SPA rendering
 
 The default image ships without Chromium: it is built without the `headless` Cargo feature, so `headless.mode = "on"` returns `headless_feature_not_compiled` and `auto` behaves like a plain fetch. See [JavaScript & dynamic pages](/docs/dynamic-pages) for the mode-by-mode behaviour.

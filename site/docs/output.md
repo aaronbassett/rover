@@ -94,6 +94,10 @@ The envelope fields sit alongside `content`, not inside the wrapped document. Th
 
 For the exhaustive envelope and the full argument reference, see [MCP tools](/docs/mcp-tools).
 
+## Search results are a different envelope
+
+`search` returns no document, so none of the above applies to it: there is no frontmatter, no Markdown body, and no nonce fence to wrap. It returns a structured envelope — `provider`, `query`, `results[]`, `prompt_injection`, and an always-present `security_notice` that plays the preamble's role. The field-by-field shape is in [MCP tools](/docs/mcp-tools#search-response); the trust reasoning is in [Web search](/docs/web-search#trust).
+
 ## When you only want the metadata
 
 `get_metadata` returns structured JSON, not a wrapped document. There's no nonce wrapper and no Markdown body, only the metadata fields (`title`, `description`, `author`, `canonical`, `language`, `schema_types`, `extraction_quality`, and the rest), with the prose values guarded in place. Reach for it when you want to know what a page is without paying for the body. Everything else returns the wrapped document above. See [MCP tools](/docs/mcp-tools).

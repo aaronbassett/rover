@@ -71,7 +71,7 @@ pub fn preflight(scope: Scope, root: &Path) -> anyhow::Result<()> {
 
 /// Register the MCP server, install the hooks, and (except at local scope)
 /// write the CLAUDE.md steering block.
-pub fn apply(scope: Scope, root: &Path) -> anyhow::Result<Vec<Change>> {
+pub fn apply(scope: Scope, root: &Path, caps: hook::Capabilities) -> anyhow::Result<Vec<Change>> {
     let mut changes = Vec::new();
 
     register_mcp(scope)?;
@@ -84,7 +84,7 @@ pub fn apply(scope: Scope, root: &Path) -> anyhow::Result<Vec<Change>> {
 
     if let Some(md) = claude_md_path(scope, root) {
         let existing = std::fs::read_to_string(&md).unwrap_or_default();
-        let updated = edits::upsert_managed_block(&existing, hook::RULES_BLOCK_CLAUDE);
+        let updated = edits::upsert_managed_block(&existing, &hook::rules_block_claude(caps));
         edits::write_file(&md, &updated)?;
         changes.push(Change::new(md, "rules block written"));
     }

@@ -21,7 +21,7 @@ pub fn preflight(root: &Path) -> anyhow::Result<()> {
 }
 
 /// Write the project-root `mcp.json` and the `AGENTS.md` steering block.
-pub fn apply(root: &Path) -> anyhow::Result<Vec<Change>> {
+pub fn apply(root: &Path, caps: hook::Capabilities) -> anyhow::Result<Vec<Change>> {
     let mcp = root.join("mcp.json");
     let existing = std::fs::read_to_string(&mcp).unwrap_or_default();
     let merged = edits::merge_mcp_server(&existing)?;
@@ -29,7 +29,7 @@ pub fn apply(root: &Path) -> anyhow::Result<Vec<Change>> {
 
     let agents = root.join("AGENTS.md");
     let existing = std::fs::read_to_string(&agents).unwrap_or_default();
-    let updated = edits::upsert_managed_block(&existing, hook::RULES_BLOCK_GENERAL);
+    let updated = edits::upsert_managed_block(&existing, &hook::rules_block_general(caps));
     edits::write_file(&agents, &updated)?;
 
     Ok(vec![
@@ -43,10 +43,16 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn caps() -> hook::Capabilities {
+        hook::Capabilities {
+            search: crate::search::SearchAvailability::NotConfigured,
+        }
+    }
+
     #[test]
     fn apply_writes_mcp_json_and_agents_md() {
         let tmp = tempdir().unwrap();
-        let changes = apply(tmp.path()).unwrap();
+        let changes = apply(tmp.path(), caps()).unwrap();
         assert_eq!(changes.len(), 2);
 
         let mcp = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
@@ -61,10 +67,10 @@ mod tests {
     #[test]
     fn apply_is_idempotent() {
         let tmp = tempdir().unwrap();
-        apply(tmp.path()).unwrap();
+        apply(tmp.path(), caps()).unwrap();
         let mcp1 = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
         let agents1 = std::fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
-        apply(tmp.path()).unwrap();
+        apply(tmp.path(), caps()).unwrap();
         let mcp2 = std::fs::read_to_string(tmp.path().join("mcp.json")).unwrap();
         let agents2 = std::fs::read_to_string(tmp.path().join("AGENTS.md")).unwrap();
         assert_eq!(mcp1, mcp2);

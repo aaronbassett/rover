@@ -63,6 +63,18 @@ HTTP `Authorization`-style credentials, in two shapes. A field literally named `
 
 Two things are deliberately not redacted. Request and response bodies in HAR files (`debug.har_path`) stay intact: HAR is opt-in debug instrumentation for inspecting raw traffic, so redacting the bytes you enabled HAR to read would defeat the point. Protect the HAR file with filesystem permissions and treat it as sensitive. Environment variables also stay out of logs by construction: the `api_key_env` config field is a pointer, and the resolved value is held in memory and never logged.
 
+The search credential follows the same rule and adds one of its own: it is sent as an `X-Subscription-Token` **header**, never as a query-string parameter. That keeps it out of the request URL entirely — the string that ends up in tracing spans, HAR entries, and any intervening proxy's access log — rather than relying on the query-string redactor to catch it there. It is never stored on a struct, never included in an error message, and never written to a config file: `[search] api_key_env` names the variable, and `rover config set` has no key that could write a token to disk.
+
+## Web search
+
+Search results are third-party content Rover has not fetched, and are guarded exactly like fetched pages — see [Trust & prompt injection](/docs/trust#search-results-are-untrusted-too) and [Web search](/docs/web-search#trust). Three deployment-relevant points:
+
+**Search sends your queries to Brave.** Every `search` call is an outbound request to the search provider carrying the query string and the region/language parameters. If your queries are themselves sensitive, that is the disclosure to weigh; no other Rover feature makes an outbound request containing user-authored text.
+
+**Search never triggers a fetch.** `search` returns URLs and stops. Nothing in the search path touches the fetch pipeline, so a hostile result cannot cause Rover to reach out to an attacker-chosen origin. Fetching one is a separate, explicit call that runs the SSRF policy, `robots.txt`, and the guard as usual.
+
+**`[search] base_url` is not SSRF-policed.** Like `[backends.<name>] base_url` and `[captioners.<name>] base_url`, it names an endpoint the operator configured deliberately, so it is exempt from the SSRF address policy that governs *fetched* URLs. Point it at a proxy you control, or leave it at the default.
+
 ## Prompt-injection guard
 
 Fetched web content is untrusted data, not instructions, and Rover enforces that line before any page reaches your agent. Every document a content-returning tool hands back is framed by a trusted preamble and sealed inside a per-response nonce delimiter that tells the model the enclosed text is third-party content to treat as data, not instructions. The wrapper never depends on catching anything.

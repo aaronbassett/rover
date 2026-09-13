@@ -134,6 +134,10 @@ async fn build_http_state(
         // `[captioners]` table yields an empty registry.
         std::sync::Arc::new(rover::vlm::build(&config).unwrap()),
         std::sync::Arc::new(rover::guard::Guard::from_config(&config.prompt_injection).unwrap()),
+        std::sync::Arc::new(rover::search::SearchService::new(
+            &rover::config::SearchConfig::default(),
+            "rover-test/0",
+        )),
         rover::mcp::TransportKind::Http,
         #[cfg(feature = "headless")]
         std::sync::Arc::new(tokio::sync::OnceCell::new()),

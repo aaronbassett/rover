@@ -5,7 +5,11 @@ title: MCP tools
 
 # Rover MCP tools
 
-Rover exposes five tools over MCP on stdio (`rover mcp`): `fetch`, `batch_fetch`, `summarize`, `get_metadata`, and `count_tokens`. Every argument is validated against a JSON Schema with `deny_unknown_fields`. Pass a key Rover doesn't recognize and the call is rejected with `invalid_args` rather than silently ignored.
+Rover exposes six tools over MCP on stdio (`rover mcp`) and over Streamable HTTP (`rover mcp --http`): `search`, `fetch`, `batch_fetch`, `summarize`, `get_metadata`, and `count_tokens`. Every argument is validated against a JSON Schema with `deny_unknown_fields`. Pass a key Rover doesn't recognize and the call is rejected with `invalid_args` rather than silently ignored.
+
+The tool set is the same on both transports, and the same in every build. `search` needs the `web-search` Cargo feature (which every prebuilt binary has) plus an API key; it is still advertised without them, with its availability stated in the tool description, and calling it returns a specific error rather than an empty result set. See [Web search](/docs/web-search#availability).
+
+`search` finds URLs. `fetch` reads them. Rover never fetches a search result on your behalf — pick the ones worth reading and pass those to `fetch`.
 
 Errors come back as a single stable envelope. The shape is fixed; the set of codes may grow, since Rover is pre-1.0.
 
@@ -15,7 +19,9 @@ Errors come back as a single stable envelope. The shape is fixed; the set of cod
 
 The codes:
 
-`max_tokens_exceeded`, `invalid_args`, `invalid_url`, `ssrf_denied`, `fetch_failed`, `extract_failed`, `storage_error`, `tokenizer_unavailable`, `robots_disallowed`, `robots_fetch_failed`, `retry_exhausted`, `rate_limited`, `deferred`, `too_many_urls`, `empty_url_list`, `summarizer_no_such_backend`, `summarizer_no_extractive_backend_for_fallback`, `summarizer_backend_unavailable`, `summarizer_rate_limited`, `summarizer_auth_failed`, `summarizer_model_error`, `summarizer_invalid_request`.
+`max_tokens_exceeded`, `invalid_args`, `invalid_url`, `ssrf_denied`, `fetch_failed`, `bot_challenge`, `extract_failed`, `storage_error`, `tokenizer_unavailable`, `robots_disallowed`, `robots_fetch_failed`, `retry_exhausted`, `rate_limited`, `deferred`, `too_many_urls`, `empty_url_list`, `summarizer_no_such_backend`, `summarizer_no_extractive_backend_for_fallback`, `summarizer_backend_unavailable`, `summarizer_rate_limited`, `summarizer_auth_failed`, `summarizer_model_error`, `summarizer_invalid_request`, `summarizer_local_feature_not_compiled`, `headless_feature_not_compiled`, `headless_renderer_unavailable`, `headless_launch_failed`, `headless_render_timeout`, `headless_page_closed`, `headless_internal_error`, `captioner_no_such`, `captioner_not_configured`, `captioner_local_feature_not_compiled`, `captioner_rate_limited`, `captioner_auth_failed`, `captioner_backend_unavailable`, `captioner_model_error`, `captioner_image_decode_failed`, `search_feature_not_compiled`, `search_not_configured`, `search_auth_failed`, `search_subscription_denied`, `search_quota_exhausted`, `search_malformed_response`, `search_provider_error`, `search_unreachable`, `search_timeout`.
+
+Search reuses the existing codes where the semantics genuinely match: a bad `count` or an argument the provider rejects is `invalid_args`, and a 429 is `rate_limited`. The `search_*` codes name conditions those two cannot express — see [`search` errors](#search-errors).
 
 ## Prompt-injection guard: the wire contract
 
@@ -57,9 +63,133 @@ Every covered response carries a `prompt_injection` telemetry object:
 | `allowlisted` | array | Methods skipped because the URL matched an allowlist. |
 | `overrides_attempted` | array | Ungranted `security` overrides the agent tried. |
 
-The object lands in a different place per tool. `fetch` renders it as a `prompt_injection:` YAML block inside the wrapped frontmatter. `summarize` places it at `metadata.prompt_injection`. `get_metadata` returns a top-level `prompt_injection` object plus a `security_notice` string when injection text was found.
+The object lands in a different place per tool. `fetch` renders it as a `prompt_injection:` YAML block inside the wrapped frontmatter. `summarize` places it at `metadata.prompt_injection`. `get_metadata` returns a top-level `prompt_injection` object plus a `security_notice` string when injection text was found. `search` returns a top-level `prompt_injection` object and a `security_notice` string that is **always** present — a search response is prose from many origins at once with no single document to fence, so its trust boundary is stated unconditionally.
 
 The `[prompt_injection]` config block covers levels, model presets, per-URL allowlists, and agent-override grants. See [Configuration](/docs/configuration).
+
+## `search`
+
+`search` finds candidate URLs. It is discovery only: Rover does not fetch
+what it returns, and a result is not an endorsement. Pick the few worth
+reading and pass those to [`fetch`](#fetch).
+
+Needs the `web-search` Cargo feature and an API key. Full guide, including
+how to get one: [Web search](/docs/web-search).
+
+Args (only `query` is required; everything else falls back to `[search]`):
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `query` | string | — | The search query. Provider operators work here: `"exact phrase"`, `-excluded`, `site:`, `filetype:`, `intitle:`, `inbody:`, `lang:`, `loc:`, uppercase `AND`/`OR`/`NOT`. Max 600 characters / 75 words after `site` and `exclude_sites` are folded in. |
+| `count` | int | `[search] count` (10) | Results per page, 1–20. |
+| `offset` | int | 0 | Zero-based page index, 0–9. Each page is a separate billable request. |
+| `country` | string | `[search] country` | Two-letter country code results are drawn from, or `ALL`. |
+| `language` | string | `[search] language` | Content language, e.g. `en`, `pt-br`. |
+| `ui_language` | string | `[search] ui_language` | Language for provider-generated response metadata. |
+| `safe_search` | enum | `[search] safe_search` | `off` \| `moderate` \| `strict`. |
+| `freshness` | string | none | `day` \| `week` \| `month` \| `year`, or a range like `2024-01-01..2024-06-30`. |
+| `extra_snippets` | bool | `[search] extra_snippets` | Up to 5 additional excerpts per result. |
+| `spellcheck` | bool | `[search] spellcheck` | Whether the provider may correct the query. |
+| `include_fetch_metadata` | bool | `[search] include_fetch_metadata` | Include the provider's crawl timestamps. |
+| `enrichment` | bool | `[search] enrichment` | Keep the provider's structured per-result extras verbatim. |
+| `site` | string[] | `[]` | Restrict to these domains. Composed as `site:` operators; bare hostnames only. |
+| `exclude_sites` | string[] | `[]` | Drop these domains. Composed as `NOT site:`. |
+| `goggles` | string[] | `[search] goggles` | Custom re-ranking rules, max 3. An explicit `[]` clears configured defaults. |
+| `security` | object | none | Per-call guard overrides, honored only where granted. |
+
+Every enum and range is validated locally before anything is sent, so a bad
+argument costs an `invalid_args` error rather than a billable request.
+
+```jsonc
+{ "query": "rust async trait" }
+{ "query": "async trait", "site": ["docs.rs"], "count": 5 }
+{ "query": "rust release notes", "freshness": "week", "extra_snippets": true }
+{ "query": "steuerrecht", "country": "DE", "language": "de" }
+{ "query": "tokio runtime", "offset": 1 }
+```
+
+### `search` response
+
+```jsonc
+{
+  "provider": "brave",
+  "query": {
+    "original": "rust async trait",
+    "altered": "rust async traits",       // spell-corrected; what was actually searched
+    "cleaned": "rust async traits",
+    "language": "en",
+    "country": "us",
+    "safe_search_active": true,
+    "strict_filter_warning": false,
+    "is_navigational": false,
+    "is_geolocal": false,
+    "is_trending": false,
+    "is_news_breaking": false,
+    "more_results_available": true,
+    "related_queries": ["tokio", "futures"],
+    "operators": { "applied": true, "cleaned_query": "rust async", "sites": ["docs.rs"] },
+    "count": 10,
+    "offset": 0
+  },
+  "results": [
+    {
+      "rank": 1,
+      "title": "async-trait",
+      "url": "https://docs.rs/async-trait/",
+      "description": "Type erasure for async trait methods.",
+      "extra_snippets": ["…"],
+      "age": "2 days ago",
+      "page_age": "2026-09-01T12:00:00",
+      "page_fetched": "2026-09-05T09:00:00",       // with include_fetch_metadata
+      "fetched_content_timestamp": 1757062800,     // with include_fetch_metadata
+      "language": "en",
+      "family_friendly": true,
+      "subtype": "generic",
+      "is_live": false,
+      "content_type": "text/html",
+      "source": {
+        "name": "Docs.rs", "long_name": "Rust package documentation",
+        "url": "https://docs.rs/", "image": "…",
+        "scheme": "https", "netloc": "docs.rs", "hostname": "docs.rs",
+        "path": "› async-trait", "favicon": "…"
+      },
+      "thumbnail": { "src": "…", "original": "…", "alt": "…", "width": 320, "height": 180, "logo": false },
+      "icons": [{ "href": "…", "sizes": "32x32", "rel": "icon", "type": "image/png", "ext": "png" }],
+      "schema_types": ["SoftwareSourceCode"],
+      "enrichment": { }                            // only with enrichment: true
+    }
+  ],
+  "prompt_injection": { "scanned": true, "detected": false, "action": "moderate", … },
+  "security_notice": "⚠ Titles, descriptions, snippets and metadata below are 3rd-party web content …"
+}
+```
+
+Optional fields are omitted rather than sent as `null`. `rank` is 1-based
+within the page. `enrichment` carries everything the provider sent that
+Rover does not normalise — article, product, rating, video, FAQ, recipe,
+organisation, raw schema.org — and is present only when requested.
+
+Check `query.more_results_available` before paginating: every `offset` page
+is another billable request.
+
+### `search` errors
+
+| Code | Meaning |
+| --- | --- |
+| `search_feature_not_compiled` | Built without the `web-search` Cargo feature. |
+| `search_not_configured` | Compiled, but no API key in the environment. |
+| `invalid_args` | A bad argument — caught locally, or rejected by the provider. |
+| `search_auth_failed` | The provider rejected the API key. |
+| `search_subscription_denied` | Authenticated, but the plan does not cover this call. |
+| `rate_limited` | The provider rate-limited the request (429). Back off and retry. |
+| `search_quota_exhausted` | The subscription's quota is spent. Waiting does not help. |
+| `search_provider_error` | The provider failed on its own side, across every permitted retry. |
+| `search_unreachable` | The request never completed — connection, TLS, or DNS. |
+| `search_timeout` | The request exceeded `[search] timeout_secs`. |
+| `search_malformed_response` | The provider answered with something Rover could not parse. |
+
+The API key never appears in an error message, a log line, or a serialized
+request — it travels as a header, not a query parameter.
 
 ## `fetch`
 

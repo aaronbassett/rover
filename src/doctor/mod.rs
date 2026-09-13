@@ -55,6 +55,7 @@ pub async fn run_all(ctx: &CheckCtx) -> (Vec<CheckReport>, CheckStatus) {
         Box::new(checks::ExtractiveSynthesis),
         Box::new(checks::BackendsAuthenticate),
         Box::new(checks::CaptionersAuthenticate),
+        Box::new(checks::WebSearchAvailable),
     ];
     #[cfg(feature = "local-inference")]
     checks.push(Box::new(checks::LocalInferenceModelCached));
@@ -161,6 +162,53 @@ mod tests {
             crate::tokenizer::count("hello", crate::tokenizer::Tokenizer::O200k).is_ok(),
             "ExtractiveSynthesis check must leave the tokenizer registry populated",
         );
+    }
+
+    /// A missing (or uncompiled) search credential must never make an
+    /// otherwise healthy install report unhealthy.
+    #[tokio::test]
+    async fn web_search_without_a_key_is_a_skip_not_a_failure() {
+        let (mut ctx, _g) = fresh_ctx().await;
+        let mut cfg = Config::default();
+        cfg.output.dir = ctx.config.output.dir.clone();
+        cfg.search.api_key_env = "ROVER_TEST_DOCTOR_SEARCH_KEY_ABSENT".to_string();
+        ctx.config = Arc::new(cfg);
+        let r = checks::WebSearchAvailable.run(&ctx).await;
+        assert_eq!(r.status, CheckStatus::Skip, "{:?}", r.detail);
+        let detail = r.detail.unwrap();
+        if cfg!(feature = "web-search") {
+            assert!(detail.contains("not configured"), "{detail}");
+            assert!(
+                detail.contains("ROVER_TEST_DOCTOR_SEARCH_KEY_ABSENT"),
+                "{detail}"
+            );
+        } else {
+            assert!(detail.contains("feature not compiled"), "{detail}");
+        }
+    }
+
+    #[cfg(feature = "web-search")]
+    #[tokio::test]
+    async fn web_search_with_a_key_is_ok_and_makes_no_request() {
+        // Serialised against the other tests in this file that touch this
+        // var; nothing else in the doctor suite reads it.
+        let var = "ROVER_TEST_DOCTOR_SEARCH_KEY_PRESENT";
+        // SAFETY: a test-specific variable, set and removed within this test.
+        unsafe { std::env::set_var(var, "not-a-real-key") };
+        let (mut ctx, _g) = fresh_ctx().await;
+        let mut cfg = Config::default();
+        cfg.output.dir = ctx.config.output.dir.clone();
+        cfg.search.api_key_env = var.to_string();
+        // A base_url nothing is listening on: if the check ever started
+        // probing, this would fail rather than silently pass.
+        cfg.search.base_url = "http://127.0.0.1:1/search".to_string();
+        ctx.config = Arc::new(cfg);
+        let r = checks::WebSearchAvailable.run(&ctx).await;
+        unsafe { std::env::remove_var(var) };
+        assert_eq!(r.status, CheckStatus::Ok, "{:?}", r.detail);
+        let detail = r.detail.unwrap();
+        assert!(detail.contains("not probed"), "{detail}");
+        assert!(detail.contains(var), "{detail}");
     }
 
     #[tokio::test]

@@ -76,8 +76,30 @@ pub fn merge_mcp_server(json_text: &str) -> anyhow::Result<String> {
     Ok(out)
 }
 
-/// Add Rover's `SessionStart` and `PreToolUse(WebFetch)` hooks to a
-/// `settings.json` document, idempotently (keyed on `hook_command`).
+/// The `PreToolUse` matcher Rover registers.
+///
+/// Both built-in web tools, one hook command: the handler dispatches on
+/// `tool_name` and stays silent when it has nothing useful to say (Rover
+/// search unavailable → no WebSearch nudge). Registering the matcher
+/// unconditionally keeps `settings.json` stable across capability changes,
+/// so exporting an API key later needs no re-install.
+pub const PRETOOL_MATCHER: &str = "WebFetch|WebSearch";
+
+/// `PreToolUse` matchers Rover itself shipped in an earlier release, and may
+/// therefore replace with [`PRETOOL_MATCHER`] on a re-run.
+///
+/// The list is exhaustive on purpose: a matcher not on it is one Rover never
+/// wrote, which means the user did, and their edit must survive.
+const STALE_PRETOOL_MATCHERS: &[&str] = &["WebFetch"];
+
+/// Add Rover's `SessionStart` and `PreToolUse` hooks to a `settings.json`
+/// document, idempotently (keyed on `hook_command`).
+///
+/// Re-running upgrades an existing Rover hook group's matcher in place *when
+/// it still holds a value Rover shipped*, so an install predating the
+/// `WebSearch` matcher picks it up from `rover meta use` rather than needing
+/// the file hand-edited. A matcher the user has since changed is left as
+/// found.
 pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String> {
     let mut root: serde_json::Value = if json_text.trim().is_empty() {
         serde_json::json!({})
@@ -94,23 +116,37 @@ pub fn merge_hooks(json_text: &str, hook_command: &str) -> anyhow::Result<String
 
     // `startup|clear|compact` re-runs the SessionStart steering on every session
     // entry (fresh start, `/clear`, and post-compaction), not just cold start.
+    // No stale matchers to upgrade: this one has never changed, so a value
+    // that differs from it is one the user chose.
     add_event_hook(
         hooks,
         "SessionStart",
         Some("startup|clear|compact"),
+        &[],
         hook_command,
     )?;
-    add_event_hook(hooks, "PreToolUse", Some("WebFetch"), hook_command)?;
+    add_event_hook(
+        hooks,
+        "PreToolUse",
+        Some(PRETOOL_MATCHER),
+        STALE_PRETOOL_MATCHERS,
+        hook_command,
+    )?;
 
     let mut out = serde_json::to_string_pretty(&root)?;
     out.push('\n');
     Ok(out)
 }
 
+/// `upgrade_from` lists the matcher values Rover shipped in earlier releases
+/// for this event. An existing group whose matcher is one of them is
+/// rewritten to `matcher`; every other value — including one the user
+/// widened by hand — is left exactly as found.
 fn add_event_hook(
     hooks: &mut serde_json::Map<String, serde_json::Value>,
     event: &str,
     matcher: Option<&str>,
+    upgrade_from: &[&str],
     command: &str,
 ) -> anyhow::Result<()> {
     let arr = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
@@ -118,7 +154,8 @@ fn add_event_hook(
         .as_array_mut()
         .with_context(|| format!("settings.json `hooks.{event}` is not a JSON array"))?;
 
-    let already = arr.iter().any(|group| {
+    // Find an existing group carrying our command, if any.
+    let existing = arr.iter_mut().find(|group| {
         group
             .get("hooks")
             .and_then(|h| h.as_array())
@@ -127,7 +164,20 @@ fn add_event_hook(
                     .any(|hk| hk.get("command").and_then(|c| c.as_str()) == Some(command))
             })
     });
-    if already {
+    if let Some(group) = existing {
+        // Already installed. Rewrite the matcher only when it still holds a
+        // value Rover itself wrote in an earlier release, so a re-run
+        // upgrades its own stale wiring (`WebFetch` → `WebFetch|WebSearch`)
+        // without touching a matcher the user widened — a `SessionStart`
+        // extended with `resume`, say, which an unconditional refresh would
+        // silently delete. Everything else in the group is left alone for
+        // the same reason: it may be the user's.
+        if let (Some(m), Some(obj)) = (matcher, group.as_object_mut())
+            && let Some(current) = obj.get("matcher").and_then(|v| v.as_str())
+            && upgrade_from.contains(&current)
+        {
+            obj.insert("matcher".to_string(), serde_json::json!(m));
+        }
         return Ok(());
     }
 
@@ -160,7 +210,8 @@ mod tests {
         assert_eq!(ss["type"], "command");
         assert_eq!(ss["command"], HOOK_CMD);
         let pt = &v["hooks"]["PreToolUse"][0];
-        assert_eq!(pt["matcher"], "WebFetch");
+        // Both built-in web tools are nudged from one hook command.
+        assert_eq!(pt["matcher"], "WebFetch|WebSearch");
         assert_eq!(pt["hooks"][0]["command"], HOOK_CMD);
     }
 
@@ -172,12 +223,70 @@ mod tests {
         // Unrelated Bash hook preserved.
         let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
         assert!(pre.iter().any(|g| g["matcher"] == "Bash"));
-        assert!(pre.iter().any(|g| g["matcher"] == "WebFetch"));
+        assert!(pre.iter().any(|g| g["matcher"] == "WebFetch|WebSearch"));
         // Re-running adds nothing.
         let twice = merge_hooks(&once, HOOK_CMD).unwrap();
         assert_eq!(twice, once);
         let v2: serde_json::Value = serde_json::from_str(&twice).unwrap();
         assert_eq!(v2["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+    }
+
+    /// An install predating the WebSearch matcher must be upgraded in place
+    /// by a re-run, not left behind — and the user's own hooks must survive.
+    #[test]
+    fn rerunning_upgrades_a_stale_matcher_in_place() {
+        let legacy = r#"{"hooks":{"PreToolUse":[
+            {"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]},
+            {"matcher":"WebFetch","hooks":[{"type":"command","command":"rover meta hook claude"}]}
+        ]}}"#;
+        let out = merge_hooks(legacy, HOOK_CMD).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let pre = v["hooks"]["PreToolUse"].as_array().unwrap();
+        // Upgraded, not duplicated.
+        assert_eq!(pre.len(), 2, "{v}");
+        assert!(
+            pre.iter()
+                .any(|g| g["matcher"] == "WebFetch|WebSearch"
+                    && g["hooks"][0]["command"] == HOOK_CMD),
+            "{v}"
+        );
+        // The user's unrelated hook is untouched.
+        assert!(
+            pre.iter()
+                .any(|g| g["matcher"] == "Bash" && g["hooks"][0]["command"] == "echo hi"),
+            "{v}"
+        );
+        // And it is now a fixed point.
+        assert_eq!(merge_hooks(&out, HOOK_CMD).unwrap(), out);
+    }
+
+    /// The migration above must not generalise into "Rover rewrites the
+    /// matcher every run". A user who added `resume` to the SessionStart
+    /// matcher keeps it: re-running `rover meta use` is wiring, not a reset.
+    #[test]
+    fn a_user_customised_matcher_survives_a_rerun() {
+        let customised = r#"{"hooks":{
+            "SessionStart":[{"matcher":"startup|clear|compact|resume",
+                             "hooks":[{"type":"command","command":"rover meta hook claude"}]}],
+            "PreToolUse":[{"matcher":"WebFetch|WebSearch|Task",
+                           "hooks":[{"type":"command","command":"rover meta hook claude"}]}]
+        }}"#;
+        let out = merge_hooks(customised, HOOK_CMD).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            v["hooks"]["SessionStart"][0]["matcher"], "startup|clear|compact|resume",
+            "{v}"
+        );
+        // The same rule applies to a widened PreToolUse matcher: it is not
+        // one Rover ever wrote, so it is not Rover's to replace.
+        assert_eq!(
+            v["hooks"]["PreToolUse"][0]["matcher"], "WebFetch|WebSearch|Task",
+            "{v}"
+        );
+        // No group was duplicated in the process.
+        assert_eq!(v["hooks"]["SessionStart"].as_array().unwrap().len(), 1);
+        assert_eq!(v["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+        assert_eq!(merge_hooks(&out, HOOK_CMD).unwrap(), out);
     }
 
     #[test]

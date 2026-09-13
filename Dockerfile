@@ -21,9 +21,15 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 # Only this layer is invalidated by a source change that leaves deps alone.
+# `web-search` is included here and in `builder-headless`, unlike `headless`:
+# it pulls in no third-party crate and needs nothing at runtime (no browser,
+# no model weights), so the deps recipe is unchanged and the distroless
+# runtime stage stays exactly as small as it was. Excluding it would mean a
+# container deployment silently lacking a capability every other official
+# distribution has — see the "Distributions" table in site/docs/features.md.
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --bin rover
+RUN cargo build --release --features web-search --bin rover
 
 # The runtime stage is distroless: no shell, so mkdir/chown are impossible
 # there. Create the data directory here with the right ownership and copy it
@@ -39,7 +45,7 @@ FROM chef AS builder-headless
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --features headless --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --features headless --bin rover
+RUN cargo build --release --features headless,web-search --bin rover
 RUN mkdir -p /data && chown -R 10001:10001 /data
 
 # ----- runtime (headless) -----
