@@ -69,6 +69,17 @@ pub async fn make_summarizer_service(
 }
 
 pub async fn spawn_client(data_dir: &Path) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    spawn_client_with_env(data_dir, &[]).await
+}
+
+/// Like [`spawn_client`], but sets `envs` on the child only. Use for
+/// per-test credentials (e.g. a search API key named by `[search]
+/// api_key_env`): `std::env::set_var` in the test process races sibling
+/// tests in the same binary, while `Command::env` touches only the child.
+pub async fn spawn_client_with_env(
+    data_dir: &Path,
+    envs: &[(&str, &str)],
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
     let cfg_path = data_dir.join("rover.toml");
     if !cfg_path.exists() {
         std::fs::write(
@@ -81,6 +92,7 @@ pub async fn spawn_client(data_dir: &Path) -> rmcp::service::RunningService<rmcp
     cmd.arg("--config").arg(&cfg_path).arg("mcp");
     cmd.env("ROVER_DATA_DIR", data_dir);
     cmd.env("RUST_LOG", "info,rover=debug");
+    cmd.envs(envs.iter().copied());
     let proc = TokioChildProcess::new(cmd).expect("spawn rover mcp");
     ().serve(proc).await.expect("client handshake")
 }

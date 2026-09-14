@@ -20,15 +20,11 @@ fn html() -> &'static str {
      </article></body></html>"
 }
 
-/// Extract the parsed `FetchResponse` JSON from a tool result's first content
-/// block (the text block carries the serialized struct). Uses the
-/// `serde_json::to_value` navigation pattern that the existing fetch tests use.
+/// The `FetchResponse` JSON, read from the result's `structuredContent`.
 fn response_json(res: &rmcp::model::CallToolResult) -> serde_json::Value {
-    let outer = serde_json::to_value(res).expect("serialize result");
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("text content block");
-    serde_json::from_str(text).expect("FetchResponse JSON")
+    res.structured_content
+        .clone()
+        .expect("FetchResponse in structuredContent")
 }
 
 #[tokio::test]

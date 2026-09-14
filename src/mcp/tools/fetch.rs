@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::extractor::frontmatter::{PageMeta, render as render_frontmatter};
+use crate::extractor::frontmatter::{PageMeta, render_block as render_frontmatter};
 use crate::extractor::options::{ImagesMode, SampleStrategy, TablesMode};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
@@ -78,6 +78,15 @@ pub struct FetchArgs {
     /// corresponding `[prompt_injection.agent_overrides]` grant is `true`.
     #[serde(default)]
     pub security: Option<crate::guard::SecurityArg>,
+
+    /// Set to `"on"` if your MCP client cannot show you `structuredContent`.
+    /// By default this tool's result is returned only in `structuredContent`,
+    /// and `content` holds a short notice instead. With `"on"`, the full
+    /// result is also returned as JSON text in `content`. If you have already
+    /// received that notice in place of a result, set this on every later call
+    /// to any Rover tool.
+    #[serde(default)]
+    pub compatibility_mode: crate::mcp::response::CompatibilityMode,
 }
 
 /// Inline `summarize` sub-arg for the `fetch` tool. Re-uses the same
@@ -887,6 +896,8 @@ impl RoverHandler {
             !metadata.is_empty(),
             result.page.title.is_some(),
         );
+        // Frontmatter only: `Guard::finish` joins it to the body, so a
+        // combined render here would put the body in `content` twice.
         let frontmatter = render_frontmatter(&PageMeta {
             url: &url,
             canonical_url: &canonical,

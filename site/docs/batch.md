@@ -17,6 +17,7 @@ title: Batch & background tasks
 | `force_refresh` | `false` | n/a | Bypass the cache for every URL in the batch. |
 | `concurrency` | `8` | clamped to `1..=32` | Total in-flight requests for the batch. |
 | `per_domain_concurrency` | `2` | clamped to `1..=8` | In-flight requests per host. |
+| `compatibility_mode` | `"off"` | `"on"` / `"off"` | `"on"` also returns the result as JSON text in the MCP `content` array, for clients that can't show `structuredContent`. Each call queues a new batch task, so set it on the first call if your client needs it. See [Response shape](/docs/mcp-tools#response-shape-structuredcontent-and-compatibility_mode). |
 
 The response is a `TaskCreatedResponse`, returned the moment the task is inserted:
 

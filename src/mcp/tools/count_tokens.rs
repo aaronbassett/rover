@@ -56,6 +56,14 @@ pub struct CountTokensArgs {
     pub tokenizer: Option<String>,
     #[serde(default)]
     pub mode: CountTokensMode,
+    /// Set to `"on"` if your MCP client cannot show you `structuredContent`.
+    /// By default this tool's result is returned only in `structuredContent`,
+    /// and `content` holds a short notice instead. With `"on"`, the full
+    /// result is also returned as JSON text in `content`. If you have already
+    /// received that notice in place of a result, set this on every later call
+    /// to any Rover tool.
+    #[serde(default)]
+    pub compatibility_mode: crate::mcp::response::CompatibilityMode,
 }
 
 impl RoverHandler {
@@ -359,6 +367,7 @@ mod tests {
                 url: Some("https://example.com".into()),
                 tokenizer: None,
                 mode: CountTokensMode::Single,
+                ..Default::default()
             })
             .await
             .unwrap_err();
@@ -386,6 +395,7 @@ mod tests {
                 url: None,
                 tokenizer: Some("gpt-5".into()),
                 mode: CountTokensMode::Single,
+                ..Default::default()
             })
             .await
             .unwrap_err();
@@ -402,6 +412,7 @@ mod tests {
                 url: None,
                 tokenizer: None,
                 mode: CountTokensMode::Estimates,
+                ..Default::default()
             })
             .await
             .unwrap_err();
@@ -418,6 +429,7 @@ mod tests {
                 url: None,
                 tokenizer: None,
                 mode: CountTokensMode::Estimates,
+                ..Default::default()
             })
             .await
             .unwrap_err();

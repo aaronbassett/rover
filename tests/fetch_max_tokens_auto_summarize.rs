@@ -70,11 +70,7 @@ async fn fetch_max_tokens_triggers_auto_summarize() {
         .expect("fetch with max_tokens");
     assert!(!res.is_error.unwrap_or(false), "tool errored: {res:?}");
 
-    let outer: serde_json::Value = serde_json::to_value(&res).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("text content block");
-    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let v = res.structured_content.clone().expect("structuredContent");
     assert_eq!(
         v["auto_summarized"], true,
         "expected auto_summarized=true: {v}"

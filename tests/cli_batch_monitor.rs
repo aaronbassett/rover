@@ -60,26 +60,15 @@ async fn monitor_streams_until_terminal_and_exits_zero() {
         "batch_fetch returned an error envelope: {result:?}"
     );
 
-    // Extract task_id from the structured payload. The handler returns
-    // Json<TaskCreatedResponse>, which rmcp serialises into both
-    // `structured_content` and a text content block; we prefer the
-    // structured form but fall back to parsing the text block.
+    // Extract task_id from the structured payload. By default the text
+    // content block only points at `structuredContent`, so that is the one
+    // place the `TaskCreatedResponse` lives.
     let task_id = result
         .structured_content
         .as_ref()
         .and_then(|v| v.get("task_id"))
         .and_then(|v| v.as_str())
         .map(str::to_owned)
-        .or_else(|| {
-            result.content.iter().find_map(|c| {
-                let text = serde_json::to_string(c).ok()?;
-                let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-                v.pointer("/raw/text")
-                    .and_then(|t| t.as_str())
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                    .and_then(|v| v.get("task_id").and_then(|t| t.as_str()).map(str::to_owned))
-            })
-        })
         .unwrap_or_else(|| panic!("could not extract task_id from result: {result:?}"));
 
     // 3. `rover batch <id> --monitor` as a child process. It exits when
