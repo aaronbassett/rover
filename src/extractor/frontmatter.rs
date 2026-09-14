@@ -92,8 +92,29 @@ pub struct PageMeta<'a> {
 }
 
 /// Render `meta` as a frontmatter-envelope string followed by `body`.
+///
+/// This is the whole document, as `rover fetch` prints it: [`render_block`],
+/// a blank line, then the body with a guaranteed trailing newline.
 pub fn render(meta: &PageMeta<'_>) -> String {
-    let mut buf = String::with_capacity(meta.body.len() + 512);
+    let mut buf = render_block(meta);
+    buf.reserve(meta.body.len() + 2);
+    buf.push('\n');
+    buf.push_str(meta.body);
+    if !meta.body.ends_with('\n') {
+        buf.push('\n');
+    }
+    buf
+}
+
+/// Render only the frontmatter block for `meta` — from the opening `---` to
+/// the closing `---\n` — without the body.
+///
+/// For callers that assemble the document themselves, such as the MCP
+/// `fetch` tool, which hands frontmatter and body to
+/// [`crate::guard::Guard::finish`] separately. `meta.body` is still read:
+/// `content_hash` is its digest.
+pub fn render_block(meta: &PageMeta<'_>) -> String {
+    let mut buf = String::with_capacity(512);
     buf.push_str("---\n");
 
     write_field(&mut buf, "url", meta.url.as_str());
@@ -241,11 +262,7 @@ pub fn render(meta: &PageMeta<'_>) -> String {
             }
         }
     }
-    buf.push_str("---\n\n");
-    buf.push_str(meta.body);
-    if !meta.body.ends_with('\n') {
-        buf.push('\n');
-    }
+    buf.push_str("---\n");
     buf
 }
 
@@ -359,6 +376,46 @@ mod tests {
         assert!(out.contains("estimated_tokens: 7"));
         assert!(out.contains(r#"tokenizer: "o200k""#));
         assert!(out.ends_with(body));
+    }
+
+    /// Pins `render`'s exact bytes. `rover fetch` prints this string as-is,
+    /// so any change here is a change to the CLI's output.
+    #[test]
+    fn render_output_is_byte_stable() {
+        let url = u("https://example.com/page");
+        let body = "# Title\n\nBody.";
+        let out = render(&meta(&url, body));
+        let expected = format!(
+            "---\n\
+             url: \"https://example.com/page\"\n\
+             title: \"Sample\"\n\
+             fetched_at: \"2026-05-07T12:34:56Z\"\n\
+             content_hash: \"sha256:{}\"\n\
+             estimated_tokens: 7\n\
+             tokenizer: \"o200k\"\n\
+             extraction_quality: 0.50\n\
+             ---\n\
+             \n\
+             # Title\n\nBody.\n",
+            sha256_hex(body.as_bytes()),
+        );
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn render_block_is_the_frontmatter_without_the_body() {
+        let url = u("https://example.com/page");
+        let body = "A distinctive body sentence.";
+        let block = render_block(&meta(&url, body));
+        assert!(block.starts_with("---\n"));
+        assert!(block.ends_with("\n---\n"));
+        assert!(
+            !block.contains(body),
+            "block must not carry the body: {block}"
+        );
+        // The hash still covers the body, even though the body is omitted.
+        assert!(block.contains(&sha256_hex(body.as_bytes())));
+        assert_eq!(render(&meta(&url, body)), format!("{block}\n{body}\n"));
     }
 
     #[test]

@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::extractor::frontmatter::{PageMeta, render as render_frontmatter};
+use crate::extractor::frontmatter::{PageMeta, render_block as render_frontmatter};
 use crate::extractor::options::{ImagesMode, SampleStrategy, TablesMode};
 use crate::extractor::pipeline::extract;
 use crate::fetcher::cached::{ExtractResult, FetchOptions, fetch_with_cache, sha256_hex};
@@ -887,6 +887,8 @@ impl RoverHandler {
             !metadata.is_empty(),
             result.page.title.is_some(),
         );
+        // Frontmatter only: `Guard::finish` joins it to the body, so a
+        // combined render here would put the body in `content` twice.
         let frontmatter = render_frontmatter(&PageMeta {
             url: &url,
             canonical_url: &canonical,

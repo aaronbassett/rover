@@ -666,7 +666,9 @@ impl Guard {
     }
 
     /// Produce the final agent-facing `content` string. `frontmatter` is the
-    /// already-rendered frontmatter (may be empty, e.g. for `summarize`).
+    /// already-rendered frontmatter block alone — see
+    /// [`crate::extractor::frontmatter::render_block`] — or empty, e.g. for
+    /// `summarize`. It must not already carry `body`: this joins the two.
     /// `body` is the final body to wrap: the acted-upon body for the direct
     /// path, or a summary on the summarize path. `honor_drop` is `false` on the
     /// summarize path — the returned body is a cleaned summary, so the
