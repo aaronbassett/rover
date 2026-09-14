@@ -47,7 +47,7 @@ Some clients never show `structuredContent` to the model. For those, every tool 
 | `"off"` (default) | The notice above. | The full result. |
 | `"on"` | The full result, serialized as JSON text. | The full result. |
 
-`structuredContent` is present in both modes. The MCP spec requires a structured result from any tool that advertises an `outputSchema`, and SDK clients enforce it, so compatibility mode *adds* the JSON text rather than moving the result out of `structuredContent`. It is a per-call argument with no config default: a shared HTTP server serves many clients, and only the calling client knows whether it needs it. Any value other than `"on"` or `"off"` is rejected, like any other invalid argument, before the tool does any work.
+`structuredContent` is present in both modes. The MCP spec requires a structured result from any tool that advertises an `outputSchema`, and SDK clients enforce it, so compatibility mode *adds* the JSON text rather than moving the result out of `structuredContent`. It is a per-call argument with no config default: a shared HTTP server serves many clients, and only the calling client knows whether it needs it. Any value other than the strings `"on"` or `"off"` is rejected, like any other invalid argument, before the tool does any work.
 
 An agent that receives the notice in place of a result has to repeat the call. For `fetch`, `get_metadata`, and `count_tokens` that is a cache hit, and `summarize` results are cached too. Two tools are expensive to repeat, and their argument descriptions say so: a second `search` is a second billable request (searches are never cached), and a second `batch_fetch` queues a second task. If you know your client needs compatibility mode, set it from the first call.
 

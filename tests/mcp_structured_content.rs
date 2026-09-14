@@ -43,7 +43,7 @@ struct Fixture {
     origin: MockServer,
     provider: MockServer,
     client: Client,
-    _tmp: tempfile::TempDir,
+    data_dir: tempfile::TempDir,
 }
 
 fn page_html() -> String {
@@ -105,7 +105,7 @@ async fn fixture() -> Fixture {
         origin,
         provider,
         client,
-        _tmp: tmp,
+        data_dir: tmp,
     }
 }
 
@@ -195,9 +195,11 @@ async fn list_tools(client: &Client) -> Vec<Tool> {
 
 // ------------------------------------------------------------------ stdio
 
-/// rmcp only derives `outputSchema` from a `Json<T>` return type, so the
-/// `ToolResponse` wrapper could silently drop it. Every listed tool — not
-/// just the six known ones — must advertise one.
+/// rmcp's `#[tool]` derives `outputSchema` only from a return type named
+/// `Json`, which is why Rover's wrapper (`rover::mcp::response::Json`) carries
+/// that name. If the macro ever stops matching it, schemas vanish without a
+/// compile error. Every listed tool — not just the six known ones — must
+/// advertise one.
 #[tokio::test]
 async fn every_tool_still_advertises_an_output_schema() {
     let fx = fixture().await;
@@ -260,12 +262,20 @@ async fn compatibility_mode_is_described_in_every_input_schema() {
             "{name}: {description}"
         );
 
-        // Only "on" and "off" are advertised.
-        let values: Vec<&Value> = schema["$defs"]["CompatibilityMode"]["oneOf"]
+        // Inlined, not a `$ref`: draft-07 ignores `$ref` siblings, and some
+        // client converters drop them, which would lose `description` and
+        // `default` for exactly the older clients they are for.
+        assert!(property.get("$ref").is_none(), "{name}: {property}");
+
+        // Only the strings "on" and "off" are advertised.
+        let values: Vec<&Value> = property["oneOf"]
             .as_array()
-            .unwrap_or_else(|| panic!("{name}: no CompatibilityMode enum: {schema}"))
+            .unwrap_or_else(|| panic!("{name}: no inline oneOf: {property}"))
             .iter()
-            .map(|v| &v["const"])
+            .map(|v| {
+                assert_eq!(v["type"], json!("string"), "{name}: {property}");
+                &v["const"]
+            })
             .collect();
         assert_eq!(values, [&json!("on"), &json!("off")], "{name}");
     }
@@ -345,7 +355,14 @@ async fn structured_content_accompanies_every_output_schema() {
 async fn an_invalid_compatibility_mode_is_rejected() {
     let fx = fixture().await;
     for tool in ALL_TOOLS {
-        for bad in [json!("yes"), json!(true), json!("ON"), json!(null)] {
+        for bad in [
+            json!("yes"),
+            json!(true),
+            json!("ON"),
+            json!(null),
+            json!({ "on": null }),
+            json!({ "off": null }),
+        ] {
             let args = with_mode(valid_args(&fx, tool), Some(bad.clone()));
             let err = call(&fx.client, tool, args)
                 .await
@@ -353,10 +370,35 @@ async fn an_invalid_compatibility_mode_is_rejected() {
             assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "{tool} {bad}: {err:?}");
         }
     }
-    // Rejected before any work: nothing fetched, nothing searched.
+    // Rejected before any work: nothing fetched, nothing searched, and — the
+    // direct proof for `batch_fetch`, whose fetching is backgrounded — no task
+    // queued.
     assert!(fx.origin.received_requests().await.unwrap().is_empty());
     assert!(fx.provider.received_requests().await.unwrap().is_empty());
+    assert_eq!(task_count(&fx), 0, "an invalid batch_fetch queued a task");
+
+    // Control: a valid call does show up in the same count, so the zero above
+    // is not an artefact of reading the wrong database.
+    call_ok(
+        &fx.client,
+        "batch_fetch_tool",
+        valid_args(&fx, "batch_fetch_tool"),
+    )
+    .await;
+    assert_eq!(task_count(&fx), 1);
+
     fx.client.cancel().await.ok();
+}
+
+/// Rows in the spawned server's `tasks` table.
+fn task_count(fx: &Fixture) -> i64 {
+    let conn = rusqlite::Connection::open_with_flags(
+        fx.data_dir.path().join("rover.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("open the server's database");
+    conn.query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))
+        .expect("count tasks")
 }
 
 /// Tool errors are JSON-RPC errors, not `isError` results, so the response

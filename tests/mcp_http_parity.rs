@@ -152,7 +152,7 @@ async fn stdio_and_http_produce_the_same_document() {
     child.kill().await.ok();
 
     // Compare the STRUCTURED output, not a Debug string. `fetch_tool` returns
-    // `ToolResponse<FetchOutput>` (src/mcp/response.rs), whose result always
+    // `Json<FetchOutput>` from src/mcp/response.rs, whose result always
     // lives in `structured_content`; `FetchOutput` is `#[serde(untagged)]`, so
     // `FetchResponse`'s fields (`content`, `cache_status` —
     // src/mcp/envelope.rs:48-49) sit at the JSON root.
