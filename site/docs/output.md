@@ -5,7 +5,7 @@ title: Anatomy of a Rover document
 
 # Anatomy of a Rover document
 
-A fetch returns one `content` string plus a few envelope fields. The `content` string is a trusted plain-text preamble followed by a nonce-fenced wrapper. Inside the wrapper sit the YAML frontmatter and the Markdown body. This page walks each part. For the tool arguments, see [MCP tools](/docs/mcp-tools).
+A fetch returns one `content` string plus a few envelope fields, as the MCP result's `structuredContent` (see [Response shape](/docs/mcp-tools#response-shape-structuredcontent-and-compatibility_mode)). The `content` string is a trusted plain-text preamble followed by a nonce-fenced wrapper. Inside the wrapper sit the YAML frontmatter and the Markdown body. This page walks each part. For the tool arguments, see [MCP tools](/docs/mcp-tools).
 
 ## The trust wrapper
 

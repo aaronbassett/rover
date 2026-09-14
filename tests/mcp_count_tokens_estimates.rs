@@ -68,14 +68,11 @@ async fn call_tool_any(
     })
 }
 
-/// Helper: extract the inner JSON object that the tool returned.
+/// Helper: the JSON object the tool returned, from `structuredContent`.
 fn inner_json(res: &rmcp::model::CallToolResult) -> serde_json::Value {
-    let blob = serde_json::to_string(res).unwrap();
-    let outer: serde_json::Value = serde_json::from_str(&blob).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("tool returned text content block");
-    serde_json::from_str(text).unwrap()
+    res.structured_content
+        .clone()
+        .expect("tool returned structuredContent")
 }
 
 #[tokio::test]

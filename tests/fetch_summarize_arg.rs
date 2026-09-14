@@ -58,11 +58,7 @@ async fn fetch_with_summarize_arg_returns_summary_body() {
     let res = client.call_tool(params).await.expect("fetch+summarize ok");
     assert!(!res.is_error.unwrap_or(false), "tool errored: {res:?}");
 
-    let outer: serde_json::Value = serde_json::to_value(&res).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("text content block");
-    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let v = res.structured_content.clone().expect("structuredContent");
 
     assert_eq!(v["summarized"], true, "expected summarized=true: {v}");
     assert!(

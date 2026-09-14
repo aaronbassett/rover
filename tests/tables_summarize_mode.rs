@@ -65,11 +65,7 @@ async fn fetch_tables_summarize_records_summary_mode_in_frontmatter() {
         .expect("fetch+tables=summarize ok");
     assert!(!res.is_error.unwrap_or(false), "tool errored: {res:?}");
 
-    let outer: serde_json::Value = serde_json::to_value(&res).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("text content block");
-    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let v = res.structured_content.clone().expect("structuredContent");
 
     let content = v["content"].as_str().expect("content");
     assert!(

@@ -67,11 +67,7 @@ async fn summarize_returns_extractive_output_on_cache_miss() {
     );
 
     // Parse the response and assert structured metadata fields propagate from args.
-    let outer: serde_json::Value = serde_json::from_str(&blob).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("tool returned text content block");
-    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let v = res.structured_content.clone().expect("structuredContent");
     assert_eq!(v["metadata"]["target_tokens"], 50);
     assert_eq!(v["metadata"]["backend"], "default");
     assert_eq!(v["metadata"]["mode"], "extractive");
@@ -217,29 +213,25 @@ api_key_env = "ROVER_TEST_FAKE_KEY"
     let res = client.call_tool(params).await.expect("summarize succeeded");
     assert!(!res.is_error.unwrap_or(false), "tool errored: {res:?}");
 
-    let outer = serde_json::to_value(&res).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("tool returned text content block");
-    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let v = res.structured_content.clone().expect("structuredContent");
 
     assert_eq!(
         v["metadata"]["backend"], "default",
-        "expected effective backend to be the extractive fallback: {text}"
+        "expected effective backend to be the extractive fallback: {v}"
     );
     let fb = &v["metadata"]["summarizer_fallback"];
     assert_eq!(
         fb["from"], "fast",
-        "expected fallback.from = original backend name: {text}"
+        "expected fallback.from = original backend name: {v}"
     );
     let reason = fb["reason"].as_str().unwrap_or_default();
     assert!(
         !reason.is_empty(),
-        "expected non-empty fallback reason: {text}"
+        "expected non-empty fallback reason: {v}"
     );
     assert_eq!(
         reason, "backend_unavailable",
-        "expected fallback reason from 5xx → Unavailable: {text}"
+        "expected fallback reason from 5xx → Unavailable: {v}"
     );
 
     client.cancel().await.unwrap();
@@ -318,25 +310,21 @@ api_key_env = "ROVER_TEST_FAKE_KEY_401"
     let res = client.call_tool(params).await.expect("summarize succeeded");
     assert!(!res.is_error.unwrap_or(false), "tool errored: {res:?}");
 
-    let outer = serde_json::to_value(&res).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("tool returned text content block");
-    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let v = res.structured_content.clone().expect("structuredContent");
 
     assert_eq!(
         v["metadata"]["backend"], "default",
-        "expected effective backend to be the extractive fallback: {text}"
+        "expected effective backend to be the extractive fallback: {v}"
     );
     let fb = &v["metadata"]["summarizer_fallback"];
     assert_eq!(
         fb["from"], "fast",
-        "expected fallback.from = original backend name: {text}"
+        "expected fallback.from = original backend name: {v}"
     );
     let reason = fb["reason"].as_str().unwrap_or_default();
     assert_eq!(
         reason, "auth_failed",
-        "expected fallback reason from 401 → AuthFailed: {text}"
+        "expected fallback reason from 401 → AuthFailed: {v}"
     );
 
     client.cancel().await.unwrap();

@@ -20,6 +20,14 @@ pub struct GetMetadataArgs {
     pub tokenizer: Option<String>,
     #[serde(default)]
     pub security: Option<crate::guard::SecurityArg>,
+    /// Set to `"on"` if your MCP client cannot show you `structuredContent`.
+    /// By default this tool's result is returned only in `structuredContent`,
+    /// and `content` holds a short notice instead. With `"on"`, the full
+    /// result is also returned as JSON text in `content`. If you have already
+    /// received that notice in place of a result, set this on every later call
+    /// to any Rover tool.
+    #[serde(default)]
+    pub compatibility_mode: crate::mcp::response::CompatibilityMode,
 }
 
 impl RoverHandler {

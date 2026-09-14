@@ -17,14 +17,11 @@ fn html() -> &'static str {
      </article></body></html>"
 }
 
-/// Parse the serialized response struct from the tool result's first text block
-/// (using the `serde_json::to_value` navigation the existing tests use).
+/// The `SummarizeResponse` JSON, read from the result's `structuredContent`.
 fn response_json(res: &rmcp::model::CallToolResult) -> serde_json::Value {
-    let outer = serde_json::to_value(res).expect("serialize result");
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("text content block");
-    serde_json::from_str(text).expect("SummarizeResponse JSON")
+    res.structured_content
+        .clone()
+        .expect("SummarizeResponse in structuredContent")
 }
 
 #[tokio::test]

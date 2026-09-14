@@ -94,11 +94,10 @@ async fn csv_file_and_download_still_work_over_stdio() {
         "csv_file + download must not be refused over stdio, got: {result:?}"
     );
 
-    let outer: serde_json::Value = serde_json::to_value(&result).unwrap();
-    let text = outer["content"][0]["text"]
-        .as_str()
-        .expect("text content block");
-    let v: serde_json::Value = serde_json::from_str(text).unwrap();
+    let v = result
+        .structured_content
+        .clone()
+        .expect("structuredContent");
     let content = v["content"].as_str().expect("content");
 
     let output_root = tmp

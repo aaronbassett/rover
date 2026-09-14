@@ -33,6 +33,16 @@ pub struct BatchFetchArgs {
     pub concurrency: Option<u32>,
     #[serde(default)]
     pub per_domain_concurrency: Option<u32>,
+    /// Set to `"on"` if your MCP client cannot show you `structuredContent`.
+    /// By default this tool's result is returned only in `structuredContent`,
+    /// and `content` holds a short notice instead. With `"on"`, the full
+    /// result is also returned as JSON text in `content`. If you have already
+    /// received that notice in place of a result, set this on every later call
+    /// to any Rover tool.
+    /// Each call queues a new batch task, so set this on the first call if you
+    /// know your client needs it.
+    #[serde(default)]
+    pub compatibility_mode: crate::mcp::response::CompatibilityMode,
 }
 
 impl RoverHandler {

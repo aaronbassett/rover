@@ -5,13 +5,14 @@ use std::sync::Arc;
 use rmcp::ErrorData;
 use rmcp::ServerHandler;
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::handler::server::wrapper::{Json, Parameters};
+use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{ServerCapabilities, ServerInfo};
 use rmcp::{tool, tool_handler, tool_router};
 
 use crate::config::Config;
 use crate::fetcher::concurrency::Pacer;
 use crate::fetcher::ssrf::SsrfLevel;
+use crate::mcp::response::{ToolResponse, output_schema};
 use crate::mcp::tools::count_tokens::CountTokensArgs;
 use crate::mcp::tools::fetch::{FetchArgs, FetchOutput};
 use crate::storage::Db;
@@ -149,14 +150,16 @@ impl RoverHandler {
     /// Fetch a URL and return cleaned Markdown with frontmatter.
     #[tool(
         description = "Fetch a URL and return cleaned Markdown with frontmatter. \
-                       Set count_only=true to return only token counts."
+                       Set count_only=true to return only token counts.",
+        output_schema = output_schema::<FetchOutput>()
     )]
     pub async fn fetch_tool(
         &self,
         Parameters(args): Parameters<FetchArgs>,
-    ) -> Result<Json<FetchOutput>, ErrorData> {
+    ) -> Result<ToolResponse<FetchOutput>, ErrorData> {
+        let compatibility_mode = args.compatibility_mode;
         match self.fetch_inner(args).await {
-            Ok(out) => Ok(Json(out)),
+            Ok(out) => Ok(ToolResponse::new(out, compatibility_mode)),
             Err(e) => Err(into_error_data(e)),
         }
     }
@@ -166,13 +169,16 @@ impl RoverHandler {
                        mode=\"single\" (default) returns one token count. \
                        mode=\"estimates\" returns four counts: raw_html, \
                        extracted_md, summary_short (~250 tokens), summary_medium (~750 tokens). \
-                       Estimates mode requires url and uses the extractive backend.")]
+                       Estimates mode requires url and uses the extractive backend.",
+        output_schema = output_schema::<crate::mcp::envelope::CountResponse>()
+    )]
     pub async fn count_tokens_tool(
         &self,
         Parameters(args): Parameters<CountTokensArgs>,
-    ) -> Result<Json<crate::mcp::envelope::CountResponse>, ErrorData> {
+    ) -> Result<ToolResponse<crate::mcp::envelope::CountResponse>, ErrorData> {
+        let compatibility_mode = args.compatibility_mode;
         match self.count_tokens_inner(args).await {
-            Ok(out) => Ok(Json(out)),
+            Ok(out) => Ok(ToolResponse::new(out, compatibility_mode)),
             Err(e) => Err(into_error_data(e)),
         }
     }
@@ -180,13 +186,16 @@ impl RoverHandler {
     /// Fetch a URL and return ONLY its structured metadata (no markdown body).
     #[tool(description = "Fetch a URL and return only its structured metadata: \
                        title, description, author, published/modified dates, \
-                       schema_types, image, canonical, language, extraction_quality.")]
+                       schema_types, image, canonical, language, extraction_quality.",
+        output_schema = output_schema::<crate::mcp::envelope::MetadataResponse>()
+    )]
     pub async fn get_metadata_tool(
         &self,
         Parameters(args): Parameters<crate::mcp::tools::get_metadata::GetMetadataArgs>,
-    ) -> Result<Json<crate::mcp::envelope::MetadataResponse>, ErrorData> {
+    ) -> Result<ToolResponse<crate::mcp::envelope::MetadataResponse>, ErrorData> {
+        let compatibility_mode = args.compatibility_mode;
         match self.get_metadata_inner(args).await {
-            Ok(out) => Ok(Json(out)),
+            Ok(out) => Ok(ToolResponse::new(out, compatibility_mode)),
             Err(e) => Err(into_error_data(e)),
         }
     }
@@ -196,14 +205,16 @@ impl RoverHandler {
         description = "Apply summarization to a URL. If the URL isn't cached, \
                        Rover fetches it with default options first. Returns the \
                        summary_md plus metadata including cache status, the \
-                       effective backend, and (when applicable) fallback details."
+                       effective backend, and (when applicable) fallback details.",
+        output_schema = output_schema::<crate::mcp::envelope::SummarizeResponse>()
     )]
     pub async fn summarize_tool(
         &self,
         Parameters(args): Parameters<crate::mcp::tools::summarize::SummarizeArgs>,
-    ) -> Result<Json<crate::mcp::envelope::SummarizeResponse>, ErrorData> {
+    ) -> Result<ToolResponse<crate::mcp::envelope::SummarizeResponse>, ErrorData> {
+        let compatibility_mode = args.compatibility_mode;
         match self.summarize_inner(args).await {
-            Ok(out) => Ok(Json(out)),
+            Ok(out) => Ok(ToolResponse::new(out, compatibility_mode)),
             Err(e) => Err(into_error_data(e)),
         }
     }
@@ -218,14 +229,16 @@ impl RoverHandler {
                        (\"exact phrase\", -excluded, site:, filetype:, intitle:, inbody:, AND/OR/NOT); \
                        `site`/`exclude_sites` are conveniences that compose them for you. Each \
                        call is a billable request to the search provider, and each `offset` page \
-                       is another one — check `query.more_results_available` before paging."
+                       is another one — check `query.more_results_available` before paging.",
+        output_schema = output_schema::<crate::search::SearchResponse>()
     )]
     pub async fn search_tool(
         &self,
         Parameters(args): Parameters<crate::mcp::tools::search::SearchArgs>,
-    ) -> Result<Json<crate::search::SearchResponse>, ErrorData> {
+    ) -> Result<ToolResponse<crate::search::SearchResponse>, ErrorData> {
+        let compatibility_mode = args.compatibility_mode;
         match self.search_inner(args).await {
-            Ok(out) => Ok(Json(out)),
+            Ok(out) => Ok(ToolResponse::new(out, compatibility_mode)),
             Err(e) => Err(into_error_data(e)),
         }
     }
@@ -233,14 +246,16 @@ impl RoverHandler {
     /// Fetch multiple URLs concurrently in the background.
     #[tool(
         description = "Fetch multiple URLs concurrently. Returns a task_id immediately; \
-                          use rover batch <id> --monitor to stream progress."
+                          use rover batch <id> --monitor to stream progress.",
+        output_schema = output_schema::<crate::mcp::envelope::TaskCreatedResponse>()
     )]
     pub async fn batch_fetch_tool(
         &self,
         Parameters(args): Parameters<crate::mcp::tools::batch_fetch::BatchFetchArgs>,
-    ) -> Result<Json<crate::mcp::envelope::TaskCreatedResponse>, ErrorData> {
+    ) -> Result<ToolResponse<crate::mcp::envelope::TaskCreatedResponse>, ErrorData> {
+        let compatibility_mode = args.compatibility_mode;
         match self.batch_fetch_inner(args).await {
-            Ok(out) => Ok(Json(out)),
+            Ok(out) => Ok(ToolResponse::new(out, compatibility_mode)),
             Err(e) => Err(into_error_data(e)),
         }
     }
@@ -316,8 +331,49 @@ fn into_error_data(err: crate::mcp::error::McpError) -> ErrorData {
 
 #[cfg(test)]
 mod tests {
-    use super::server_instructions;
+    use super::{RoverHandler, server_instructions};
     use crate::search::SearchAvailability;
+
+    /// `ToolResponse` gets no `outputSchema` from `#[tool]` (only `Json<T>`
+    /// does), so each tool names its schema by hand. Pin each to the type the
+    /// tool actually returns — the schema `Json<T>` would have derived.
+    #[test]
+    fn output_schemas_are_the_returned_types_schemas() {
+        use crate::mcp::envelope::{
+            CountResponse, MetadataResponse, SummarizeResponse, TaskCreatedResponse,
+        };
+        use rmcp::handler::server::tool::schema_for_output as schema;
+        let cases = [
+            (
+                RoverHandler::fetch_tool_tool_attr(),
+                schema::<crate::mcp::tools::fetch::FetchOutput>(),
+            ),
+            (
+                RoverHandler::count_tokens_tool_tool_attr(),
+                schema::<CountResponse>(),
+            ),
+            (
+                RoverHandler::get_metadata_tool_tool_attr(),
+                schema::<MetadataResponse>(),
+            ),
+            (
+                RoverHandler::summarize_tool_tool_attr(),
+                schema::<SummarizeResponse>(),
+            ),
+            (
+                RoverHandler::search_tool_tool_attr(),
+                schema::<crate::search::SearchResponse>(),
+            ),
+            (
+                RoverHandler::batch_fetch_tool_tool_attr(),
+                schema::<TaskCreatedResponse>(),
+            ),
+        ];
+        assert_eq!(cases.len(), RoverHandler::tool_router().list_all().len());
+        for (tool, expected) in cases {
+            assert_eq!(tool.output_schema, Some(expected.unwrap()), "{}", tool.name);
+        }
+    }
 
     /// The instructions must never teach `search` as step one of the workflow
     /// on an install where it cannot run — the same rule `meta::hook` follows.

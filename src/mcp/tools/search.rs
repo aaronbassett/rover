@@ -116,6 +116,17 @@ pub struct SearchArgs {
     /// `fetch`, `summarize`, and `get_metadata`.
     #[serde(default)]
     pub security: Option<crate::guard::SecurityArg>,
+
+    /// Set to `"on"` if your MCP client cannot show you `structuredContent`.
+    /// By default this tool's result is returned only in `structuredContent`,
+    /// and `content` holds a short notice instead. With `"on"`, the full
+    /// result is also returned as JSON text in `content`. If you have already
+    /// received that notice in place of a result, set this on every later call
+    /// to any Rover tool.
+    /// Each call is a billable search request, so set this on the first call
+    /// if you know your client needs it.
+    #[serde(default)]
+    pub compatibility_mode: crate::mcp::response::CompatibilityMode,
 }
 
 /// Adult-content filtering level. A typed enum rather than a free string so
